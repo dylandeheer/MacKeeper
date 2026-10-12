@@ -50,6 +50,7 @@ public final class GameLoopManager {
     private final GameSessionServerService gameService;
 
     private final IGameController gameController;
+    private final PlayerCreatureSystem playerCreatureSystem;
 
     /**
      * Single use game states
@@ -86,7 +87,7 @@ public final class GameLoopManager {
                 new CreatureTorturingSystem(entityData, gameWorldController.getCreaturesController(),
                         gameWorldController.getMapController()),
                 new DeathSystem(entityData, gameSettings, positionSystem),
-                new PlayerCreatureSystem(entityData, levelInfo.getLevelData(), playerControllers.values()),
+                playerCreatureSystem = new PlayerCreatureSystem(entityData, levelInfo.getLevelData(), playerControllers.values()),
                 new PlayerSpellbookSystem(entityData, levelInfo.getLevelData(), playerControllers.values()),
                 (IGameLogicUpdatable) gameController,
                 new CreatureSpawnSystem(gameWorldController.getCreaturesController(), playerControllers.values(),
@@ -136,6 +137,11 @@ public final class GameLoopManager {
             }
             return capture.apply(gameController);
         });
+    }
+
+    /** Capture the last-observed creature index under the same boundary as its player controls and ECS. */
+    public <T> T captureSnapshot(java.util.function.BiFunction<IGameController, PlayerCreatureSystem.State, T> capture) {
+        return captureSnapshot(game -> capture.apply(game, playerCreatureSystem.captureState()));
     }
 
     public void pause() {

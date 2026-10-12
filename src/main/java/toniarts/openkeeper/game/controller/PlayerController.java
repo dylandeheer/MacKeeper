@@ -57,6 +57,13 @@ public final class PlayerController implements IPlayerController {
     private final PlayerResearchControl researchControl;
 
     public PlayerController(IKwdFile kwdFile, Keeper keeper, Creature imp, EntityData entityData, Map<Variable.MiscVariable.MiscType, Variable.MiscVariable> gameSettings) {
+        this(kwdFile, keeper, imp, entityData, gameSettings, null, null);
+    }
+
+    private PlayerController(IKwdFile kwdFile, Keeper keeper, Creature imp, EntityData entityData,
+            Map<Variable.MiscVariable.MiscType, Variable.MiscVariable> gameSettings,
+            toniarts.openkeeper.game.data.PlayerControlState state,
+            java.util.function.Function<com.simsilica.es.EntityId, toniarts.openkeeper.game.controller.room.IRoomController> rooms) {
         this.keeper = keeper;
 
         // Create the actual controllers
@@ -64,20 +71,51 @@ public final class PlayerController implements IPlayerController {
         creatureControl = new PlayerCreatureControl(keeper, imp, kwdFile.getCreatureList());
         roomControl = new PlayerRoomControl(keeper, kwdFile.getRooms());
         spellControl = new PlayerSpellControl(keeper, kwdFile.getKeeperSpells());
-        statsControl = new PlayerStatsControl();
+        statsControl = state == null ? new PlayerStatsControl() : PlayerStatsControl.restoreState(state.statistics(), id -> kwdFile.getCreature((short) id));
         doorControl = new PlayerDoorControl(keeper, kwdFile.getDoors());
         trapControl = new PlayerTrapControl(keeper, kwdFile.getTraps());
 
         // Don't create certain controls for neutral nor good player
         if (keeper.getId() != Player.GOOD_PLAYER_ID && keeper.getId() != Player.NEUTRAL_PLAYER_ID) {
-            manaControl = new PlayerManaControl(keeper, gameSettings);
-            handControl = new PlayerHandControl(keeper, (int) gameSettings.get(Variable.MiscVariable.MiscType.MAX_NUMBER_OF_THINGS_IN_HAND).getValue(), entityData);
+            manaControl = state == null ? new PlayerManaControl(keeper, gameSettings) : PlayerManaControl.restoreState(keeper);
+            handControl = state == null ? new PlayerHandControl(keeper, (int) gameSettings.get(Variable.MiscVariable.MiscType.MAX_NUMBER_OF_THINGS_IN_HAND).getValue(), entityData)
+                    : PlayerHandControl.restoreState(keeper, entityData, state.hand());
             researchControl = new PlayerResearchControl(keeper, kwdFile);
         } else {
             manaControl = null;
             handControl = null;
             researchControl = null;
         }
+        if (state != null) {
+            goldControl.setGoldMax(state.goldMax());
+            creatureControl.restoreGroups(state.creaturesAvailable(), state.creatures(), id -> kwdFile.getCreature((short) id),
+                    (toniarts.openkeeper.game.save.GameEntityData) entityData);
+            roomControl.restoreGroups(state.rooms(), state.portalsOpen(), state.dungeonHeart(), kwdFile::getRoomById, rooms);
+            roomControl.restoreIndex(state.roomResearch(), kwdFile::getRoomById, toniarts.openkeeper.game.data.ResearchableType.ROOM);
+            spellControl.restoreIndex(state.spells(), kwdFile::getKeeperSpellById, toniarts.openkeeper.game.data.ResearchableType.SPELL);
+            doorControl.restoreIndex(state.doors(), kwdFile::getDoorById, toniarts.openkeeper.game.data.ResearchableType.DOOR);
+            trapControl.restoreIndex(state.traps(), kwdFile::getTrapById, toniarts.openkeeper.game.data.ResearchableType.TRAP);
+        }
+    }
+
+    public toniarts.openkeeper.game.data.PlayerControlState captureState() {
+        return new toniarts.openkeeper.game.data.PlayerControlState(keeper.getId(), goldControl.getGoldMax(),
+                creatureControl.getImp() == null ? null : creatureControl.getImp().getId(),
+                creatureControl.getTypesAvailable().stream().map(Creature::getId).toList(), creatureControl.captureGroups(), roomControl.captureGroups(),
+                roomControl.isPortalsOpen(), roomControl.getDungeonHeart() == null ? null : roomControl.getDungeonHeart().getEntityId(),
+                roomControl.captureIndex(), spellControl.captureIndex(), doorControl.captureIndex(), trapControl.captureIndex(),
+                handControl == null ? null : handControl.captureState(), statsControl.captureState());
+    }
+
+    public static PlayerController restoreState(IKwdFile definition, Keeper keeper, toniarts.openkeeper.game.save.GameEntityData data,
+            toniarts.openkeeper.game.data.PlayerControlState state,
+            java.util.function.Function<com.simsilica.es.EntityId, toniarts.openkeeper.game.controller.room.IRoomController> rooms) {
+        if (keeper.getId() != state.playerId()) throw new IllegalArgumentException("Controller owner differs");
+        boolean hasHand = keeper.getId() != Player.GOOD_PLAYER_ID && keeper.getId() != Player.NEUTRAL_PLAYER_ID;
+        if (hasHand != (state.hand() != null)) throw new IllegalArgumentException("Wrong player control set");
+        Creature imp = state.impType() == null ? null : definition.getCreature(state.impType());
+        if (state.impType() != null && imp == null) throw new IllegalArgumentException("Unknown worker type");
+        return new PlayerController(definition, keeper, imp, data, Map.of(), state, rooms);
     }
 
     @Override

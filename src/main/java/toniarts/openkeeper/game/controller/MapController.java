@@ -163,6 +163,27 @@ public final class MapController extends Container implements IMapController {
         return result;
     }
 
+    public java.util.List<FlashTileControl.State> captureFlashControls() {
+        java.util.List<FlashTileControl.State> result = new ArrayList<>();
+        for (var control : controls.getArray()) {
+            if (!(control instanceof FlashTileControl flash)) throw new IllegalStateException("Unregistered map control: " + control.getClass().getName());
+            result.add(flash.captureState());
+        }
+        return java.util.List.copyOf(result);
+    }
+
+    /** Bind deadlines only; saved tile flags already reside in the entity store. */
+    public void restoreFlashControls(java.util.List<FlashTileControl.State> states) {
+        if (!controls.isEmpty()) throw new IllegalStateException("Map already has controls");
+        if (states.size() > 65_536) throw new IllegalArgumentException("Too many map controls");
+        var restored = new java.util.ArrayList<FlashTileControl>();
+        for (var state : states) {
+            for (Point point : state.points()) if (mapData.getTile(point) == null) throw new IllegalArgumentException("Flash tile outside map");
+            restored.add(FlashTileControl.restoreState(state));
+        }
+        restored.forEach(this::addControl);
+    }
+
     private void loadRooms() {
 
         // Go through the tiles and detect any rooms

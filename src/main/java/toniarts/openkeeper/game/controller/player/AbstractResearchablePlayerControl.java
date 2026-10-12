@@ -42,6 +42,46 @@ public abstract class AbstractResearchablePlayerControl<K extends IIndexable & C
         super(keeper, availabilitiesList, types);
     }
 
+    public final toniarts.openkeeper.game.data.PlayerControlState.ResearchIndex captureIndex() {
+        var entries = new java.util.ArrayList<toniarts.openkeeper.game.data.PlayerControlState.ResearchEntry>();
+        types.forEach((type, value) -> {
+            var binding = availabilitiesList.stream().anyMatch(item -> item == value)
+                    ? toniarts.openkeeper.game.data.PlayerControlState.Binding.CATALOG
+                    : keeper.getCurrentResearch() == value ? toniarts.openkeeper.game.data.PlayerControlState.Binding.CURRENT
+                    : toniarts.openkeeper.game.data.PlayerControlState.Binding.DETACHED;
+            if (type.getId() != value.getId()) throw new IllegalStateException("Research index identity differs");
+            entries.add(new toniarts.openkeeper.game.data.PlayerControlState.ResearchEntry(toniarts.openkeeper.game.data.KeeperState.Research.capture(value), binding));
+        });
+        return new toniarts.openkeeper.game.data.PlayerControlState.ResearchIndex(typesAvailable.stream().map(K::getId).toList(), entries);
+    }
+
+    /** Bind catalog/current identities without availability callbacks or research resets. */
+    @SuppressWarnings("unchecked")
+    public final void restoreIndex(toniarts.openkeeper.game.data.PlayerControlState.ResearchIndex state,
+            java.util.function.IntFunction<K> definition, toniarts.openkeeper.game.data.ResearchableType expectedType) {
+        if (!types.isEmpty()) throw new IllegalStateException("Research index already populated");
+        var available = new java.util.ArrayList<K>();
+        var values = new java.util.LinkedHashMap<K, V>();
+        for (short id : state.available()) {
+            K type = definition.apply(id);if (type == null) throw new IllegalArgumentException("Unknown available type");available.add(type);
+        }
+        if (!new java.util.HashSet<>(state.available()).equals(new java.util.HashSet<>(availabilitiesList.stream().map(ResearchableEntity::getId).toList())))
+            throw new IllegalArgumentException("Controller availability differs from keeper");
+        for (var entry : state.entries()) {
+            var value = entry.value();K type = definition.apply(value.id());
+            if (type == null || value.type() != expectedType) throw new IllegalArgumentException("Unknown/mismatched research index type");
+            ResearchableEntity restored = switch (entry.binding()) {
+                case CATALOG -> availabilitiesList.stream().filter(item -> item.getId() == value.id()).findFirst().orElseThrow(() -> new IllegalArgumentException("Missing research catalog binding"));
+                case CURRENT -> keeper.getCurrentResearch();
+                case DETACHED -> value.restore();
+            };
+            if (restored == null || !value.equals(toniarts.openkeeper.game.data.KeeperState.Research.capture(restored)))
+                throw new IllegalArgumentException("Research binding values differ");
+            values.put(type, (V) restored);
+        }
+        typesAvailable.clear();typesAvailable.addAll(available);types.putAll(values);
+    }
+
     @Override
     protected short getDataTypeId(V type) {
         return type.getId();

@@ -39,11 +39,39 @@ public final class PlayerRoomControl extends AbstractResearchablePlayerControl<R
 
     private int roomCount = 0;
     private boolean portalsOpen = true;
-    private final Map<Room, Set<IRoomController>> roomControllers = new HashMap<>();
+    private final Map<Room, Set<IRoomController>> roomControllers = new java.util.LinkedHashMap<>();
     private IRoomController dungeonHeart;
 
     public PlayerRoomControl(Keeper keeper, List<Room> rooms) {
         super(keeper, keeper.getAvailableRooms(), rooms);
+    }
+
+    public List<toniarts.openkeeper.game.data.PlayerControlState.Group> captureGroups() {
+        return roomControllers.entrySet().stream().map(e -> new toniarts.openkeeper.game.data.PlayerControlState.Group(e.getKey().getId(),
+                e.getValue().stream().map(IRoomController::getEntityId).toList())).toList();
+    }
+
+    public void restoreGroups(List<toniarts.openkeeper.game.data.PlayerControlState.Group> groups, boolean portalsOpen,
+            com.simsilica.es.EntityId primaryHeart, java.util.function.IntFunction<Room> definition,
+            java.util.function.Function<com.simsilica.es.EntityId, IRoomController> lookup) {
+        if (!roomControllers.isEmpty()) throw new IllegalStateException("Room index already populated");
+        var restored = new java.util.LinkedHashMap<Room, Set<IRoomController>>();int count = 0;
+        IRoomController heart = null;
+        for (var group : groups) {
+            var type = definition.apply(group.type());if (type == null) throw new IllegalArgumentException("Unknown room group");
+            Set<IRoomController> values = new LinkedHashSet<>();
+            for (var id : group.entities()) {
+                var room = lookup.apply(id);
+                if (room == null || room.getRoom().getId() != group.type() || room.getOwnerId() != keeper.getId()) throw new IllegalArgumentException("Room index binding differs");
+                values.add(room);
+                if (id.equals(primaryHeart)) {
+                    if (!room.isDungeonHeart()) throw new IllegalArgumentException("Primary room is not a heart");heart = room;
+                }
+            }
+            count += values.size();restored.put(type, values);
+        }
+        if (primaryHeart != null && heart == null) throw new IllegalArgumentException("Primary heart missing");
+        roomControllers.putAll(restored);roomCount = count;this.portalsOpen = portalsOpen;dungeonHeart = heart;
     }
 
     public void init(List<IRoomController> rooms) {

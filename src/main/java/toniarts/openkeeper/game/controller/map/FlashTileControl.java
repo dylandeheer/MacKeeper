@@ -47,6 +47,23 @@ public final class FlashTileControl extends Control {
         this.time = time;
     }
 
+    public record State(List<Point> points, short playerId, float remainingTime, boolean enabled) {
+        public State {
+            points = List.copyOf(points);
+            if (points.size() > 65_536 || playerId < 0 || playerId > 255 || !Float.isFinite(remainingTime))
+                throw new IllegalArgumentException("Invalid flash control");
+            for (Point point : points) if (point.x < 0 || point.y < 0) throw new IllegalArgumentException("Invalid flash tile");
+        }
+    }
+
+    public State captureState() { return new State(points, playerId, time, isEnabled()); }
+
+    public static FlashTileControl restoreState(State state) {
+        var result = new FlashTileControl();
+        result.points = new ArrayList<>(state.points());result.playerId = state.playerId();
+        result.time = state.remainingTime();result.setEnabled(state.enabled());return result;
+    }
+
     @Override
     protected void updateControl(float tpf) {
         if (time < 0) {

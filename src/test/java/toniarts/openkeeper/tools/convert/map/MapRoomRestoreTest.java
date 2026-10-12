@@ -84,6 +84,40 @@ class MapRoomRestoreTest {
         }
     }
 
+    @Test void flashDeadlinesPreserveDisabledOverlappingAndAlreadyExpiredControls() throws Exception {
+        try (var f = new Fixture()) {
+            var map = f.restore(f.state());
+            var point = new Point(0, 0);map.flashTiles(List.of(point), (short) 3, 1);map.update(1.25f);
+            assertTrue(map.getMapData().getTile(point).isFlashed((short) 3));
+            var deadline = map.captureFlashControls().getFirst();assertEquals(-.25f, deadline.remainingTime());
+            map.flashTiles(List.of(point), (short) 3, 5);
+            ((toniarts.openkeeper.game.controller.map.FlashTileControl) map.getControl(1)).setEnabled(false);
+            var states = MapControlSnapshots.decode(MapControlSnapshots.encode(map.captureFlashControls()));
+            var copy = f.restore(f.state());
+            int[] events = {0};
+            copy.addListener((toniarts.openkeeper.game.listener.MapListener) Proxy.newProxyInstance(
+                    toniarts.openkeeper.game.listener.MapListener.class.getClassLoader(), new Class<?>[]{toniarts.openkeeper.game.listener.MapListener.class},
+                    (p,m,a) -> {events[0]++;return null;}));
+            byte[] before = EntitySnapshots.encode(f.data.capture());copy.restoreFlashControls(states);
+            assertEquals(0, events[0]);assertArrayEquals(before, EntitySnapshots.encode(f.data.capture()));assertEquals(states, copy.captureFlashControls());
+            copy.update(.5f);assertFalse(copy.getMapData().getTile(point).isFlashed((short) 3));assertEquals(1, events[0]);
+            assertEquals(1, copy.getNumControls());assertEquals(5, copy.captureFlashControls().getFirst().remainingTime());
+            assertFalse(copy.captureFlashControls().getFirst().enabled());
+            assertThrows(IllegalStateException.class, () -> copy.restoreFlashControls(states));
+        }
+    }
+
+    @Test void invalidFlashLocationsRejectAllControlsBeforeBinding() throws Exception {
+        try (var f = new Fixture()) {
+            var map = f.restore(f.state());
+            var good = new toniarts.openkeeper.game.controller.map.FlashTileControl.State(List.of(new Point(0, 0)), (short) 3, 2, true);
+            var bad = new toniarts.openkeeper.game.controller.map.FlashTileControl.State(List.of(new Point(2, 0)), (short) 3, 2, true);
+            byte[] before = EntitySnapshots.encode(f.data.capture());
+            assertThrows(IllegalArgumentException.class, () -> map.restoreFlashControls(List.of(good, bad)));
+            assertEquals(0, map.getNumControls());assertArrayEquals(before, EntitySnapshots.encode(f.data.capture()));
+        }
+    }
+
     private static final class Fixture implements AutoCloseable {
         final GameEntityData data = new GameEntityData();
         final EntityId room = data.createEntity(), storage = data.createEntity(), furniture = data.createEntity();

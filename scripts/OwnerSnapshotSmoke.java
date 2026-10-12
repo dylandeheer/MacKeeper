@@ -19,7 +19,9 @@ import toniarts.openkeeper.tools.convert.map.KwdFile;
 class OwnerSnapshotSmoke {
     record Capture(GameEntityData.Snapshot entities, List<KeeperState> keepers,
             List<PlayerHandControl.State> hands, GameTimeController.State clock, List<GameTimer.State> timers,
-            LevelSnapshots.State level, Map<Short, PlayerStatsControl.State> statistics, List<RoomState> rooms) { }
+            LevelSnapshots.State level, Map<Short, PlayerStatsControl.State> statistics, List<RoomState> rooms, List<PlayerControlState> players,
+            List<toniarts.openkeeper.game.controller.map.FlashTileControl.State> flashes,
+            toniarts.openkeeper.game.logic.PlayerCreatureSystem.State creatureIndex) { }
 
     public static void main(String[] args) throws Exception {
         String base = Path.of(args[0]).toAbsolutePath().normalize() + "/";
@@ -43,6 +45,9 @@ class OwnerSnapshotSmoke {
                     var game = manager.getGameController();
                     var controller = game.getPlayerController((short) 3);
                     if (controller == null) return;
+                    ((MapController) game.getGameWorldController().getMapController()).flashTiles(List.of(new toniarts.openkeeper.utils.Point(0, 0)), (short) 3, 2);
+                    controller.getRoomControl().setPortalsOpen(false);
+                    controller.getKeeper().setMaxMana(controller.getKeeper().getMaxMana() + 123);
                     for (EntityId id : new TreeSet<>(data.findEntities(null, CreatureComponent.class, Owner.class))) {
                         if (data.getComponent(id, Owner.class).controlId != 3) continue;
                         game.getGameWorldController().pickUp(id, (short) 3);
@@ -50,7 +55,7 @@ class OwnerSnapshotSmoke {
                     }
                 });
                 for (int round = 0; round < 3; round++) {
-                    var capture = manager.captureSnapshot(game -> {
+                    var capture = manager.captureSnapshot((game, creatureIndex) -> {
                         try {
                             List<GameTimer.State> timers = new ArrayList<>();
                             for (int i = 0; i < 16; i++) timers.add(game.getLevelInfo().getTimer(i).captureState());
@@ -60,7 +65,9 @@ class OwnerSnapshotSmoke {
                                     game.getPlayerControllers().values().stream().map(IPlayerController::getHandControl).filter(Objects::nonNull).map(PlayerHandControl::captureState).toList(),
                                     ((GameTimeController) game.getGameTimer()).captureState(), List.copyOf(timers),
                                     new LevelSnapshots.State(LevelState.capture(game.getLevelInfo()), ((GameTimeController) game.getGameTimer()).captureState()), Map.copyOf(statistics),
-                                    ((MapController) game.getGameWorldController().getMapController()).captureRoomStates());
+                                    ((MapController) game.getGameWorldController().getMapController()).captureRoomStates(),
+                                    game.getPlayerControllers().values().stream().map(player -> ((PlayerController) player).captureState()).toList(),
+                                    ((MapController) game.getGameWorldController().getMapController()).captureFlashControls(), creatureIndex);
                         } catch (IOException e) { throw new UncheckedIOException(e); }
                     });
                     var staged = GameEntityData.restore(EntitySnapshots.decode(EntitySnapshots.encode(capture.entities())));
@@ -87,6 +94,21 @@ class OwnerSnapshotSmoke {
                                 staged, level, RoomSnapshots.decode(roomBytes));
                         require(Arrays.equals(roomBytes, RoomSnapshots.encode(map.captureRoomStates())), "Live room state differs");
                         require(Arrays.equals(beforeHands, EntitySnapshots.encode(staged.capture())), "Binding live rooms mutated entities");
+                        var flashes = MapControlSnapshots.decode(MapControlSnapshots.encode(capture.flashes()));
+                        map.restoreFlashControls(flashes);require(flashes.equals(map.captureFlashControls()), "Flash deadlines differ");
+                        List<IPlayerController> stagedPlayers = new ArrayList<>();
+                        for (var playerState : capture.players()) {
+                            var keeper = keepers.get(playerState.playerId());var beforeKeeper = keeper.captureState();
+                            byte[] playerBytes = PlayerControlSnapshots.encode(playerState);
+                            var player = PlayerController.restoreState(kwd, keeper, staged, PlayerControlSnapshots.decode(playerBytes), map::getRoomController);
+                            require(Arrays.equals(playerBytes, PlayerControlSnapshots.encode(player.captureState())), "Player control state differs");
+                            require(beforeKeeper.equals(keeper.captureState()), "Player construction changed keeper values/research");stagedPlayers.add(player);
+                        }
+                        var observed = CreatureIndexSnapshots.decode(CreatureIndexSnapshots.encode(capture.creatureIndex()));
+                        var creatureSystem = toniarts.openkeeper.game.logic.PlayerCreatureSystem.restoreState(staged, kwd, stagedPlayers, observed);
+                        try {require(observed.equals(creatureSystem.captureState()), "Observed creature cache differs");}
+                        finally {creatureSystem.stop();}
+                        require(Arrays.equals(beforeHands, EntitySnapshots.encode(staged.capture())), "Binding players/flash controls mutated entities");
                         List<PlayerHandControl> hands = new ArrayList<>();
                         for (var state : capture.hands()) {
                             var hand = PlayerHandControl.restoreState(keepers.get(state.playerId()), staged, HandSnapshots.decode(HandSnapshots.encode(state)));
@@ -108,7 +130,7 @@ class OwnerSnapshotSmoke {
                         }
                         Thread.sleep(300);
                         require(Arrays.equals(beforeHands, EntitySnapshots.encode(capture.entities())), "Staged hand/live play mutated capture");
-                        System.out.println("PASS " + name + " round=" + round + " keepers=" + keepers.size() + " hands=" + hands.size() + " rooms=" + capture.rooms().size() + " statOwners=" + capture.statistics().size() + " levelBytes=" + LevelSnapshots.encode(levelState).length
+                        System.out.println("PASS " + name + " round=" + round + " keepers=" + keepers.size() + " hands=" + hands.size() + " rooms=" + capture.rooms().size() + " controls=" + capture.players().size() + " flashes=" + capture.flashes().size() + " statOwners=" + capture.statistics().size() + " levelBytes=" + LevelSnapshots.encode(levelState).length
                                 + " carried=" + capture.hands().stream().mapToInt(h -> h.bottomToTop().size()).sum() + " ticks=" + capture.clock().ticks());
                     } finally { staged.close(); }
                 }
@@ -116,7 +138,7 @@ class OwnerSnapshotSmoke {
         }
         require(pickedUp > 0, "No actual pickup exercised");
         System.out.println("PASS 12 live owner captures; keeper round trips=" + ownerCount + " carried entity round trips=" + pickedUp);
-        System.out.println("Keeper/hand/level/time/statistics/map/room sections only. Full world restoration, resumed gameplay and complete save files remain unverified.");
+        System.out.println("Keeper/hand/level/time/statistics/map/room/player/flash/creature-index sections only. Full world restoration, resumed gameplay and complete save files remain unverified.");
     }
     static void require(boolean ok, String message) { if (!ok) throw new AssertionError(message); }
 }

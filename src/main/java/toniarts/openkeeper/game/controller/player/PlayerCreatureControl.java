@@ -37,6 +37,29 @@ public final class PlayerCreatureControl extends AbstractPlayerControl<Creature,
         this.imp = imp;
     }
 
+    public List<toniarts.openkeeper.game.data.PlayerControlState.Group> captureGroups() {
+        return types.entrySet().stream().map(e -> new toniarts.openkeeper.game.data.PlayerControlState.Group(e.getKey().getId(), List.copyOf(e.getValue()))).toList();
+    }
+
+    public void restoreGroups(List<Short> available, List<toniarts.openkeeper.game.data.PlayerControlState.Group> groups,
+            java.util.function.IntFunction<Creature> definition, toniarts.openkeeper.game.save.GameEntityData data) {
+        if (!types.isEmpty()) throw new IllegalStateException("Creature index already populated");
+        if (!new HashSet<>(available).equals(new HashSet<>(keeper.getAvailableCreatures()))) throw new IllegalArgumentException("Creature availability differs");
+        List<Creature> availableTypes = new ArrayList<>();Map<Creature, Set<EntityId>> restored = new LinkedHashMap<>();
+        for (short id : available) {
+            var type = definition.apply(id);if (type == null) throw new IllegalArgumentException("Unknown creature type");availableTypes.add(type);
+        }
+        int count = 0;
+        for (var group : groups) {
+            var type = definition.apply(group.type());if (type == null) throw new IllegalArgumentException("Unknown creature group");
+            for (var id : group.entities()) if (!data.wasAllocated(id)) throw new IllegalArgumentException("Creature index exceeds allocator");
+            // The ECS system can have pending death/ownership changes. Preserve its last observed index.
+            restored.put(type, new LinkedHashSet<>(group.entities()));
+            if (!isImp(type)) count += group.entities().size();
+        }
+        typesAvailable.clear();typesAvailable.addAll(availableTypes);types.putAll(restored);creatureCount = count;
+    }
+
     @Override
     protected short getDataTypeId(Short type) {
         return type;
@@ -55,7 +78,7 @@ public final class PlayerCreatureControl extends AbstractPlayerControl<Creature,
             creatureSet = new LinkedHashSet<>();
             put(creature, creatureSet);
         }
-        creatureSet.add(entityId);
+        if (!creatureSet.add(entityId)) return;
 
         // Listeners
         if (!isImp(creature)) {
@@ -67,9 +90,7 @@ public final class PlayerCreatureControl extends AbstractPlayerControl<Creature,
 
         // Delete
         Set<EntityId> creatureSet = get(creature);
-        if (creatureSet != null) {
-            creatureSet.remove(entityId);
-        }
+        if (creatureSet == null || !creatureSet.remove(entityId)) return;
 
         // Listeners
         if (!isImp(creature)) {
