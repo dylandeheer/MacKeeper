@@ -23,6 +23,7 @@ import com.simsilica.es.EntityId;
 import java.lang.System.Logger;
 import java.lang.System.Logger.Level;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -413,6 +414,23 @@ public final class GameController implements IGameLogicUpdatable, IGameControlle
     @Override
     public IGameTimer getGameTimer() {
         return gameTimer;
+    }
+
+    /** Staged level metadata; this does not create or replace a running world. */
+    public static ILevelInfo restoreLevelInfo(IKwdFile definition,
+            toniarts.openkeeper.game.data.LevelState state, Collection<Keeper> keepers) {
+        java.util.Objects.requireNonNull(definition);java.util.Objects.requireNonNull(state);
+        LevelInfo result = new LevelInfo(definition);
+        for (Keeper keeper : keepers) {
+            if (result.players.putIfAbsent(keeper.getId(), keeper) != null) {
+                throw new IllegalArgumentException("Duplicate restored keeper");
+            }
+        }
+        result.loadActionPoints();
+        result.flags.addAll(state.flags());
+        for (var timer : state.timers()) result.timers.add(GameTimer.restoreState(timer));
+        result.levelScore = state.score();result.timeLimit = state.timeLimit();result.paydayCycle = state.paydayCycle();
+        return result;
     }
 
     private static class LevelInfo implements ILevelInfo {

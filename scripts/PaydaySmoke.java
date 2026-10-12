@@ -2,7 +2,9 @@
 import java.nio.file.*;
 import java.lang.reflect.Proxy;
 import java.util.*;
-import com.simsilica.es.base.DefaultEntityData;
+import toniarts.openkeeper.game.save.*;
+import toniarts.openkeeper.game.data.*;
+import toniarts.openkeeper.game.logic.PaydaySystem;
 import toniarts.openkeeper.game.controller.*;
 import toniarts.openkeeper.game.controller.room.AbstractRoomController.ObjectType;
 import toniarts.openkeeper.game.component.*;
@@ -19,7 +21,7 @@ class PaydaySmoke {
         String base=Path.of(args[0]).toAbsolutePath()+"/";
         for(String name:List.of("Level1.kwd","Level2.kwd","Level17.kwd")) {
             IKwdFile kwd=KwdFile.load(base,Path.of(base,"Data/editor/maps",name));
-            DefaultEntityData data=new DefaultEntityData();
+            GameEntityData data=new GameEntityData();
             PlayerService service=(PlayerService)Proxy.newProxyInstance(PlayerService.class.getClassLoader(),new Class<?>[]{PlayerService.class},
                     (p,m,a)->m.getReturnType()==boolean.class?false:null);
             GameController game=new GameController(kwd,null,data,kwd.getVariables(),service);
@@ -42,6 +44,7 @@ class PaydaySmoke {
             game.processTick(.05f);
             var salary=data.getComponent(id,CreatureSalary.class);
             require(salary!=null&&salary.owed==raw.getAttributes().getPay(),"Wage not charged at authored time");
+            verifyRestoredPayday(game, data, kwd);
             var creature=world.getCreaturesController().createController(id);
             Point start = null;
             var map = world.getMapController().getMapData();
@@ -71,10 +74,25 @@ class PaydaySmoke {
             task.executeTask(creature,2);
             require(data.getComponent(id,Gold.class).gold==raw.getAttributes().getPay(),"Repeated task duplicated pay");
             require(game.getLevelInfo().getPaydayCycle()==1,"Cycle not exposed to triggers");
+            verifyRestoredPayday(game, data, kwd);
             game.stop();data.close();
-            System.out.println("PASS "+name+" first payday="+first+"; real steering/room/task collection and repeated-task conservation");
+            System.out.println("PASS "+name+" first payday="+first+"; real steering/room/task collection and repeated-task conservation; staged payday restore before/after collection");
         }
         System.out.println("Headless integration only; original-engine parity, sound, animation and full missions unverified.");
+    }
+    static void verifyRestoredPayday(GameController game, GameEntityData data, IKwdFile kwd) throws Exception {
+        // This probe is single-threaded, so the game is already at a stable boundary.
+        var level = LevelSnapshots.decode(LevelSnapshots.encode(new LevelSnapshots.State(
+                LevelState.capture(game.getLevelInfo()), ((GameTimeController) game.getGameTimer()).captureState())));
+        byte[] before = EntitySnapshots.encode(data.capture());
+        var restoredData = GameEntityData.restore(EntitySnapshots.decode(before));
+        var clock = new GameTimeController(level.clock());clock.start();
+        var payday = PaydaySystem.restoreState(restoredData, kwd, clock, kwd.getVariables(), new PaydaySystem.State(level.level().paydayCycle()));
+        try {
+            payday.start();payday.processTick(.05f);
+            require(Arrays.equals(before, EntitySnapshots.encode(restoredData.capture())), "Restore charged previous wages or changed ledger/mood");
+            require(payday.getCycle() == game.getLevelInfo().getPaydayCycle(), "Payday cycle changed on restore");
+        } finally {payday.stop();restoredData.close();}
     }
     static void require(boolean condition,String message){if(!condition)throw new AssertionError(message);}
 }

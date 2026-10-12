@@ -8,6 +8,7 @@ import java.util.concurrent.TimeUnit;
 import toniarts.openkeeper.game.component.*;
 import toniarts.openkeeper.game.controller.*;
 import toniarts.openkeeper.game.controller.player.PlayerHandControl;
+import toniarts.openkeeper.game.controller.player.PlayerStatsControl;
 import toniarts.openkeeper.game.data.*;
 import toniarts.openkeeper.game.save.*;
 import toniarts.openkeeper.game.state.loop.GameLoopManager;
@@ -17,7 +18,8 @@ import toniarts.openkeeper.tools.convert.map.KwdFile;
 /** Live keeper/hand/clock capture and staged owner binding, not a full restored session. */
 class OwnerSnapshotSmoke {
     record Capture(GameEntityData.Snapshot entities, List<KeeperState> keepers,
-            List<PlayerHandControl.State> hands, GameTimeController.State clock, List<GameTimer.State> timers) { }
+            List<PlayerHandControl.State> hands, GameTimeController.State clock, List<GameTimer.State> timers,
+            LevelSnapshots.State level, Map<Short, PlayerStatsControl.State> statistics) { }
 
     public static void main(String[] args) throws Exception {
         String base = Path.of(args[0]).toAbsolutePath().normalize() + "/";
@@ -52,9 +54,12 @@ class OwnerSnapshotSmoke {
                         try {
                             List<GameTimer.State> timers = new ArrayList<>();
                             for (int i = 0; i < 16; i++) timers.add(game.getLevelInfo().getTimer(i).captureState());
+                            Map<Short, PlayerStatsControl.State> statistics = new TreeMap<>();
+                            game.getPlayerControllers().forEach((id, player) -> statistics.put(id, player.getStatsControl().captureState()));
                             return new Capture(data.capture(), game.getLevelInfo().getPlayers().values().stream().map(Keeper::captureState).toList(),
                                     game.getPlayerControllers().values().stream().map(IPlayerController::getHandControl).filter(Objects::nonNull).map(PlayerHandControl::captureState).toList(),
-                                    ((GameTimeController) game.getGameTimer()).captureState(), List.copyOf(timers));
+                                    ((GameTimeController) game.getGameTimer()).captureState(), List.copyOf(timers),
+                                    new LevelSnapshots.State(LevelState.capture(game.getLevelInfo()), ((GameTimeController) game.getGameTimer()).captureState()), Map.copyOf(statistics));
                         } catch (IOException e) { throw new UncheckedIOException(e); }
                     });
                     var staged = GameEntityData.restore(EntitySnapshots.decode(EntitySnapshots.encode(capture.entities())));
@@ -65,6 +70,13 @@ class OwnerSnapshotSmoke {
                             var restored = Keeper.restoreState(KeeperSnapshots.decode(bytes), kwd.getPlayers().get(state.id()));
                             require(state.equals(restored.captureState()), "Keeper values differ: " + name + " player=" + state.id());
                             keepers.put(state.id(), restored);ownerCount++;
+                        }
+                        var levelState = LevelSnapshots.decode(LevelSnapshots.encode(capture.level()));
+                        var level = GameController.restoreLevelInfo(kwd, levelState.level(), keepers.values());
+                        require(levelState.level().equals(LevelState.capture(level)), "Level values differ");
+                        for (var state : capture.statistics().values()) {
+                            var statistics = PlayerStatsControl.restoreState(PlayerStatsSnapshots.decode(PlayerStatsSnapshots.encode(state)), id -> kwd.getCreature((short) id));
+                            require(state.equals(statistics.captureState()), "Interaction history differs");
                         }
                         byte[] beforeHands = EntitySnapshots.encode(staged.capture());
                         List<PlayerHandControl> hands = new ArrayList<>();
@@ -88,7 +100,7 @@ class OwnerSnapshotSmoke {
                         }
                         Thread.sleep(300);
                         require(Arrays.equals(beforeHands, EntitySnapshots.encode(capture.entities())), "Staged hand/live play mutated capture");
-                        System.out.println("PASS " + name + " round=" + round + " keepers=" + keepers.size() + " hands=" + hands.size()
+                        System.out.println("PASS " + name + " round=" + round + " keepers=" + keepers.size() + " hands=" + hands.size() + " statOwners=" + capture.statistics().size() + " levelBytes=" + LevelSnapshots.encode(levelState).length
                                 + " carried=" + capture.hands().stream().mapToInt(h -> h.bottomToTop().size()).sum() + " ticks=" + capture.clock().ticks());
                     } finally { staged.close(); }
                 }
@@ -96,7 +108,7 @@ class OwnerSnapshotSmoke {
         }
         require(pickedUp > 0, "No actual pickup exercised");
         System.out.println("PASS 12 live owner captures; keeper round trips=" + ownerCount + " carried entity round trips=" + pickedUp);
-        System.out.println("Keeper/hand sections and clock values only. Full world restoration, resumed gameplay and complete save files remain unverified.");
+        System.out.println("Keeper/hand/level/time/statistics sections only. Full world restoration, resumed gameplay and complete save files remain unverified.");
     }
     static void require(boolean ok, String message) { if (!ok) throw new AssertionError(message); }
 }

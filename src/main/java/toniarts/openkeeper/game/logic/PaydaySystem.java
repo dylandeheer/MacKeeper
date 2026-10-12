@@ -29,6 +29,32 @@ public final class PaydaySystem implements IGameLogicUpdatable {
         creatures = data.getEntities(CreatureComponent.class, Owner.class, Health.class);
     }
 
+    public record State(long cycle) {
+        public State {
+            if (cycle < 0) throw new IllegalArgumentException("Negative payday cycle");
+        }
+    }
+
+    public State captureState() { return new State(cycle); }
+
+    /** Bind saved cycle without charging salary or clearing anger on startup. */
+    public static PaydaySystem restoreState(EntityData data, IKwdFile kwd, IGameTimer timer,
+            Map<Variable.MiscVariable.MiscType, Variable.MiscVariable> settings, State state) {
+        java.util.Objects.requireNonNull(state);
+        PaydaySystem result = new PaydaySystem(data, kwd, timer, settings);
+        double now = timer.getGameTime();
+        if (!Double.isFinite(now) || now < 0 || state.cycle() > result.reachedCycle(now)) {
+            result.stop();
+            throw new IllegalArgumentException("Payday cycle exceeds saved game time");
+        }
+        result.cycle = state.cycle();
+        return result;
+    }
+
+    private long reachedCycle(double now) {
+        return now < first ? 0 : 1 + (long) Math.floor((now - first) / frequency);
+    }
+
     private static double value(Map<Variable.MiscVariable.MiscType, Variable.MiscVariable> settings, Variable.MiscVariable.MiscType type) {
         var variable = settings.get(type);
         if (variable == null || !Float.isFinite(variable.getValue())) throw new IllegalArgumentException("Missing/invalid " + type);
@@ -72,7 +98,7 @@ public final class PaydaySystem implements IGameLogicUpdatable {
         synchronized (GameWorldController.GOLD_LOCK) {
             creatures.applyChanges();
             double now = timer.getGameTime();
-            long reached = now < first ? 0 : 1 + (long) Math.floor((now - first) / frequency);
+            long reached = reachedCycle(now);
             long elapsed = Math.max(0, reached - cycle);
             double dueAt = first + cycle * frequency;
             for (Entity entity : creatures) {
