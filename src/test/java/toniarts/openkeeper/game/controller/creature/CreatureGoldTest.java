@@ -36,6 +36,15 @@ class CreatureGoldTest {
         assertEquals(250, piles.stream().mapToInt(Integer::intValue).sum());
     }
 
+    @Test void pickupAfterCapacityReductionCannotDuplicateCarriedGold() throws Exception {
+        CreatureController controller = creature(150, 100);
+        data.setComponent(imp, new Gold(150, 100));
+        controller.addGold(10);
+        assertEquals(150, controller.getGold());
+        assertEquals(List.of(10), piles);
+        assertEquals(160, controller.getGold() + piles.stream().mapToInt(Integer::intValue).sum());
+    }
+
     @Test void emptyPurseCreatesNoObject() throws Exception {
         creature(0, 100).dropGold();
         assertTrue(piles.isEmpty());
