@@ -296,6 +296,7 @@ public abstract class AbstractRoomController extends AbstractRoomInformation imp
 
     @Override
     public void destroy() {
+        roomInstance.setDestroyed(true);
         RoomComponent roomComponent = new RoomComponent(getRoomComponent());
         roomComponent.destroyed = true;
         entityData.setComponent(entityId, roomComponent);

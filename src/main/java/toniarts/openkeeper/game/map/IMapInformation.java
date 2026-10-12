@@ -17,6 +17,7 @@
 package toniarts.openkeeper.game.map;
 
 import toniarts.openkeeper.utils.Point;
+import com.simsilica.es.EntityId;
 import java.util.List;
 import toniarts.openkeeper.tools.convert.map.Terrain;
 
@@ -34,6 +35,11 @@ public interface IMapInformation<T extends IMapTileInformation> {
      * @return the map data
      */
     IMapDataInformation<T> getMapData();
+
+    /** Runtime room state, unavailable for raw map previews. */
+    default IRoomInformation getRoomInformation(EntityId entityId) {
+        return null;
+    }
 
     /**
      * Sets some specified map tiles in place (updates the map data)

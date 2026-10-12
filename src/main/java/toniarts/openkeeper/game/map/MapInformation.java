@@ -21,6 +21,8 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
+import java.util.function.Function;
+import com.simsilica.es.EntityId;
 import toniarts.openkeeper.game.data.Keeper;
 import toniarts.openkeeper.tools.convert.map.IKwdFile;
 import toniarts.openkeeper.tools.convert.map.Player;
@@ -41,10 +43,23 @@ public final class MapInformation<T extends IMapDataInformation<S>, S extends IM
     private final IKwdFile kwdFile;
     private final Map<Short, Keeper> playersById;
 
+    private final Function<EntityId, ? extends IRoomInformation> roomLookup;
+
     public MapInformation(T mapData, IKwdFile kwdFile, Collection<Keeper> players) {
+        this(mapData, kwdFile, players, id -> null);
+    }
+
+    public MapInformation(T mapData, IKwdFile kwdFile, Collection<Keeper> players,
+            Function<EntityId, ? extends IRoomInformation> roomLookup) {
+        this.roomLookup = roomLookup;
         this.mapData = mapData;
         this.kwdFile = kwdFile;
         playersById = players.stream().collect(Collectors.toMap(Keeper::getId, keeper -> keeper));
+    }
+
+    @Override
+    public IRoomInformation getRoomInformation(EntityId entityId) {
+        return entityId == null ? null : roomLookup.apply(entityId);
     }
 
     @Override
@@ -141,6 +156,8 @@ public final class MapInformation<T extends IMapDataInformation<S>, S extends IM
         // See if the terrain is claimable at all
         boolean claimable = false;
         if (terrain.getFlags().contains(Terrain.TerrainFlag.ROOM)) {
+            IRoomInformation room = getRoomInformation(tile.getRoomId());
+            if (room != null && room.isDestroyed()) return false;
             if (tile.getOwnerId() == Player.NEUTRAL_PLAYER_ID || !playersById.get(playerId).isAlly(tile.getOwnerId())) {
                 claimable = true;
             }

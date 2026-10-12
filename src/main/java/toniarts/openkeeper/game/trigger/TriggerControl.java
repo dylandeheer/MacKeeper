@@ -287,9 +287,9 @@ public class TriggerControl extends Control {
                 break;
 
             case COLLAPSE_HERO_GATE:
-                // TODO this
                 p = new Point(trigger.getUserData("posX", int.class) - 1,
                         trigger.getUserData("posY", int.class) - 1);
+                mapController.collapseHeroGate(p);
                 break;
 
             case SET_CREATURE_MOODS:

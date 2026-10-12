@@ -40,6 +40,8 @@ import toniarts.openkeeper.game.map.MapTileController;
 import toniarts.openkeeper.tools.convert.map.IKwdFile;
 import toniarts.openkeeper.tools.convert.map.Player;
 import toniarts.openkeeper.tools.convert.map.Terrain;
+import toniarts.openkeeper.tools.convert.map.Room;
+import toniarts.openkeeper.utils.WorldUtils;
 import toniarts.openkeeper.tools.convert.map.Variable;
 import toniarts.openkeeper.utils.Point;
 
@@ -91,7 +93,7 @@ public final class MapController extends Container implements IMapController {
         this.gameSettings = gameSettings;
         this.gameTimer = gameTimer;
         this.entityData = entityData;
-        this.mapInformation = new MapInformation(mapData, kwdFile, levelInfo.getPlayers().values());
+        this.mapInformation = new MapInformation<>(mapData, kwdFile, levelInfo.getPlayers().values(), roomControllers::get);
         this.levelInfo = levelInfo;
 
         // Load rooms
@@ -725,6 +727,44 @@ public final class MapController extends Container implements IMapController {
         }
 
         notifyTileChange(tile.getLocation());
+    }
+
+    @Override
+    public boolean collapseHeroGate(Point point) {
+        synchronized (GameWorldController.GOLD_LOCK) {
+            IRoomController room = getCollapsibleHeroGate(point);
+            if (room == null || room.isDestroyed()) return false;
+            room.destroy();
+            room.setHealth(0);
+            for (Point coordinate : room.getRoomInstance().getCoordinates()) {
+                mapData.getTile(coordinate).setHealth(0);
+            }
+            notifyTileChange(room.getRoomInstance().getCoordinates());
+            return true;
+        }
+    }
+
+    private IRoomController getCollapsibleHeroGate(Point point) {
+        IRoomController room = getRoomControllerByCoordinates(point);
+        if (room != null) return room.getRoom().isHeroGate() ? room : null;
+        IMapTileController tile = mapData.getTile(point);
+        if (tile == null || !getTerrain(tile).getFlags().contains(Terrain.TerrainFlag.SOLID)) return null;
+
+        // Level 7 targets the wall immediately beside its southern 3x1 gate.
+        // Accept a unique adjacent wall gate; never guess between multiple gates.
+        IRoomController candidate = null;
+        for (Point neighbor : WorldUtils.getSurroundingTiles(mapData, point, false)) {
+            IRoomController adjacent = getRoomControllerByCoordinates(neighbor);
+            if (adjacent == null || adjacent.getRoom().getTileConstruction() != Room.TileConstruction.HERO_GATE_3_BY_1) continue;
+            if (candidate != null && candidate != adjacent) return null;
+            candidate = adjacent;
+        }
+        return candidate;
+    }
+
+    @Override
+    public IRoomController getRoomInformation(EntityId entityId) {
+        return roomControllers.get(entityId);
     }
 
     private float getLevelVariable(Variable.MiscVariable.MiscType variable) {

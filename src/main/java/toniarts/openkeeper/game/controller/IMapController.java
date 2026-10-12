@@ -158,6 +158,9 @@ public interface IMapController extends IMapInformation<IMapTileController>, IGa
      */
     void alterTerrain(Point pos, short terrainId, short playerId);
 
+    /** Collapse the complete hero gate at this tile, preserving its footprint and ruins. */
+    boolean collapseHeroGate(Point point);
+
     /**
      * Set specified tiles flashing for certain period of time
      *

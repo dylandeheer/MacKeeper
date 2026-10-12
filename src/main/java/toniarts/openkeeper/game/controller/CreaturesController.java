@@ -553,6 +553,10 @@ public final class CreaturesController implements ICreaturesController {
 
     @Override
     public void spawnHeroParty(short partyId, PartyType partyType, Vector2f position) {
+        var gate = mapController.getRoomControllerByCoordinates(WorldUtils.vectorToPoint(position));
+        if (gate != null && gate.getRoom().isHeroGate() && gate.isDestroyed()) {
+            return;
+        }
         /**
          * In the game manual it is said that it is entirely possible to have multiple parties with the same
          * party ID, the old party just isn't controlled anymore

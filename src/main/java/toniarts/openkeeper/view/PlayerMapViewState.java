@@ -95,7 +95,7 @@ public abstract class PlayerMapViewState extends AbstractAppState implements Map
         }
 
         // Load and update rooms
-        mapRoomContainer = new MapRoomContainer(entityData, kwdFile);
+        mapRoomContainer = new MapRoomContainer(entityData, kwdFile, this::updateTiles);
 
         // Make sure we load the whole map before we continue
         mapTileContainer = new MapTileContainer(entityData, kwdFile, this::updateTiles) {
@@ -136,7 +136,7 @@ public abstract class PlayerMapViewState extends AbstractAppState implements Map
 
         };
 
-        mapInformation = new MapInformation(mapTileContainer, kwdFile, players);
+        mapInformation = new MapInformation<>(mapTileContainer, kwdFile, players, mapRoomContainer::getRoomInformation);
 
         fogOfWarController = new FogOfWarController(entityData, kwdFile, mapTileContainer, playerId,
                 this::updateTiles, enemySightedNotifier);

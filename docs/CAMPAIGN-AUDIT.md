@@ -8,7 +8,6 @@ The parser loaded all **66 maps**, including **24 campaign variants**, **5 secre
 
 | Trigger | Occurrences | Campaign maps | Source finding |
 |---|---:|---:|---|
-| `COLLAPSE_HERO_GATE` | 59 | 14 | TriggerControl reads coordinates without collapsing the gate. |
 | `MAKE_OBJECTIVE` | 59 | 21 | PlayerTriggerControl supports neither active markers nor clearing them. |
 | `LEVEL_PAY_DAY` | 1 | 1 | TriggerControl always returns false; no payday system is present. |
 | `DISPLAY_OBJECTIVE` | 1 | 1 | PlayerTriggerControl reads the objective and zooms without displaying it. |
@@ -26,6 +25,20 @@ With JDK 25 and the same local data, reproduce the real-map check with:
 ```sh
 scripts/verify-room-ownership.sh "/path/to/Dungeon Keeper II"
 ```
+
+## Implemented dependency: hero-gate collapse
+
+`COLLAPSE_HERO_GATE` now marks the entire 2×2 or 3×1 gate destroyed while retaining its footprint, room identity and ruins. Later party spawns at a collapsed gate are suppressed, and destroyed rooms are excluded from claim tasks. Runtime room state reaches the renderer through the room entity update path, including changes that arrive separately from tile updates. Both gate constructors use the original destroyed models; the 3×1 path also fixes the missing underscore in the inherited destroyed-wall filenames.
+
+Seven synthetic tests cover repeated/invalid requests, complete-footprint state, party lifecycle, live redraw/model selection, and the adjacent-wall rule below. A headless check applied all **67 commands across 17 shipped maps** (59 commands in 14 campaign maps), retained each gate's footprint and verified zero health/idempotence. It also successfully constructed both destroyed gate types using the user's converted models. No retail assets are included in the tests or repository.
+
+**Compatibility inference:** `level7.kwd` trigger 65441 targets reinforced wall `(35,41)`, beside a 3×1 gate at `(32..34,41)`. The resolver therefore accepts a solid-wall target when exactly one 3×1 gate is cardinally adjacent. Floor targets and ambiguous matches do nothing. The data layout supports this rule, but its exact equivalence to the original engine remains unverified.
+
+```sh
+scripts/verify-gate-collapse.sh "/path/to/Dungeon Keeper II" "/path/to/Converted"
+```
+
+The smoke check proves controller state and model construction, not actual campaign progression, original animation/sound timing, network-session behavior or rendered visual fidelity. Those remain acceptance work.
 
 ## Reproduce
 
