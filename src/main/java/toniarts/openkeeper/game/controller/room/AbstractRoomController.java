@@ -378,8 +378,17 @@ public abstract class AbstractRoomController extends AbstractRoomInformation imp
     @Override
     public void captured(short playerId) {
 
-        // Nothing, hmm, should we move some logic here from the MapController
+        roomInstance.setOwnerId(playerId);
         entityData.setComponent(entityId, new Owner(playerId, playerId));
+        for (EntityId furniture : floorFurniture) {
+            entityData.setComponent(furniture, new Owner(playerId, playerId));
+        }
+        for (EntityId furniture : wallFurniture) {
+            entityData.setComponent(furniture, new Owner(playerId, playerId));
+        }
+        for (EntityId pillar : pillars) {
+            entityData.setComponent(pillar, new Owner(playerId, playerId));
+        }
 
         // Notify the controls
         for (IRoomObjectControl control : objectControls.values()) {

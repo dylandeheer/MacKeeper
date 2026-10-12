@@ -35,7 +35,14 @@ The original retail game data is a local test dependency and must never be commi
 - On Apple M1 Max, the bundled ARM64 Java 25 app initialized OpenGL 4.1 and OpenAL, played the Bullfrog intro, displayed the main menu, campaign map and mission briefing, and loaded campaign mission 1.
 - Visually verified Escape pause and resume and a running dungeon after the opening cinematic. This does not establish mission completion or campaign compatibility.
 - Fixed two errors found by actual launch: Cocoa rejects setting a normal window icon; the video material required GLSL150 and the engine's GLSL compatibility header for the core OpenGL profile.
-- All 47 automated tests pass, including setup/game launch isolation, property persistence and synthetic data validation. Mac packaging and bundled command-line help/data checks pass locally; remote CI status is separate.
+- All 65 automated tests pass, including setup/game launch isolation, property persistence and synthetic data validation. Mac packaging and bundled command-line help/data checks pass locally; remote CI status is separate.
 - Development builds use an ad hoc local signature. Developer ID signing/notarization and Intel hardware testing remain pending.
 
 Log4j runtime constraints were updated from the upstream 2.15.0 dependency to 2.26.1, documented in [Apache's release notes](https://logging.apache.org/log4j/2.x/release-notes.html). Other inherited dependencies still need a full release audit.
+
+## Simulation follow-up
+
+- Implemented imp gold drops with bounded piles and retry coverage.
+- Implemented scripted and normal room capture through one ownership/accounting path, with serialized construction and hand actions. Fixed gold duplication when a deposit spans several rooms and guarded deposits into destroyed/inactive-owner rooms.
+- Added dungeon-heart replacement and null-safe camera/hero-objective handling when the last heart is lost.
+- Parsed all 66 shipped maps and verified trigger links; all three real Level 17 room transfers pass a headless check. See [CAMPAIGN-AUDIT.md](CAMPAIGN-AUDIT.md) for evidence limits and remaining script dependencies and [COMPLETION-PLAN.md](COMPLETION-PLAN.md) for the full scope. No mission completion is claimed by these checks.

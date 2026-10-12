@@ -18,13 +18,16 @@ package toniarts.openkeeper.game.controller.player;
 
 import com.jme3.util.SafeArrayList;
 import toniarts.openkeeper.game.data.Keeper;
+import toniarts.openkeeper.game.controller.room.IRoomController;
+import toniarts.openkeeper.game.controller.room.AbstractRoomController.ObjectType;
+import toniarts.openkeeper.game.listener.RoomListener;
 import toniarts.openkeeper.game.listener.PlayerGoldListener;
 
 /**
  *
  * @author ArchDemon
  */
-public final class PlayerGoldControl {
+public final class PlayerGoldControl implements RoomListener {
 
     private int goldMax = 0;
     private final Keeper keeper;
@@ -52,6 +55,29 @@ public final class PlayerGoldControl {
         }
         return false;
     }
+
+    @Override
+    public void onCaptured(IRoomController room) {
+        transferRoomStorage(room, 1);
+    }
+
+    @Override
+    public void onCapturedByEnemy(IRoomController room) {
+        transferRoomStorage(room, -1);
+    }
+
+    private void transferRoomStorage(IRoomController room, int direction) {
+        if (!room.canStoreGold()) return;
+        var storage = room.getObjectControl(ObjectType.GOLD);
+        goldMax += direction * storage.getMaxCapacity();
+        keeper.setGold(keeper.getGold() + direction * storage.getCurrentCapacity());
+        // Captured treasure changes spendable gold, not the amount mined.
+        updateListeners();
+    }
+
+    // Build/sale capacity accounting is performed by GameWorldController.
+    @Override public void onBuild(IRoomController room) { }
+    @Override public void onSold(IRoomController room) { }
 
     public void addListener(PlayerGoldListener listener) {
         listeners.add(listener);

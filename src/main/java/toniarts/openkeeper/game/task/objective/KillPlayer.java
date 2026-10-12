@@ -44,7 +44,7 @@ public final class KillPlayer extends AbstractObjectiveTask {
     protected final ILevelInfo levelInfo;
 
     public KillPlayer(final INavigationService navigationService, final IMapController mapController, final ILevelInfo levelInfo, short targetPlayerId, ICreatureController creature) {
-        super(navigationService, mapController, levelInfo.getPlayer(targetPlayerId).getDungeonHeartLocation(), creature.getOwnerId());
+        super(navigationService, mapController, heartLocation(levelInfo, targetPlayerId), creature.getOwnerId());
 
         this.targetPlayerId = targetPlayerId;
         this.creature = creature;
@@ -64,8 +64,12 @@ public final class KillPlayer extends AbstractObjectiveTask {
 
     @Override
     public Vector2f getTarget(ICreatureController creature) {
+        if (isPlayerDestroyed()) return null;
+        var room = mapController.getRoomControllerByCoordinates(getTaskLocation());
+        if (room == null || room.isDestroyed() || room.getOwnerId() != targetPlayerId) return null;
         Point location = creature.getCreatureCoordinates();
-        List<Point> points = mapController.getRoomControllerByCoordinates(getTaskLocation()).getRoomInstance().getCoordinates();
+        List<Point> points = room.getRoomInstance().getCoordinates();
+        if (points.isEmpty()) return null;
         Point result = points.get(0);
         double temp = result.distance(location);
 
@@ -73,6 +77,7 @@ public final class KillPlayer extends AbstractObjectiveTask {
             // TODO check is point accessible by creature?
             if (point.distance(location) < temp) {
                 result = point;
+                temp = point.distance(location);
             }
         }
 
@@ -85,14 +90,23 @@ public final class KillPlayer extends AbstractObjectiveTask {
 
     }
 
+    private static Point heartLocation(ILevelInfo levelInfo, short playerId) {
+        var player = levelInfo.getPlayer(playerId);
+        return player == null ? null : player.getDungeonHeartLocation();
+    }
+
     private boolean isPlayerDestroyed() {
-        return levelInfo.getPlayer(targetPlayerId).isDestroyed();
+        var player = levelInfo.getPlayer(targetPlayerId);
+        return player == null || player.isDestroyed() || player.getDungeonHeartLocation() == null
+                || !player.getDungeonHeartLocation().equals(getTaskLocation());
     }
 
     private void createSubTasks() {
 
         // See if we can navigate there
-        GraphPath<IMapTileInformation> outPath = navigationService.findPath(creature.getCreatureCoordinates(), WorldUtils.vectorToPoint(getTarget(creature)), creature.getParty() != null ? creature.getParty() : creature);
+        Vector2f target = getTarget(creature);
+        if (target == null) return;
+        GraphPath<IMapTileInformation> outPath = navigationService.findPath(creature.getCreatureCoordinates(), WorldUtils.vectorToPoint(target), creature.getParty() != null ? creature.getParty() : creature);
         if (outPath != null) {
             Iterator<IMapTileInformation> iter = outPath.iterator();
             IMapTileInformation lastPoint = null;

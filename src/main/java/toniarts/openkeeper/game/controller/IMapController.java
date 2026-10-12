@@ -138,6 +138,9 @@ public interface IMapController extends IMapInformation<IMapTileController>, IGa
      */
     void applyClaimTile(Point point, short playerId);
 
+    /** Transfer a whole room to an active player; return false for a missing room/player or unchanged owner. */
+    boolean changeRoomOwner(Point point, short playerId);
+
     /**
      * Heal a tile
      *

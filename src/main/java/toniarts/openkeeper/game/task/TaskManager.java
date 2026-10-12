@@ -702,7 +702,13 @@ public final class TaskManager implements ITaskManager, IGameLogicUpdatable {
                 break;
             }
             case KILL_PLAYER: {
-                task = new KillPlayer(navigationService, mapController, levelInfo, creature.getObjectiveTargetPlayerId(), creature);
+                Short targetPlayerId = creature.getObjectiveTargetPlayerId();
+                if (targetPlayerId == null) return false;
+                Keeper targetPlayer = levelInfo.getPlayer(targetPlayerId);
+                if (targetPlayer == null || targetPlayer.isDestroyed() || targetPlayer.getDungeonHeartLocation() == null) {
+                    return false;
+                }
+                task = new KillPlayer(navigationService, mapController, levelInfo, targetPlayerId, creature);
                 break;
             }
         }

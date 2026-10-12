@@ -162,6 +162,9 @@ public final class MapController extends Container implements IMapController {
     private void findRoom(Point p, RoomInstance roomInstance) {
         IMapTileController tile = getMapData().getTile(p);
 
+        if (tile == null || tile.getOwnerId() != roomInstance.getOwnerId()) {
+            return;
+        }
         // Get the terrain
         Terrain terrain = kwdFile.getTerrain(tile.getTerrainId());
         if (!terrain.getFlags().contains(Terrain.TerrainFlag.ROOM)) {
@@ -642,35 +645,38 @@ public final class MapController extends Container implements IMapController {
             IMapTileController roomTile = getMapData().getTile(p);
             if (applyDamage(roomTile, damagePerTile)) {
 
-                // If one of the tiles runs out (everyone should run out of the same time, unless a new tile has recently being added..)
-                for (Point p2 : roomTiles) {
-                    roomTile = getMapData().getTile(p2);
-                    roomTile.setOwnerId(playerId); // Claimed!
-                    applyHealing(roomTile, tile.getMaxHealth());
-
-//                    effectManager.load(worldNode,
-//                            WorldUtils.pointToVector3f(point).addLocal(0, MapViewController.FLOOR_HEIGHT, 0),
-//                            tile.getTerrain().getMaxHealthEffectId(), false);
-//
-//                    // FIXME ROOM_CLAIM_ID is realy claim effect?
-//                    effectManager.load(worldNode,
-//                            WorldUtils.pointToVector3f(p2).addLocal(0, MapViewController.FLOOR_HEIGHT, 0),
-//                            room.getRoom().getEffects().get(EffectManagerState.ROOM_CLAIM_ID), false);
-                    // TODO: Claimed room wall tiles lose the claiming I think?
-                }
-
-                // Notify
-                notifyTileChange(roomTiles);
-                room.captured(playerId);
-                room.setHealth(room.getMaxHealth());
-                notifyOnCapturedByEnemy(owner, room);
-                notifyOnCaptured(playerId, room);
+                changeRoomOwner(point, playerId);
                 return;
             }
             currentHealth += roomTile.getHealth();
         }
 
         room.setHealth(currentHealth);
+    }
+
+    @Override
+    public boolean changeRoomOwner(Point point, short playerId) {
+        // Capture and keeper actions share the same lock as gold storage changes.
+        synchronized (GameWorldController.GOLD_LOCK) {
+            IRoomController room = getRoomControllerByCoordinates(point);
+            if (room == null || room.isDestroyed() || levelInfo.getPlayer(playerId) == null
+                    || room.getOwnerId() == playerId) {
+                return false;
+            }
+            short previousOwner = room.getOwnerId();
+            List<Point> coordinates = room.getRoomInstance().getCoordinates();
+            for (Point coordinate : coordinates) {
+                IMapTileController tile = mapData.getTile(coordinate);
+                tile.setOwnerId(playerId);
+                tile.setHealth(tile.getMaxHealth());
+            }
+            room.captured(playerId);
+            room.setHealth(room.getMaxHealth());
+            notifyOnCapturedByEnemy(previousOwner, room);
+            notifyOnCaptured(playerId, room);
+            notifyTileChange(coordinates);
+            return true;
+        }
     }
 
     public int mineGold(IMapTileController tile, int amount) {

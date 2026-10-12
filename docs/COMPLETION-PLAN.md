@@ -15,6 +15,7 @@ The active objective is the full game, with original-data compatibility and a us
 ## Current source findings
 
 - `CreatureController.dropGold()` was empty despite being called by working imps when full and no treasury task can be assigned. The first correction now drops bounded piles and debits each completed pile; five regression tests pass.
+- Room capture now transfers metadata, storage ownership and gold/capacity consistently with build/sale and hand actions. Thirteen regression tests and a real Level 17 transfer smoke test pass; room-specific occupant behavior and full mission progression remain unverified.
 - `GameController` constructs creature/task/trigger systems, but no strategic computer-keeper system is present. Lobby AI selection alone does not implement an opponent.
 - `TriggerControl` and specialized controls contain unimplemented actions and conditions. The [shipped-map inventory](CAMPAIGN-AUDIT.md) is used to prioritize actual campaign dependencies; source TODO counts are not a completeness metric.
 - Save/load must cover server simulation state, not merely serialize view state or menus. No complete implementation is present yet.

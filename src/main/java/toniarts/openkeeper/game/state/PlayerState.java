@@ -405,7 +405,10 @@ public final class PlayerState extends AbstractAppState implements PlayerListene
     }
 
     public void zoomToDungeon() {
-        cameraState.setCameraLookAt(stateManager.getState(GameClientState.class).getPlayer(playerId).getDungeonHeartLocation());
+        Point heart = stateManager.getState(GameClientState.class).getPlayer(playerId).getDungeonHeartLocation();
+        if (heart != null) {
+            cameraState.setCameraLookAt(heart);
+        }
     }
 
     /**

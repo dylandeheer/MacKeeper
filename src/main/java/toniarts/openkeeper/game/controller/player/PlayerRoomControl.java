@@ -79,7 +79,7 @@ public final class PlayerRoomControl extends AbstractResearchablePlayerControl<R
             roomSet = new LinkedHashSet<>();
             roomControllers.put(room.getRoom(), roomSet);
         }
-        roomSet.add(room);
+        if (!roomSet.add(room)) return;
         roomCount++;
         if (dungeonHeart == null && room.isDungeonHeart()) {
             dungeonHeart = room;
@@ -102,9 +102,15 @@ public final class PlayerRoomControl extends AbstractResearchablePlayerControl<R
 
         // Delete
         Set<IRoomController> roomSet = roomControllers.get(room.getRoom());
-        if (roomSet != null) {
-            roomSet.remove(room);
+        if (roomSet != null && roomSet.remove(room)) {
             roomCount--;
+            if (dungeonHeart == room) {
+                dungeonHeart = roomControllers.values().stream()
+                        .flatMap(Set::stream)
+                        .filter(IRoomController::isDungeonHeart)
+                        .findFirst().orElse(null);
+                keeper.setDungeonHeartLocation(dungeonHeart == null ? null : dungeonHeart.getRoomInstance().getCenter());
+            }
         }
     }
 
