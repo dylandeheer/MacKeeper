@@ -447,15 +447,16 @@ public final class GameClientState extends AbstractPauseAwareState {
         }
 
         @Override
-        public void onGoldChange(short keeperId, int gold) {
-            getPlayer(keeperId).setGold(gold);
-
-            // FIXME: See in what thread we are
-            if (playerState != null && playerState.getPlayerId() == keeperId) {
-                app.enqueue(() -> {
-                    playerState.onGoldChange(keeperId, gold);
-                });
-            }
+        public void onGoldChange(short keeperId, long gold, int goldReserve) {
+            app.enqueue(() -> {
+                Keeper keeper = getPlayer(keeperId);
+                if (keeper == null) return;
+                keeper.setGold(gold);
+                keeper.setGoldReserve(goldReserve);
+                if (playerState != null && playerState.getPlayerId() == keeperId) {
+                    playerState.onGoldChange(keeperId, gold, goldReserve);
+                }
+            });
         }
 
         @Override

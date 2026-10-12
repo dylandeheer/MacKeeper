@@ -184,7 +184,7 @@ public final class GameWorldController implements IGameWorldController, IPlayerA
         for (Keeper keeper : players.values()) {
             Player player = kwdFile.getPlayer(keeper.getId());
             if (player.getStartingGold() > 0) {
-                addGold(keeper.getId(), player.getStartingGold());
+                playerControllers.get(keeper.getId()).getGoldControl().setInitialGold(player.getStartingGold());
             }
         }
     }
@@ -238,6 +238,8 @@ public final class GameWorldController implements IGameWorldController, IPlayerA
                 return sum;
             }
 
+            if (sum < 0) throw new IllegalArgumentException("Negative gold deposit");
+            if (sum == 0) return 0;
             // Gold to specified point/room
             int moneyLeft = sum;
             if (p != null) {
@@ -281,14 +283,16 @@ public final class GameWorldController implements IGameWorldController, IPlayerA
 
         synchronized (GOLD_LOCK) {
 
-            // See if the player has any gold even
+            if (amount < 0) throw new IllegalArgumentException("Negative gold withdrawal");
+            // Initial stockpile is spent before any physical treasury gold.
             Keeper keeper = players.get(playerId);
-            if (keeper.getGold() == 0) {
+            if (keeper == null || keeper.getGold() == 0) {
                 return amount;
             }
 
             // The gold is subtracted evenly from all treasuries
-            int moneyToSubstract = amount;
+            int reserveSpent = Math.min(amount, keeper.getGoldReserve());
+            int moneyToSubstract = amount - reserveSpent;
             List<IRoomController> playersTreasuries = mapController.getRoomsByFunction(ObjectType.GOLD, playerId);
             while (moneyToSubstract > 0 && !playersTreasuries.isEmpty()) {
                 Iterator<IRoomController> iter = playersTreasuries.iterator();
@@ -308,7 +312,7 @@ public final class GameWorldController implements IGameWorldController, IPlayerA
             }
 
             // Substract from the player
-            playerControllers.get(playerId).getGoldControl().subGold(amount - moneyToSubstract);
+            playerControllers.get(playerId).getGoldControl().spendGold(amount - moneyToSubstract, reserveSpent);
 
             return moneyToSubstract;
         }
@@ -406,12 +410,11 @@ public final class GameWorldController implements IGameWorldController, IPlayerA
         // Keep shared gold operations atomic until player actions are processed by the game loop.
         // skipcq: JAVA-E1061
         synchronized (GOLD_LOCK) {
-            int cost = plotCount * room.getCost();
-            if (cost > players.get(playerId).getGold()) {
+            long cost = (long) plotCount * room.getCost();
+            if (cost < 0 || cost > Integer.MAX_VALUE || cost > players.get(playerId).getGold()) {
                 return false;
             }
-            substractGold(cost, playerId);
-            return true;
+            return substractGold((int) cost, playerId) == 0;
         }
     }
 
@@ -1079,6 +1082,18 @@ public final class GameWorldController implements IGameWorldController, IPlayerA
     }
 
     @Override
+    public int getGoldAvailableForPayday(short playerId, IRoomController room) {
+        synchronized (GOLD_LOCK) {
+            Keeper keeper = players.get(playerId);
+            if (keeper == null || !playerControllers.containsKey(playerId) || room == null
+                    || room.isRemoved() || room.isDestroyed() || room.getOwnerId() != playerId
+                    || !room.hasObjectControl(ObjectType.GOLD)) return 0;
+            return (int) Math.min(Integer.MAX_VALUE, Math.min(keeper.getGold(), (long) keeper.getGoldReserve()
+                    + room.getObjectControl(ObjectType.GOLD).getCurrentCapacity()));
+        }
+    }
+
+    @Override
     public int collectWages(EntityId creature, IRoomController room) {
         synchronized (GOLD_LOCK) {
             if (!PaydaySystem.eligible(entityData, creature)) return 0;
@@ -1094,9 +1109,10 @@ public final class GameWorldController implements IGameWorldController, IPlayerA
             var salary = PaydaySystem.salary(entityData, creature, owner.ownerId);
             RoomGoldControl storage = room.getObjectControl(ObjectType.GOLD);
             int amount = (int) Math.min(salary.owed, Math.min((long) Integer.MAX_VALUE - purse.gold,
-                    Math.min(storage.getCurrentCapacity(), players.get(owner.ownerId).getGold())));
+                    getGoldAvailableForPayday(owner.ownerId, room)));
             if (amount <= 0) return 0;
-            int paid = amount - storage.removeGold(amount);
+            int reserveSpent = Math.min(amount, players.get(owner.ownerId).getGoldReserve());
+            int paid = amount - storage.removeGold(amount - reserveSpent);
             if (paid > 0) {
                 entityData.setComponents(creature, new Gold(purse.gold + paid, purse.maxGold), salary.paid(paid));
                 if (salary.owed == paid) {
@@ -1104,7 +1120,7 @@ public final class GameWorldController implements IGameWorldController, IPlayerA
                     if (mood != null) entityData.setComponent(creature, mood.clear(CreatureMood.REASON_NO_PAY));
                 }
             }
-            if (paid > 0) playerControllers.get(owner.ownerId).getGoldControl().subGold(paid);
+            if (paid > 0) playerControllers.get(owner.ownerId).getGoldControl().spendGold(paid, reserveSpent);
             return paid;
         }
     }

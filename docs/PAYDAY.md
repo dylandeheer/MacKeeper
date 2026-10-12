@@ -11,13 +11,13 @@ The owned game manual, sections 7.6.2.2–3 and 8.1.2, establishes physical wage
 - Dropping gold on a living, conscious, owned wage-earning creature on the drop tile settles debt and credits excess as advance pay. Invalid targets fall back to the ordinary drop behavior. Payment clears only unpaid anger when the debt is fully covered.
 - Purse changes, level changes, loot extraction and relevant mood changes share the transaction boundary. Stored gold updates replace ECS components so clients can observe pile changes.
 - `LEVEL_PAY_DAY` conditions observe new cycles once per condition. A newly created trigger controller starts at the current cycle, avoiding replay of an event that preceded it.
-- The next-payday tooltip subtracts advance credit; collection has the original text entry and payday icon. Salary state is registered for replication, with network protocol version 3.
+- The next-payday tooltip subtracts advance credit; collection has the original text entry and payday icon. Salary state is registered for replication, with network protocol version 4.
 
 ## Evidence
 
 Synthetic tests cover clock boundaries, repeated ticks, catch-up, advance and partial payment, unpaid anger, conversion, wage estimates, trigger baselines, actual treasury transactions, full storage, capture interleavings, duplicate attempts, invalid/foreign gift targets, combat priority and death-loot conservation. They contain no original assets.
 
-Run `JAVA_HOME=/path/to/jdk25 scripts/verify-payday.sh /path/to/owned/game-data` for the real-data integration check. It loads Levels 1, 2 and 17, advances each authored clock, assigns a production collection task, uses the real movement system to travel from outside the gold room, and checks arrival, debt settlement, keeper debit and duplicate-task conservation. It does not run the complete game loop or establish mission completion.
+Run `JAVA_HOME=/path/to/jdk25 scripts/verify-payday.sh /path/to/owned/game-data` for the real-data integration check. It loads Levels 1, 2 and 17, advances each authored clock, assigns a production collection task, uses the real movement system to travel from outside the gold room, and checks arrival, debt settlement, keeper debit and duplicate-task conservation. The check uses empty gold rooms and seeds one wage of reserve when authored starting funds are insufficient. It does not run the complete game loop or establish mission completion.
 
 ## Remaining parity and acceptance work
 
@@ -25,7 +25,7 @@ The following choices are explicit provisional behavior pending original-engine 
 
 - Unpaid debt carries forward; captives do not accrue new wages; conversion resets the employer ledger while retaining physical gold.
 - The cutoff is treated as a grace period before unpaid anger, using the existing native-scale anger conversion at each logic tick. Exact original timing still needs verification.
-- Dungeon hearts and treasuries both satisfy gold-room collection. A separate initial stockpile, described by the manual, is not implemented; the inherited engine distributes starting gold into rooms.
+- Dungeon hearts and treasuries both satisfy gold-room collection. The separate initial stockpile now supplies wages before physical room gold; see [STARTING-GOLD.md](STARTING-GOLD.md).
 - General gratitude from gifts beyond clearing unpaid anger, gifts to zero-wage creatures, collection animation/audio, mentor announcements and the visible countdown remain unfinished.
 - Rendered UI, pause/reconnect, live multiplayer, save/load persistence and full campaign behavior require acceptance testing. The clock and salary ledger must be included in the future versioned save contract.
 

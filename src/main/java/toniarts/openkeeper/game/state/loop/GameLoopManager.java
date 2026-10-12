@@ -92,7 +92,7 @@ public final class GameLoopManager {
                 new ChickenAiSystem(entityData, gameWorldController.getObjectsController()),
                 new CreatureViewSystem(entityData),
                 new DoorViewSystem(entityData, positionSystem),
-                new LooseObjectSystem(entityData, gameWorldController.getMapController(), playerControllers, positionSystem),
+                new LooseObjectSystem(entityData, gameWorldController.getMapController(), playerControllers, positionSystem, gameWorldController),
                 new HaulingSystem(entityData),
                 (IGameLogicUpdatable) taskManager);
 

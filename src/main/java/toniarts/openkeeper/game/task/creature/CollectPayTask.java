@@ -32,7 +32,7 @@ public final class CollectPayTask extends AbstractRoomTask {
         return !executed && creature.getOwnerId() == playerId && PaydaySystem.eligible(data, creature.getEntityId())
                 && salary != null && salary.employer == playerId && salary.owed > 0
                 && !room.isRemoved() && !room.isDestroyed() && room.getOwnerId() == playerId
-                && room.hasObjectControl(ObjectType.GOLD) && getRoomObjectControl().getCurrentCapacity() > 0;
+                && room.hasObjectControl(ObjectType.GOLD) && world.getGoldAvailableForPayday(playerId, room) > 0;
     }
     @Override public Vector2f getTarget(ICreatureController creature) { return WorldUtils.pointToVector2f(getTaskLocation()); }
     @Override protected ObjectType getRoomObjectType() { return ObjectType.GOLD; }

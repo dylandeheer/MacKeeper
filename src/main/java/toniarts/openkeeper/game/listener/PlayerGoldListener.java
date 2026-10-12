@@ -26,6 +26,6 @@ import com.jme3.network.service.rmi.Asynchronous;
 public interface PlayerGoldListener {
 
     @Asynchronous
-    public void onGoldChange(short keeperId, int gold);
+    public void onGoldChange(short keeperId, long gold, int goldReserve);
 
 }

@@ -526,7 +526,7 @@ public final class PlayerState extends AbstractAppState implements PlayerListene
     }
 
     @Override
-    public void onGoldChange(short keeperId, int gold) {
+    public void onGoldChange(short keeperId, long gold, int goldReserve) {
         screen.setGold(gold);
     }
 

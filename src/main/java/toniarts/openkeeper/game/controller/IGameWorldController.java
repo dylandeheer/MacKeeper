@@ -202,4 +202,6 @@ public interface IGameWorldController {
 
     /** Collect outstanding wages from the room at the creature's actual location. */
     int collectWages(EntityId creature, IRoomController room);
+
+    int getGoldAvailableForPayday(short playerId, IRoomController room);
 }

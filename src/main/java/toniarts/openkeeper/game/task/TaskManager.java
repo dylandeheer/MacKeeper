@@ -565,7 +565,7 @@ public final class TaskManager implements ITaskManager, IGameLogicUpdatable {
         rooms.sort(java.util.Comparator.comparingInt(room -> getShortestDistance(current, room.getRoomInstance().getCoordinates().toArray(new Point[0]))));
         for (IRoomController room : rooms) {
             if (room.isRemoved() || room.isDestroyed() || room.getOwnerId() != creature.getOwnerId()
-                    || room.getObjectControl(ObjectType.GOLD).getCurrentCapacity() <= 0) continue;
+                    || gameWorldController.getGoldAvailableForPayday(creature.getOwnerId(), room) <= 0) continue;
             for (Point target : room.getRoomInstance().getCoordinates()) {
                 if (!room.isTileAccessible(null, target)) continue;
                 if (!current.equals(target) && navigationService.findPath(current, target, creature) == null) continue;

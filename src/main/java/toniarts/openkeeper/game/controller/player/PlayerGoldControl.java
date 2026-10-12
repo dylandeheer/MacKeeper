@@ -38,17 +38,33 @@ public final class PlayerGoldControl implements RoomListener {
     }
 
     public void addGold(int value) {
-        if (value < 0) {
+        if (value <= 0) {
             return;
         }
 
-        keeper.setGold(Math.min(keeper.getGold() + value, goldMax));
+        keeper.setGold(Math.addExact(keeper.getGold(), value));
         keeper.setGoldMined(keeper.getGoldMined() + value); // Nope, need to get this some other way
         updateListeners();
     }
 
-    public boolean subGold(int value) {
-        if (keeper.getGold() >= value && value > 0) {
+    /** Sets the initial reserve without consuming room capacity or counting it as mined gold. */
+    public void setInitialGold(int value) {
+        if (value < 0) throw new IllegalArgumentException("Negative initial gold");
+        long total = Math.addExact(keeper.getGold() - keeper.getGoldReserve(), value);
+        keeper.setGoldReserve(value);
+        keeper.setGold(total);
+        updateListeners();
+    }
+
+    /** Debit physically removed gold; pickup/destruction must not consume the reserve. */
+    public boolean subGold(int value) { return spendGold(value, 0); }
+
+    /** Record a completed withdrawal, explicitly identifying its reserve portion. */
+    public boolean spendGold(int value, int reserveSpent) {
+        if (value > 0 && reserveSpent >= 0 && reserveSpent <= value
+                && keeper.getGoldReserve() >= reserveSpent
+                && keeper.getGold() - keeper.getGoldReserve() >= value - reserveSpent) {
+            keeper.setGoldReserve(keeper.getGoldReserve() - reserveSpent);
             keeper.setGold(keeper.getGold() - value);
             updateListeners();
             return true;
@@ -89,7 +105,7 @@ public final class PlayerGoldControl implements RoomListener {
 
     private void updateListeners() {
         for (PlayerGoldListener listener : listeners.getArray()) {
-            listener.onGoldChange(keeper.getId(), keeper.getGold());
+            listener.onGoldChange(keeper.getId(), keeper.getGold(), keeper.getGoldReserve());
         }
     }
 
@@ -102,6 +118,6 @@ public final class PlayerGoldControl implements RoomListener {
     }
 
     public boolean isFullCapacity() {
-        return keeper.getGold() >= goldMax;
+        return keeper.getGold() - keeper.getGoldReserve() >= goldMax;
     }
 }

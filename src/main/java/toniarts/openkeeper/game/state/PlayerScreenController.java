@@ -701,7 +701,7 @@ public final class PlayerScreenController implements IPlayerScreenController {
         if (state.getGoldControl() != null) {
             // state.getGoldControl().addListener(hud.findNiftyControl("gold", Label.class));
         }
-        hud.findNiftyControl("gold", Label.class).setText(Integer.toString(state.getPlayer().getGold()));
+        hud.findNiftyControl("gold", Label.class).setText(Long.toString(state.getPlayer().getGold()));
 
         // Player creatures
         Element creatureTab = hud.findElementById("tab-creature");
@@ -766,9 +766,9 @@ public final class PlayerScreenController implements IPlayerScreenController {
 //        }
     }
 
-    public void setGold(int gold) {
+    public void setGold(long gold) {
         Screen hud = nifty.getScreen(SCREEN_HUD_ID);
-        hud.findNiftyControl("gold", Label.class).setText(Integer.toString(gold));
+        hud.findNiftyControl("gold", Label.class).setText(Long.toString(gold));
     }
 
     public void setMana(int mana, int manaLoose, int manaGain) {

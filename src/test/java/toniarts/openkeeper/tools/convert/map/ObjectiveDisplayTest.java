@@ -70,12 +70,16 @@ class ObjectiveDisplayTest {
 
     // Substitute the RMI transport while retaining both real service callback implementations.
     static void connect(GameHostedService host, short keeper, List<Integer> received) throws Exception {
-        GameClientService client = new GameClientService();
-        client.addGameSessionListener(proxy(GameSessionListener.class, (name,args) -> {
+        connect(host, keeper, proxy(GameSessionListener.class, (name,args) -> {
             if (name.equals("onShowObjective")) received.add((int)args[0]);
             else if (!name.equals("equals")) fail("Unexpected callback: " + name);
             return false;
         }));
+    }
+
+    static void connect(GameHostedService host, short keeper, GameSessionListener listener) throws Exception {
+        GameClientService client = new GameClientService();
+        client.addGameSessionListener(listener);
         Field clientCallback = GameClientService.class.getDeclaredField("sessionCallback");
         clientCallback.setAccessible(true);
         ClientInfo info = new ClientInfo(0, "local-test", keeper);

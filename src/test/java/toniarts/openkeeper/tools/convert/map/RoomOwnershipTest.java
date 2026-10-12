@@ -193,6 +193,101 @@ class RoomOwnershipTest {
         assertEquals(0,data.getComponent(id,CreatureSalary.class).advance);
     }
 
+    @Test void startingReserveDoesNotFillRoomsAndDepositsUsePhysicalCapacity() {
+        map(false, 5000);
+        assertEquals(5600, previous.getGold());
+        assertEquals(5000, previous.getGoldReserve());
+        assertEquals(600, treasury.getObjectControl(ObjectType.GOLD).getCurrentCapacity());
+        assertFalse(oldGold.isFullCapacity());
+        assertEquals(0, world.addGold(OLD, new Point(1, 1), 1400));
+        assertEquals(7000, previous.getGold());
+        assertTrue(oldGold.isFullCapacity());
+        assertEquals(1, world.addGold(OLD, new Point(1, 1), 1));
+    }
+
+    @Test void purchasesExhaustReserveBeforeTouchingStoredGoldAndReturnShortfall() {
+        map(false, 5000);
+        assertEquals(0, world.substractGold(200, OLD));
+        assertEquals(4800, previous.getGoldReserve());
+        assertEquals(600, treasury.getObjectControl(ObjectType.GOLD).getCurrentCapacity());
+        assertEquals(0, world.substractGold(5100, OLD));
+        assertEquals(0, previous.getGoldReserve());
+        assertEquals(300, previous.getGold());
+        assertEquals(300, treasury.getObjectControl(ObjectType.GOLD).getCurrentCapacity());
+        assertEquals(700, world.substractGold(1000, OLD));
+        assertEquals(0, previous.getGold());
+        assertEquals(25, previous.getGoldMined());
+    }
+
+    @Test void captureMovesPhysicalTreasureButPreservesBothReservesAboveIntegerRange() {
+        MapController map = map(false, 5000);
+        newGold.setInitialGold(Integer.MAX_VALUE);
+        assertTrue(map.changeRoomOwner(new Point(1, 1), NEW));
+        assertEquals(5000, previous.getGold());
+        assertEquals(5000, previous.getGoldReserve());
+        assertEquals((long) Integer.MAX_VALUE + 600, next.getGold());
+        assertEquals(Integer.MAX_VALUE, next.getGoldReserve());
+        assertEquals(0, world.substractGold(Integer.MAX_VALUE, NEW));
+        assertEquals(600, next.getGold());
+        assertEquals(600, treasury.getObjectControl(ObjectType.GOLD).getCurrentCapacity());
+    }
+
+    @Test void physicalGoldPickupDoesNotDebitReserve() {
+        map(false, 5000);
+        world.pickUp(goldPiles.getFirst(), OLD);
+        assertEquals(5000, previous.getGold());
+        assertEquals(5000, previous.getGoldReserve());
+        assertEquals(600, data.getComponent(oldHand.peek(), Gold.class).gold);
+    }
+
+    @Test void wagesDrawReserveFirstAndEmptyTreasuriesStillOfferCollection() {
+        MapController map = map(false, 700);
+        world.pickUp(goldPiles.getFirst(), OLD);
+        EntityId id = wageCreature(500, 1);
+        var creature = proxy(ICreatureController.class, (name,args) -> switch (name) {
+            case "getEntityId" -> id;
+            case "getOwnerId" -> OLD;
+            default -> throw new AssertionError(name);
+        });
+        var task = new toniarts.openkeeper.game.task.creature.CollectPayTask(
+                null, map, new Point(1,1), OLD, treasury, world, data);
+        assertTrue(task.isValid(creature));
+        assertEquals(500, world.collectWages(id, treasury));
+        assertEquals(200, previous.getGold());
+        assertEquals(200, previous.getGoldReserve());
+        assertEquals(0, treasury.getObjectControl(ObjectType.GOLD).getCurrentCapacity());
+        assertEquals(573, data.getComponent(id, Gold.class).gold);
+        assertFalse(task.isValid(creature));
+    }
+
+    @Test void wagesCrossReserveBoundaryWithoutLosingPhysicalGold() {
+        map(false, 200);
+        EntityId id = wageCreature(500, 1);
+        assertEquals(500, world.collectWages(id, treasury));
+        assertEquals(0, previous.getGoldReserve());
+        assertEquals(300, previous.getGold());
+        assertEquals(300, treasury.getObjectControl(ObjectType.GOLD).getCurrentCapacity());
+    }
+
+    @Test void automaticLooseGoldDepositConservesOverflowWithLargeReserve() {
+        MapController map = map(false, Integer.MAX_VALUE);
+        EntityId loose = data.createEntity();
+        data.setComponents(loose, new ObjectComponent((short)1, ObjectType.GOLD), new Placeable(),
+                new Position(0, new Vector3f(1,0,1)), new Gold(1800, 2000));
+        var lookup = proxy(toniarts.openkeeper.game.logic.IEntityPositionLookup.class,
+                (name,args) -> map.getMapData().getTile(1,1));
+        var system = new toniarts.openkeeper.game.logic.LooseObjectSystem(data, map,
+                Map.of(OLD, player(previous, oldGold, oldRooms, oldHand)), lookup, world);
+        try {
+            system.processTick(.05f);
+            system.processTick(.05f);
+            assertEquals((long)Integer.MAX_VALUE + 2000, previous.getGold());
+            assertEquals(Integer.MAX_VALUE, previous.getGoldReserve());
+            assertEquals(2000, treasury.getObjectControl(ObjectType.GOLD).getCurrentCapacity());
+            assertEquals(400, data.getComponent(loose, Gold.class).gold);
+        } finally { system.stop(); }
+    }
+
     private EntityId wageCreature(long owed, int x) {
         EntityId id=data.createEntity();
         CreatureComponent creature=new CreatureComponent();creature.pay=500;
@@ -221,7 +316,9 @@ class RoomOwnershipTest {
         for (EntityId pile : goldPiles) assertEquals(NEW, data.getComponent(pile, Owner.class).ownerId);
     }
 
-    private MapController map(boolean differentOwners) {
+    private MapController map(boolean differentOwners) { return map(differentOwners, 0); }
+
+    private MapController map(boolean differentOwners, int initialGold) {
         Room room = new Room();
         room.setName("Treasury");
         room.setRoomId((short) 42); // Avoid the original hard-coded pillar IDs.
@@ -255,7 +352,11 @@ class RoomOwnershipTest {
             case "getMap" -> original;
             case "getThings" -> List.of();
             case "getObject" -> goldObject;
-            case "getPlayer" -> new Player();
+            case "getPlayer" -> {
+                Player player = new Player();
+                player.setStartingGold((short) args[0] == OLD ? initialGold : 0);
+                yield player;
+            }
             case "getTerrain" -> ((short) args[0] == 1) ? roomTile : floor;
             case "getRoomByTerrain", "getRoomById" -> room;
             case "getDungeonHeart" -> null;

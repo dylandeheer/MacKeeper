@@ -39,6 +39,7 @@ public final class RoomPlacementValidator {
         BLOCKED_BY_ENTITY,
         BRIDGE_NOT_ANCHORED,
         BRIDGE_NOT_CONNECTED,
+        TRANSACTION_TOO_LARGE,
         NOT_ENOUGH_GOLD
     }
 
@@ -54,7 +55,7 @@ public final class RoomPlacementValidator {
 
     public static Result validate(IKwdFile kwdFile, IMapInformation<?> mapInformation,
                                   Set<Point> blockedTiles, Vector2f start, Vector2f end, short playerId,
-                                  short roomId, int availableGold) {
+                                  short roomId, long availableGold) {
         Room room = kwdFile.getRoomById(roomId);
         if (!isBuildableRoom(room)) {
             return invalid(Failure.INVALID_ROOM);
@@ -79,6 +80,9 @@ public final class RoomPlacementValidator {
         }
 
         long cost = (long) plots.size() * room.getCost();
+        if (cost > Integer.MAX_VALUE) {
+            return invalid(Failure.TRANSACTION_TOO_LARGE);
+        }
         if (cost > availableGold) {
             return invalid(Failure.NOT_ENOUGH_GOLD);
         }

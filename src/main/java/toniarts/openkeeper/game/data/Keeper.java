@@ -41,7 +41,8 @@ public final class Keeper implements Comparable<Keeper>, IIndexable, Savable {
     private boolean ai;
     private AIType aiType = AIType.MASTER_KEEPER;
 
-    private int gold;
+    private long gold;
+    private int goldReserve;
     private int goldMined;
     private int mana;
     private int manaGain;
@@ -188,7 +189,15 @@ public final class Keeper implements Comparable<Keeper>, IIndexable, Savable {
         allies.remove(playerId);
     }
 
-    public int getGold() {
+    /** Unspent initial stockpile; included in total gold, outside physical room storage. */
+    public int getGoldReserve() { return goldReserve; }
+
+    public void setGoldReserve(int goldReserve) {
+        if (goldReserve < 0) throw new IllegalArgumentException("Negative gold reserve");
+        this.goldReserve = goldReserve;
+    }
+
+    public long getGold() {
         return gold;
     }
 
@@ -196,7 +205,7 @@ public final class Keeper implements Comparable<Keeper>, IIndexable, Savable {
         return mana;
     }
 
-    public void setGold(int gold) {
+    public void setGold(long gold) {
         this.gold = gold;
     }
 
@@ -262,7 +271,8 @@ public final class Keeper implements Comparable<Keeper>, IIndexable, Savable {
         out.write(id, "playerId", Integer.valueOf(0).shortValue());
         out.write(ai, "ai", false);
         out.write(aiType, "aiType", null);
-        out.write(gold, "gold", 0);
+        out.write(gold, "goldTotal", 0L);
+        out.write(goldReserve, "goldReserve", 0);
         out.write(goldMined, "goldMined", 0);
         out.write(mana, "mana", 0);
         out.write(manaGain, "manaGain", 0);
@@ -286,7 +296,9 @@ public final class Keeper implements Comparable<Keeper>, IIndexable, Savable {
         id = in.readShort("playerId", id);
         ai = in.readBoolean("ai", ai);
         aiType = in.readEnum("aiType", AIType.class, aiType);
-        gold = in.readInt("gold", gold);
+        gold = in.readLong("goldTotal", in.readInt("gold", 0));
+        goldReserve = in.readInt("goldReserve", 0);
+        if (goldReserve < 0 || goldReserve > gold) throw new IOException("Invalid gold reserve");
         goldMined = in.readInt("goldMined", goldMined);
         mana = in.readInt("mana", mana);
         manaGain = in.readInt("manaGain", manaGain);

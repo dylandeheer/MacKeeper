@@ -28,7 +28,7 @@ class RoomOwnershipSmoke {
             var p=new Point(x,y);
             var room=map.getRoomControllerByCoordinates(p);
             if(room==null) throw new AssertionError("No room at trigger "+t.getId());
-            int before=game.getPlayerControllers().values().stream().mapToInt(c->c.getKeeper().getGold()).sum();
+            long before=game.getPlayerControllers().values().stream().mapToLong(c->c.getKeeper().getGold()).sum();
             short previous=room.getOwnerId();
             boolean changed=map.changeRoomOwner(p,target);
             if(room.getOwnerId()!=target || room.getRoomInstance().getOwnerId()!=target) throw new AssertionError("Owner mismatch");
@@ -40,7 +40,7 @@ class RoomOwnershipSmoke {
             for (var furniture : room.getWallFurniture()) {
                 if (data.getComponent(furniture, Owner.class).ownerId != target) throw new AssertionError("Wall furniture owner mismatch");
             }
-            int after=game.getPlayerControllers().values().stream().mapToInt(c->c.getKeeper().getGold()).sum();
+            long after=game.getPlayerControllers().values().stream().mapToLong(c->c.getKeeper().getGold()).sum();
             if(before!=after) throw new AssertionError("Gold changed "+before+" -> "+after);
             System.out.println("PASS trigger="+t.getId()+" room="+room.getRoom().getName()+" owner="+previous+"->"+target+" changed="+changed);
             count++;

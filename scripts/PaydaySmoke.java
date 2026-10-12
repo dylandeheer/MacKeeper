@@ -30,7 +30,13 @@ class PaydaySmoke {
             var raw=kwd.getCreatureList().stream().filter(c->c.getAttributes().getPay()>0&&!c.getFlags().contains(Creature.CreatureFlag.IS_WORKER)).findFirst().orElseThrow();
             var id=world.getCreaturesController().spawnCreature(raw.getId(),owner,1,WorldUtils.pointToVector2f(tile),ICreaturesController.SpawnType.PLACE);
             data.setComponent(id,new Gold(0,raw.getAttributes().getMaxGoldHeld()));
-            world.addGold(owner,tile,raw.getAttributes().getPay());
+            require(room.getObjectControl(ObjectType.GOLD).getCurrentCapacity()==0,"Initial gold filled storage");
+            int reserve=game.getPlayerController(owner).getKeeper().getGoldReserve();
+            // Some missions start without funds; seed only the test balance for collection.
+            if(reserve<raw.getAttributes().getPay()) {
+                game.getPlayerController(owner).getGoldControl().setInitialGold(raw.getAttributes().getPay());
+                reserve=raw.getAttributes().getPay();
+            }
             double first=kwd.getVariables().get(Variable.MiscVariable.MiscType.TIME_BEFORE_FIRST_PAY_DAY_SECONDS).getValue();
             ((GameTimeController)game.getGameTimer()).processTick((float)first);
             game.processTick(.05f);
@@ -55,11 +61,13 @@ class PaydaySmoke {
             require(data.getComponent(id,Navigation.class)==null,"Navigation did not finish");
             require(creature.isAtAssignedTaskTarget(),"Movement did not reach collection target");
             movement.stop();
-            int balance=game.getPlayerController(owner).getKeeper().getGold();
+            long balance=game.getPlayerController(owner).getKeeper().getGold();
             task.executeTask(creature,1);
             require(data.getComponent(id,CreatureSalary.class).owed==0,"Salary not settled");
             require(data.getComponent(id,Gold.class).gold==raw.getAttributes().getPay(),"Purse mismatch");
-            require(balance-game.getPlayerController(owner).getKeeper().getGold()==raw.getAttributes().getPay(),"Treasury debit mismatch");
+            require(balance-game.getPlayerController(owner).getKeeper().getGold()==raw.getAttributes().getPay(),"Keeper debit mismatch");
+            require(reserve-game.getPlayerController(owner).getKeeper().getGoldReserve()==raw.getAttributes().getPay(),"Reserve debit mismatch");
+            require(room.getObjectControl(ObjectType.GOLD).getCurrentCapacity()==0,"Reserve payment changed physical storage");
             task.executeTask(creature,2);
             require(data.getComponent(id,Gold.class).gold==raw.getAttributes().getPay(),"Repeated task duplicated pay");
             require(game.getLevelInfo().getPaydayCycle()==1,"Cycle not exposed to triggers");

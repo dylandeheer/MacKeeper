@@ -368,9 +368,9 @@ public final class GameHostedService extends AbstractHostedConnectionService imp
     }
 
     @Override
-    public void onGoldChange(short keeperId, int gold) {
+    public void onGoldChange(short keeperId, long gold, int goldReserve) {
         for (GameSessionImpl gameSession : players.values()) {
-            gameSession.onGoldChange(keeperId, gold);
+            gameSession.onGoldChange(keeperId, gold, goldReserve);
         }
     }
 
@@ -663,8 +663,8 @@ public final class GameHostedService extends AbstractHostedConnectionService imp
         }
 
         @Override
-        public void onGoldChange(short keeperId, int gold) {
-            getCallback().onGoldChange(keeperId, gold);
+        public void onGoldChange(short keeperId, long gold, int goldReserve) {
+            getCallback().onGoldChange(keeperId, gold, goldReserve);
         }
 
         @Override

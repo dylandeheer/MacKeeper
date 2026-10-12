@@ -93,8 +93,8 @@ public class PlayerTriggerControl extends TriggerControl {
     protected boolean isActive(TriggerGenericData trigger) {
         boolean result = false;
 
-        int target = 0;
-        int value = 0;
+        long target = 0;
+        long value = 0;
 
         TriggerGeneric.TargetType targetType = trigger.getType();
         switch (targetType) {
@@ -274,7 +274,15 @@ public class PlayerTriggerControl extends TriggerControl {
 
         TriggerGeneric.ComparisonType comparisonType = trigger.getComparison();
         if (comparisonType != null && comparisonType != TriggerGeneric.ComparisonType.NONE) {
-            result = compare(target, comparisonType, value);
+            result = switch (comparisonType) {
+                case EQUAL_TO -> target == value;
+                case GREATER_OR_EQUAL_TO -> target >= value;
+                case GREATER_THAN -> target > value;
+                case LESS_OR_EQUAL_TO -> target <= value;
+                case LESS_THAN -> target < value;
+                case NOT_EQUAL_TO -> target != value;
+                case NONE -> false;
+            };
         }
 
         return result;
