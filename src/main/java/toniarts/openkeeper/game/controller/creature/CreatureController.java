@@ -466,19 +466,36 @@ public final class CreatureController extends EntityController implements ICreat
         return entityData.getComponent(entityId, Navigation.class) == null;
     }
 
+    private static final double FAILED_TASK_PATH_RETRY_SECONDS = 1;
+    private Task failedNavigationTask;
+    private Point failedNavigationStart;
+    private Point failedNavigationTarget;
+    private double failedNavigationTime;
+
     @Override
     public void navigateToAssignedTask() {
         Task assignedTask = getAssignedTask();
-        if (assignedTask != null) {
-            Vector2f loc = assignedTask.getTarget(this);
-            if (!isNear(loc)) {
-                //workNavigationRequired = false;
-
-                if (loc != null) {
-                    Point destination = WorldUtils.vectorToPoint(loc);
-                    createNavigation(getCreatureCoordinates(), destination, assignedTask.isFaceTarget() ? assignedTask.getTaskLocation() : null);
-                }
-            }
+        Vector2f loc = assignedTask == null ? null : assignedTask.getTarget(this);
+        if (loc == null || isNear(loc)) {
+            failedNavigationTask = null;
+            return;
+        }
+        Point start = getCreatureCoordinates();
+        Point destination = WorldUtils.vectorToPoint(loc);
+        double now = gameTimer.getGameTime();
+        // WORK retries whenever stopped. A blocked task must not run a full-map search
+        // every tick. Changed tasks/positions/targets retry immediately; an unchanged
+        // route retries within one game second so opened doors and dug paths recover.
+        if (assignedTask == failedNavigationTask && start.equals(failedNavigationStart)
+                && destination.equals(failedNavigationTarget) && now >= failedNavigationTime
+                && now < failedNavigationTime + FAILED_TASK_PATH_RETRY_SECONDS) return;
+        if (createNavigation(start, destination, assignedTask.isFaceTarget() ? assignedTask.getTaskLocation() : null)) {
+            failedNavigationTask = assignedTask;
+            failedNavigationStart = start;
+            failedNavigationTarget = destination;
+            failedNavigationTime = now;
+        } else {
+            failedNavigationTask = null;
         }
     }
 
