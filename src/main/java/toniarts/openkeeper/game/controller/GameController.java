@@ -81,7 +81,7 @@ public final class GameController implements IGameLogicUpdatable, IGameControlle
     private INavigationService navigationService;
     private PositionSystem positionSystem;
 
-    private GameResult gameResult = null;
+    private final Map<Short, GameResult> gameResults = new HashMap<>();
     private TaskManager taskManager;
 
     /**
@@ -300,15 +300,17 @@ public final class GameController implements IGameLogicUpdatable, IGameControlle
     }
 
     @Override
-    public void endGame(short playerId, boolean win) {
+    public synchronized void endGame(short playerId, boolean win) {
+        if (gameResults.containsKey(playerId)) return;
 
         // Determine what happens to the game & players
-        gameResult = new GameResult();
+        GameResult gameResult = new GameResult();
         gameResult.setData(GameResult.ResultType.LEVEL_WON, win);
         gameResult.setData(GameResult.ResultType.TIME_TAKEN, gameTimer.getGameTime());
+        gameResults.put(playerId, gameResult);
 
         // Mark the achievement if campaign level
-        if (levelObject != null) {
+        if (levelObject != null && playerId == Player.KEEPER1_ID) {
             Main.getUserSettings().increaseLevelAttempts(levelObject);
             if (win) {
                 Main.getUserSettings().setLevelStatus(levelObject, Settings.LevelStatus.COMPLETED);
@@ -382,7 +384,12 @@ public final class GameController implements IGameLogicUpdatable, IGameControlle
 
     @Override
     public GameResult getGameResult() {
-        return gameResult;
+        return getGameResult(Player.KEEPER1_ID);
+    }
+
+    @Override
+    public synchronized GameResult getGameResult(short playerId) {
+        return gameResults.get(playerId);
     }
 
     @Override

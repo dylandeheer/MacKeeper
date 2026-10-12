@@ -208,9 +208,11 @@ public class PlayerTriggerControl extends TriggerControl {
                 return false;
             case PLAYER_KILLED:
 
-                // TODO: Is player killed specifically by this other player
+                // DKII 1.70 checks the recorded killer; the second data word is unused.
                 short otherPlayerId = trigger.getUserData("playerId", short.class);
-                return false;
+                Keeper killed = getPlayer();
+                return killed != null && killed.isDestroyed() && killed.getKilledByPlayerId() != 0
+                        && (otherPlayerId == 0 || otherPlayerId == killed.getKilledByPlayerId());
             case PLAYER_DUNGEON_BREACHED:
                 return false;
             case PLAYER_ENEMY_BREACHED:

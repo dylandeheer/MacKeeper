@@ -47,6 +47,7 @@ class DungeonHeartTest {
         assertNull(data.getComponent(room.getEntityId(), ImpGenerator.class));
         assertNull(players.get(LOSER).getRoomControl().getDungeonHeart());
         assertTrue(loser.isDestroyed());
+        assertEquals(ATTACKER, loser.getKilledByPlayerId());
         assertEquals(List.of(LOSER), defeated);
         assertEquals(500, loser.getGold());
         assertEquals(500, loser.getGoldReserve());
@@ -73,11 +74,13 @@ class DungeonHeartTest {
         mana(LOSER).addMana(700);
         damage(heart(first), 1000, ATTACKER);
         assertFalse(loser.isDestroyed());
+        assertEquals(0, loser.getKilledByPlayerId());
         assertEquals(700, loser.getMana());
         assertSame(second, players.get(LOSER).getRoomControl().getDungeonHeart());
         assertTrue(defeated.isEmpty());
         damage(heart(second), 1000, ATTACKER);
         assertTrue(loser.isDestroyed());
+        assertEquals(ATTACKER, loser.getKilledByPlayerId());
         assertEquals(List.of(LOSER), defeated);
         assertEquals(700, attacker.getMana());
     }
@@ -92,6 +95,7 @@ class DungeonHeartTest {
         mana(LOSER).addMana(700);
         damage(heart, 1, (short)0);
         assertTrue(loser.isDestroyed());
+        assertEquals(0, loser.getKilledByPlayerId());
         assertEquals(0, attacker.getMana());
     }
 

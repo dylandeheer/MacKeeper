@@ -48,7 +48,11 @@ public interface IGameController {
      */
     void createAlliance(short playerOneId, short playerTwoId);
 
+    /** Campaign/local keeper result (player 3). */
     GameResult getGameResult();
+
+    /** First terminal result for the given player, or null while still playing. */
+    GameResult getGameResult(short playerId);
 
     IPlayerController getPlayerController(short playerId);
 

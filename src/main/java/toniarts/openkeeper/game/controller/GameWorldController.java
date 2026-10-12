@@ -195,7 +195,7 @@ public final class GameWorldController implements IGameWorldController, IPlayerA
             player.getGoldControl().setGoldMax(player.getGoldControl().getGoldMax() - capacity);
             Keeper keeper = player.getKeeper();
             if (player.getRoomControl().getDungeonHeart() == null && !keeper.isDestroyed()) {
-                keeper.setDestroyed(true);
+                keeper.markDestroyed(playerControllers.containsKey(attackerId) ? attackerId : 0);
                 int mana = keeper.getMana();
                 player.getManaControl().addMana(-mana);
                 IPlayerController attacker = playerControllers.get(attackerId);

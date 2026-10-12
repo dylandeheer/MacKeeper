@@ -4,7 +4,7 @@ The owned Dungeon Keeper II manual, section 8.1.2, describes starting gold as a 
 
 Purchases, hand withdrawals and wage collection consume the reserve first. Physical pile pickup, room destruction and capture affect stored treasure independently. Creatures still travel to an accessible owned gold room to collect wages, even when that room is empty and the reserve supplies the payment. Starting reserves do not count as mined gold.
 
-Total keeper balances use a 64-bit value so a reserve can coexist with captured or deposited treasure above the old integer limit. Individual transfers, personal purses and room capacities retain their integer bounds. The shared building validator and server payment path reject room selections whose total cost exceeds that transfer limit. Local and hosted gold callbacks carry both total and reserve; network protocol 5 rejects older clients. Keeper serialization writes `goldTotal` and `goldReserve`, with a fallback for the older integer `gold` field. This is player-state compatibility, not a complete save/load implementation.
+Total keeper balances use a 64-bit value so a reserve can coexist with captured or deposited treasure above the old integer limit. Individual transfers, personal purses and room capacities retain their integer bounds. The shared building validator and server payment path reject room selections whose total cost exceeds that transfer limit. Local and hosted gold callbacks carry both total and reserve; network protocol 6 rejects older clients. Keeper serialization writes `goldTotal` and `goldReserve`, with a fallback for the older integer `gold` field. This is player-state compatibility, not a complete save/load implementation.
 
 ## Evidence
 
