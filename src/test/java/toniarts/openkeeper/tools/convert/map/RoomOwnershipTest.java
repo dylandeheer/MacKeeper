@@ -10,7 +10,8 @@ import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
-import toniarts.openkeeper.game.component.Gold;
+import toniarts.openkeeper.game.component.*;
+import com.jme3.math.Vector3f;
 import toniarts.openkeeper.game.component.Owner;
 import toniarts.openkeeper.game.controller.ILevelInfo;
 import toniarts.openkeeper.game.controller.GameWorldController;
@@ -96,6 +97,110 @@ class RoomOwnershipTest {
         assertEquals(0, oldRooms.getTypeCount());
     }
 
+    @Test void wagesTransferOnlyOnArrivalAndCannotBeCollectedTwice() {
+        map(false);
+        EntityId creature = wageCreature(500, 0);
+        assertEquals(0, world.collectWages(creature, treasury));
+        data.setComponent(creature, new Position(0, new Vector3f(1, 0, 1)));
+        assertEquals(500, world.collectWages(creature, treasury));
+        assertEquals(0, world.collectWages(creature, treasury));
+        assertEquals(100, previous.getGold());
+        assertEquals(573, data.getComponent(creature, Gold.class).gold);
+        assertEquals(0, data.getComponent(creature, CreatureSalary.class).owed);
+        assertEquals(0, data.getComponent(creature, CreatureMood.class).noPay);
+        assertEquals(200, data.getComponent(creature, CreatureMood.class).noLair);
+        assertEquals(25, previous.getGoldMined());
+    }
+
+    @Test void competingWagesCannotOverdrawTreasuryOrLoseDebt() {
+        map(false);
+        EntityId first = wageCreature(500, 1), second = wageCreature(500, 1);
+        assertEquals(500, world.collectWages(first, treasury));
+        assertEquals(100, world.collectWages(second, treasury));
+        assertEquals(0, previous.getGold());
+        assertEquals(0, treasury.getObjectControl(ObjectType.GOLD).getCurrentCapacity());
+        assertEquals(400, data.getComponent(second, CreatureSalary.class).owed);
+        assertEquals(746, data.getComponent(first, Gold.class).gold + data.getComponent(second, Gold.class).gold);
+        assertEquals(90, data.getComponent(second, CreatureMood.class).noPay);
+    }
+
+    @Test void captureWhileCollectionWaitsCannotPayFromNewOwnersTreasury() throws Exception {
+        MapController map = map(false);
+        EntityId creature = wageCreature(500, 1);
+        afterCaptureWhileActionWaits(map, () -> assertEquals(0, world.collectWages(creature, treasury)));
+        assertEquals(600, next.getGold());
+        assertEquals(73, data.getComponent(creature, Gold.class).gold);
+        assertEquals(500, data.getComponent(creature, CreatureSalary.class).owed);
+    }
+
+    @Test void unconsciousCreatureCannotCollectWagesAtItsFeet() {
+        map(false);
+        EntityId creature = wageCreature(500, 1);
+        data.setComponent(creature, new Unconscious());
+        assertEquals(0, world.collectWages(creature, treasury));
+        assertEquals(600, previous.getGold());
+    }
+
+    @Test void handGiftSettlesDebtThenCreditsAdvanceAndConservesGold() {
+        map(false);
+        EntityId creature = wageCreature(100, 1);
+        world.getGold(150, OLD);
+        EntityId gift = oldHand.peek();
+        world.drop(gift, new Point(1, 1), new Vector2f(1,1), creature, OLD);
+        assertEquals(450, previous.getGold());
+        assertEquals(223, data.getComponent(creature, Gold.class).gold);
+        assertEquals(0, data.getComponent(creature, CreatureSalary.class).owed);
+        assertEquals(50, data.getComponent(creature, CreatureSalary.class).advance);
+        assertNull(data.getComponent(gift, Gold.class));
+        assertNull(oldHand.peek());
+        world.drop(gift, new Point(1,1), new Vector2f(1,1), creature, OLD);
+        assertEquals(223, data.getComponent(creature, Gold.class).gold);
+    }
+
+    @Test void remoteGiftTargetFallsBackToTheDropTileWithoutCreditingAdvance() {
+        map(false);
+        EntityId creature = wageCreature(100, 0);
+        world.getGold(150, OLD);
+        world.drop(oldHand.peek(), new Point(1,1), new Vector2f(1,1), creature, OLD);
+        assertEquals(600, previous.getGold());
+        assertEquals(73, data.getComponent(creature, Gold.class).gold);
+        assertEquals(100, data.getComponent(creature, CreatureSalary.class).owed);
+    }
+
+    @Test void fullTreasuryStillOffersPayAndCapturedTaskBecomesInvalid() {
+        MapController map=map(false);
+        world.addGold(OLD,new Point(1,1),1400);
+        assertTrue(treasury.isFullCapacity());
+        EntityId id=wageCreature(500,1);
+        var creature=proxy(ICreatureController.class,(name,args)->switch(name){case "getEntityId"->id;case "getOwnerId"->OLD;default->throw new AssertionError(name);});
+        var task=new toniarts.openkeeper.game.task.creature.CollectPayTask(null,map,new Point(1,1),OLD,treasury,world,data);
+        assertTrue(task.isValid(creature));
+        map.changeRoomOwner(new Point(1,1),NEW);
+        assertFalse(task.isValid(creature));
+        task.executeTask(creature,1);
+        assertEquals(73,data.getComponent(id,Gold.class).gold);
+        assertEquals(2000,next.getGold());
+    }
+
+    @Test void giftsToAnotherKeepersCreatureAreNormalGoldDrops() {
+        map(false);
+        EntityId id=wageCreature(100,1);
+        data.setComponent(id,new Owner(NEW,NEW));
+        world.getGold(150,OLD);
+        world.drop(oldHand.peek(),new Point(1,1),new Vector2f(1,1),id,OLD);
+        assertEquals(600,previous.getGold());
+        assertEquals(73,data.getComponent(id,Gold.class).gold);
+        assertEquals(0,data.getComponent(id,CreatureSalary.class).advance);
+    }
+
+    private EntityId wageCreature(long owed, int x) {
+        EntityId id=data.createEntity();
+        CreatureComponent creature=new CreatureComponent();creature.pay=500;
+        data.setComponents(id, creature, new Owner(OLD,OLD), new Health(100,100), new Gold(73,1000),
+                new Position(0,new Vector3f(x,0,1)), new CreatureSalary(OLD,owed,0,600), new CreatureMood(0,0,200,0,90,0));
+        return id;
+    }
+
     private void assertTransferred(MapController map) {
         assertEquals(NEW, treasury.getOwnerId());
         assertEquals(NEW, treasury.getRoomInstance().getOwnerId());
@@ -158,6 +263,7 @@ class RoomOwnershipTest {
             default -> throw new AssertionError(method);
         });
         level = proxy(ILevelInfo.class, (method, args) -> switch (method) {
+            case "getPaydayCycle" -> 0L;
             case "getLevelData" -> kwd;
             case "getPlayers" -> keepers;
             case "getPlayer" -> keepers.get((short) args[0]);

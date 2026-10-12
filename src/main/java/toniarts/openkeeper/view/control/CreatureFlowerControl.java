@@ -252,6 +252,8 @@ public final class CreatureFlowerControl extends UnitFlowerControl<Creature> {
             case CARRY_OBJECT_TO_STORAGE:
             case RESCUE_CREATURE:
                 return "Textures/GUI/moods/SJ-Take_Crate.png";
+            case COLLECT_PAY:
+                return "Textures/GUI/moods/SJ-PayDay.png";
             case CARRY_GOLD_TO_TREASURY:
                 return "Textures/GUI/moods/SJ-Take_Gold.png";
             case CLAIM_TILE:

@@ -16,6 +16,8 @@
  */
 package toniarts.openkeeper.game.logic;
 
+import toniarts.openkeeper.game.controller.GameWorldController;
+
 import com.simsilica.es.Entity;
 import com.simsilica.es.EntityData;
 import com.simsilica.es.EntityId;
@@ -150,10 +152,12 @@ public final class SlapSystem extends GameTimeCounter {
         // Mood
         short moodChange = creature.getAttributes().getAngerSlap();
         if (moodChange != 0) {
-            CreatureMood mood = entityData.getComponent(entity.getId(), CreatureMood.class);
-            if (mood != null) {
-                entityData.setComponent(entity.getId(), mood.add(CreatureMood.REASON_OTHER,
-                        CreatureMood.toRuntimeValue(moodChange)));
+            synchronized (GameWorldController.GOLD_LOCK) {
+                CreatureMood mood = entityData.getComponent(entity.getId(), CreatureMood.class);
+                if (mood != null) {
+                    entityData.setComponent(entity.getId(), mood.add(CreatureMood.REASON_OTHER,
+                            CreatureMood.toRuntimeValue(moodChange)));
+                }
             }
         }
 

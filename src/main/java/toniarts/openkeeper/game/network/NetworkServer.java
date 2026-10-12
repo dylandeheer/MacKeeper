@@ -46,6 +46,7 @@ import toniarts.openkeeper.game.component.CreatureHunger;
 import toniarts.openkeeper.game.component.CreatureImprisoned;
 import toniarts.openkeeper.game.component.CreatureMeleeAttack;
 import toniarts.openkeeper.game.component.CreatureMood;
+import toniarts.openkeeper.game.component.CreatureSalary;
 import toniarts.openkeeper.game.component.CreatureRecuperating;
 import toniarts.openkeeper.game.component.CreatureSleep;
 import toniarts.openkeeper.game.component.CreatureTortured;
@@ -168,6 +169,7 @@ public final class NetworkServer {
             Serializer.registerClass(CreatureImprisoned.class, new FieldSerializer());
             Serializer.registerClass(CreatureMeleeAttack.class, new FieldSerializer());
             Serializer.registerClass(CreatureMood.class, new FieldSerializer());
+            Serializer.registerClass(CreatureSalary.class, new FieldSerializer());
             Serializer.registerClass(CreatureRecuperating.class, new FieldSerializer());
             Serializer.registerClass(CreatureSleep.class, new FieldSerializer());
             Serializer.registerClass(CreatureTortured.class, new FieldSerializer());

@@ -64,6 +64,12 @@ public enum CreatureState implements State<ICreatureController> {
                 return;
             }
 
+            if (entity.collectPay()) {
+                entity.getStateMachine().changeState(CreatureState.WORK);
+                workResult.accept(true);
+                return;
+            }
+
             // See lair need
             if (entity.needsLair() && !entity.hasLair() && entity.findLair()) {
                 entity.getStateMachine().changeState(CreatureState.WORK);
@@ -206,6 +212,8 @@ public enum CreatureState implements State<ICreatureController> {
             if (entity.shouldFleeOrAttack()) {
                 return;
             }
+
+            if (entity.collectPay()) return;
 
             // Check validity
             // If we have some pocket money left, we should return it to treasury

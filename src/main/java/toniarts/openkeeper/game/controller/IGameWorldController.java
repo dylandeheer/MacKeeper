@@ -16,6 +16,8 @@
  */
 package toniarts.openkeeper.game.controller;
 
+import toniarts.openkeeper.game.controller.room.IRoomController;
+
 import com.jme3.math.Vector2f;
 import com.simsilica.es.EntityId;
 import java.util.Collection;
@@ -197,4 +199,7 @@ public interface IGameWorldController {
      * @param playerId the player placing the trap
      */
     public void placeTrap(short trapId, Point tile, short playerId);
+
+    /** Collect outstanding wages from the room at the creature's actual location. */
+    int collectWages(EntityId creature, IRoomController room);
 }

@@ -16,6 +16,8 @@
  */
 package toniarts.openkeeper.game.task;
 
+import toniarts.openkeeper.game.task.creature.CollectPayTask;
+
 import com.badlogic.gdx.ai.pfa.GraphPath;
 import com.jme3.math.Vector2f;
 import com.simsilica.es.Entity;
@@ -553,6 +555,29 @@ public final class TaskManager implements ITaskManager, IGameLogicUpdatable {
         } else {
             logger.log(Level.WARNING, "Already a task {0} for player {1}!", new Object[]{task, playerId});
         }
+    }
+
+    @Override
+    public boolean assignPaydayTask(ICreatureController creature) {
+        Point current = creature.getCreatureCoordinates();
+        List<IRoomController> rooms = new ArrayList<>(mapController.getRoomsByFunction(ObjectType.GOLD, creature.getOwnerId()));
+        // A sorted list retains equally distant rooms; a distance-keyed map silently discards them.
+        rooms.sort(java.util.Comparator.comparingInt(room -> getShortestDistance(current, room.getRoomInstance().getCoordinates().toArray(new Point[0]))));
+        for (IRoomController room : rooms) {
+            if (room.isRemoved() || room.isDestroyed() || room.getOwnerId() != creature.getOwnerId()
+                    || room.getObjectControl(ObjectType.GOLD).getCurrentCapacity() <= 0) continue;
+            for (Point target : room.getRoomInstance().getCoordinates()) {
+                if (!room.isTileAccessible(null, target)) continue;
+                if (!current.equals(target) && navigationService.findPath(current, target, creature) == null) continue;
+                Task task = new CollectPayTask(navigationService, mapController,
+                        target, creature.getOwnerId(), room, gameWorldController, entityData);
+                if (!task.isValid(creature)) continue;
+                task.assign(creature, true);
+                tasksByIds.put(task.getId(), task);
+                return true;
+            }
+        }
+        return false;
     }
 
     @Override

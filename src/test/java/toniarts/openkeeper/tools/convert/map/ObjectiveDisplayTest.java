@@ -100,6 +100,7 @@ class ObjectiveDisplayTest {
             default -> throw new AssertionError(name);
         });
         ILevelInfo level = proxy(ILevelInfo.class, (name,args) -> switch(name) {
+            case "getPaydayCycle" -> 0L;
             case "getLevelData" -> kwd;
             case "getActionPoint" -> { assertNotEquals((short)0, ((Number)args[0]).shortValue()); yield point; }
             default -> throw new AssertionError(name);

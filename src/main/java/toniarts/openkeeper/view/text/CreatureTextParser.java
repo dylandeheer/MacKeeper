@@ -160,6 +160,9 @@ public final class CreatureTextParser extends EntityTextParser<Creature> {
             case CARRY_CREATURE_TO_LAIR -> {
                 return Utils.getMainTextResourceBundle().getString("2619");
             }
+            case COLLECT_PAY -> {
+                return Utils.getMainTextResourceBundle().getString("2669");
+            }
             case CARRY_GOLD_TO_TREASURY -> {
                 return Utils.getMainTextResourceBundle().getString("2786");
             }

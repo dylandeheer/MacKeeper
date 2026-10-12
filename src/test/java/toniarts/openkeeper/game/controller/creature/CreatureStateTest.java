@@ -10,6 +10,8 @@ package toniarts.openkeeper.game.controller.creature;
 
 import com.badlogic.gdx.ai.fsm.StateMachine;
 import java.lang.reflect.Proxy;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
@@ -17,6 +19,31 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 @SuppressWarnings("unchecked")
 class CreatureStateTest {
+
+    @Test void combatTakesPriorityOverCollectingPay() {
+        List<String> calls=new ArrayList<>();
+        ICreatureController creature=(ICreatureController)Proxy.newProxyInstance(ICreatureController.class.getClassLoader(),new Class<?>[]{ICreatureController.class},(p,m,a)->{
+            calls.add(m.getName());
+            if(m.getName().equals("shouldFleeOrAttack"))return true;
+            throw new AssertionError(m.getName());
+        });
+        CreatureState.WORK.update(creature);
+        assertEquals(List.of("shouldFleeOrAttack"),calls);
+    }
+
+    @Test void newPaydayTaskPreemptsExecutingOrdinaryWork() {
+        List<String> calls=new ArrayList<>();
+        ICreatureController creature=(ICreatureController)Proxy.newProxyInstance(ICreatureController.class.getClassLoader(),new Class<?>[]{ICreatureController.class},(p,m,a)->{
+            calls.add(m.getName());
+            return switch(m.getName()) {
+                case "shouldFleeOrAttack" -> false;
+                case "collectPay" -> true;
+                default -> throw new AssertionError(m.getName());
+            };
+        });
+        CreatureState.WORK.update(creature);
+        assertEquals(List.of("shouldFleeOrAttack","collectPay"),calls);
+    }
 
     @Test
     void sleepingCreatureWakesWhenItsBedIsGone() {

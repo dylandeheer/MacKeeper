@@ -16,6 +16,10 @@
  */
 package toniarts.openkeeper.game.controller;
 
+import toniarts.openkeeper.game.component.CreatureMood;
+
+import toniarts.openkeeper.game.logic.PaydaySystem;
+
 import com.jme3.math.Vector2f;
 import com.jme3.math.Vector3f;
 import com.jme3.util.SafeArrayList;
@@ -1075,6 +1079,37 @@ public final class GameWorldController implements IGameWorldController, IPlayerA
     }
 
     @Override
+    public int collectWages(EntityId creature, IRoomController room) {
+        synchronized (GOLD_LOCK) {
+            if (!PaydaySystem.eligible(entityData, creature)) return 0;
+            Owner owner = entityData.getComponent(creature, Owner.class);
+            Position position = entityData.getComponent(creature, Position.class);
+            Gold purse = entityData.getComponent(creature, Gold.class);
+            if (position == null || purse == null || !playerControllers.containsKey(owner.ownerId)
+                    || room == null || room.isRemoved() || room.isDestroyed() || room.getOwnerId() != owner.ownerId
+                    || !room.hasObjectControl(ObjectType.GOLD)
+                    || mapController.getRoomControllerByCoordinates(WorldUtils.vectorToPoint(position.position)) != room
+                    || entityData.getComponent(creature, InHand.class) != null
+                    || entityData.getComponent(creature, Unconscious.class) != null) return 0;
+            var salary = PaydaySystem.salary(entityData, creature, owner.ownerId);
+            RoomGoldControl storage = room.getObjectControl(ObjectType.GOLD);
+            int amount = (int) Math.min(salary.owed, Math.min((long) Integer.MAX_VALUE - purse.gold,
+                    Math.min(storage.getCurrentCapacity(), players.get(owner.ownerId).getGold())));
+            if (amount <= 0) return 0;
+            int paid = amount - storage.removeGold(amount);
+            if (paid > 0) {
+                entityData.setComponents(creature, new Gold(purse.gold + paid, purse.maxGold), salary.paid(paid));
+                if (salary.owed == paid) {
+                    var mood = entityData.getComponent(creature, CreatureMood.class);
+                    if (mood != null) entityData.setComponent(creature, mood.clear(CreatureMood.REASON_NO_PAY));
+                }
+            }
+            if (paid > 0) playerControllers.get(owner.ownerId).getGoldControl().subGold(paid);
+            return paid;
+        }
+    }
+
+    @Override
     public void drop(EntityId entity, Point tile, Vector2f coordinates, EntityId dropOnEntity, short playerId) {
         // Capture and hand actions must observe one consistent owner and storage balance.
         synchronized (GOLD_LOCK) {
@@ -1088,11 +1123,13 @@ public final class GameWorldController implements IGameWorldController, IPlayerA
                     dropCreature(roomController, entity, tile, coordinates, playerId);
                 } else {
 
-                    // TODO: handle giving item to creature
+                    // TODO: handle non-gold gifts to creatures
                     // See if it is gold added to a room
                     ObjectComponent objectComponent = entityData.getComponent(entity, ObjectComponent.class);
                     if (objectComponent != null && kwdFile.getObject(objectComponent.objectId).getFlags().contains(GameObject.ObjectFlag.OBJECT_TYPE_GOLD)) {
-                        dropGold(entity, roomController, playerId, tile, coordinates);
+                        if (!giveGoldToCreature(entity, dropOnEntity, playerId, tile)) {
+                            dropGold(entity, roomController, playerId, tile, coordinates);
+                        }
                     } else {
                         Vector3f pos = new Vector3f(coordinates.x, 1, coordinates.y);
                         entityData.setComponent(entity, new Position(0, pos));
@@ -1100,6 +1137,28 @@ public final class GameWorldController implements IGameWorldController, IPlayerA
                 }
             }
         }
+    }
+
+    /** Called only inside the hand transaction; invalid recipients fall back to a normal drop. */
+    private boolean giveGoldToCreature(EntityId goldEntity, EntityId creature, short playerId, Point tile) {
+        if (creature == null || !PaydaySystem.eligible(entityData, creature)) return false;
+        Owner owner = entityData.getComponent(creature, Owner.class);
+        Position position = entityData.getComponent(creature, Position.class);
+        Gold purse = entityData.getComponent(creature, Gold.class);
+        Gold gift = entityData.getComponent(goldEntity, Gold.class);
+        if (owner.ownerId != playerId || position == null || purse == null || gift == null || gift.gold <= 0
+                || !WorldUtils.vectorToPoint(position.position).equals(tile)
+                || entityData.getComponent(creature, InHand.class) != null
+                || entityData.getComponent(creature, Unconscious.class) != null
+                || (long) purse.gold + gift.gold > Integer.MAX_VALUE) return false;
+        var salary = PaydaySystem.salary(entityData, creature, playerId).paid(gift.gold);
+        entityData.setComponents(creature, new Gold(purse.gold + gift.gold, purse.maxGold), salary);
+        if (salary.owed == 0) {
+            var mood = entityData.getComponent(creature, CreatureMood.class);
+            if (mood != null) entityData.setComponent(creature, mood.clear(CreatureMood.REASON_NO_PAY));
+        }
+        entityData.removeEntity(goldEntity);
+        return true;
     }
 
     private void dropCreature(IRoomController roomController, EntityId entity, Point tile, Vector2f coordinates, short playerId) {

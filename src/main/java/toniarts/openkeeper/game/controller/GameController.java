@@ -76,6 +76,7 @@ public final class GameController implements IGameLogicUpdatable, IGameControlle
     private final List<IGameLogicUpdatable> controllers = new ArrayList<>();
 
     private GameWorldController gameWorldController;
+    private PaydaySystem paydaySystem;
     private GameTimeController gameTimer;
     private INavigationService navigationService;
     private PositionSystem positionSystem;
@@ -130,6 +131,8 @@ public final class GameController implements IGameLogicUpdatable, IGameControlle
         taskManager = new TaskManager(entityData, gameWorldController, gameWorldController.getMapController(),
                 gameWorldController.getObjectsController(), gameWorldController.getCreaturesController(),
                 navigationService, playerControllers.values(), levelInfo, positionSystem, gameSettings);
+
+        paydaySystem = new PaydaySystem(entityData, levelInfo.kwdFile, gameTimer, gameSettings);
 
         // The triggers
         controllers.add(new PartyTriggerLogicController(this, levelInfo, gameTimer,
@@ -280,6 +283,8 @@ public final class GameController implements IGameLogicUpdatable, IGameControlle
             timer.update(tpf);
         }
 
+        paydaySystem.processTick(tpf);
+        levelInfo.paydayCycle = paydaySystem.getCycle();
         if (triggerControl != null) {
             triggerControl.update(tpf);
         }
@@ -398,6 +403,7 @@ public final class GameController implements IGameLogicUpdatable, IGameControlle
     public void stop() {
         controllers.stream().forEach(IGameLogicUpdatable::stop);
         controllers.clear();
+        paydaySystem.stop();
     }
 
     @Override
@@ -426,6 +432,10 @@ public final class GameController implements IGameLogicUpdatable, IGameControlle
         private static final int LEVEL_FLAG_MAX_COUNT = 128;
 
         private final IKwdFile kwdFile;
+        private long paydayCycle;
+
+        @Override public long getPaydayCycle() { return paydayCycle; }
+
         private int levelScore = 0;
         private Float timeLimit = null;
 

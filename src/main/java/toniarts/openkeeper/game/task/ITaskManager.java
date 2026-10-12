@@ -49,6 +49,8 @@ public interface ITaskManager {
      */
     boolean assignGoldToTreasuryTask(ICreatureController creature);
 
+    boolean assignPaydayTask(ICreatureController creature);
+
     /**
      * Assign a task according to the creature's objectives
      *

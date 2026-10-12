@@ -16,6 +16,8 @@
  */
 package toniarts.openkeeper.game.controller.entity;
 
+import toniarts.openkeeper.game.controller.GameWorldController;
+
 import com.jme3.math.Vector3f;
 import com.simsilica.es.EntityData;
 import com.simsilica.es.EntityId;
@@ -47,7 +49,7 @@ import toniarts.openkeeper.utils.WorldUtils;
  * @author Toni Helenius <helenius.toni@gmail.com>
  */
 public class EntityController implements IEntityController {
-    
+
     private static final Logger logger = System.getLogger(EntityController.class.getName());
 
     protected final EntityId entityId;
@@ -117,8 +119,10 @@ public class EntityController implements IEntityController {
 
     @Override
     public void remove() {
-        removePossession();
-        entityData.removeEntity(entityId);
+        synchronized (GameWorldController.GOLD_LOCK) {
+            removePossession();
+            entityData.removeEntity(entityId);
+        }
     }
 
     @Override
@@ -128,20 +132,21 @@ public class EntityController implements IEntityController {
     }
 
     private void handleLootDrop() {
-
-        // Drop gold
-        Gold gold = entityData.getComponent(entityId, Gold.class);
-        if (gold != null && gold.gold > 0) {
-            Position position = entityData.getComponent(entityId, Position.class);
-            Owner owner = entityData.getComponent(entityId, Owner.class);
-            Point point = WorldUtils.vectorToPoint(position.position);
-            // TODO: some central place, we need to add more than one pile if it exceeds the max
-            objectsController.addLooseGold(owner.ownerId, point.x, point.y, gold.gold, gold.maxGold);
+        synchronized (GameWorldController.GOLD_LOCK) {
+            // Drop gold
+            Gold gold = entityData.getComponent(entityId, Gold.class);
+            if (gold != null && gold.gold > 0) {
+                Position position = entityData.getComponent(entityId, Position.class);
+                Owner owner = entityData.getComponent(entityId, Owner.class);
+                Point point = WorldUtils.vectorToPoint(position.position);
+                // TODO: some central place, we need to add more than one pile if it exceeds the max
+                objectsController.addLooseGold(owner.ownerId, point.x, point.y, gold.gold, gold.maxGold);
+            }
             entityData.removeComponent(entityId, Gold.class);
-        }
 
-        // Drop Portal Gem
-        // TODO:
+            // Drop Portal Gem
+            // TODO:
+        }
     }
 
     private void handleAssociatedEntities() {

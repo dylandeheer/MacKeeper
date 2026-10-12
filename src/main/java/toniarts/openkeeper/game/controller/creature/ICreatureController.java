@@ -71,7 +71,9 @@ public interface ICreatureController extends IGameLogicUpdatable, INavigable, IE
 
     public boolean isTooMuchGold();
 
-    public boolean dropGoldToTreasury();
+    boolean dropGoldToTreasury();
+
+    boolean collectPay();
 
     public boolean isStopped();
 

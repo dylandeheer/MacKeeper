@@ -8,6 +8,10 @@ import java.lang.reflect.Proxy;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
+import toniarts.openkeeper.game.controller.GameWorldController;
 import org.junit.jupiter.api.Test;
 import toniarts.openkeeper.game.component.Gold;
 import toniarts.openkeeper.game.component.Owner;
@@ -45,6 +49,32 @@ class CreatureGoldTest {
         assertEquals(160, controller.getGold() + piles.stream().mapToInt(Integer::intValue).sum());
     }
 
+    @Test void deathLootWaitsForAnInFlightGoldCreditAndDropsTheFullPurse() throws Exception {
+        CreatureController controller=creature(150,250);
+        CountDownLatch started=new CountDownLatch(1);
+        AtomicReference<Throwable> failure=new AtomicReference<>();
+        Thread death=new Thread(()->{started.countDown();try{controller.removePossession();}catch(Throwable e){failure.set(e);}});
+        death.setDaemon(true);
+        try {
+            synchronized(GameWorldController.GOLD_LOCK) {
+                death.start();assertTrue(started.await(2,TimeUnit.SECONDS));
+                long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(2);
+                while(death.isAlive()&&death.getState()!=Thread.State.BLOCKED&&System.nanoTime()<deadline)Thread.yield();
+                assertEquals(Thread.State.BLOCKED,death.getState());
+                data.setComponent(imp,new Gold(170,250));
+            }
+        } finally {death.join(2000);}
+        assertFalse(death.isAlive());assertNull(failure.get());
+        assertEquals(List.of(170),piles);
+        assertNull(data.getComponent(imp,Gold.class));
+    }
+
+    @Test void removingEmptyPossessionsCannotLeaveARecipientPurseForLateGifts() throws Exception {
+        creature(0,250).removePossession();
+        assertNull(data.getComponent(imp,Gold.class));
+        assertTrue(piles.isEmpty());
+    }
+
     @Test void emptyPurseCreatesNoObject() throws Exception {
         creature(0, 100).dropGold();
         assertTrue(piles.isEmpty());
@@ -78,7 +108,7 @@ class CreatureGoldTest {
             ICreatureController impController = (ICreatureController) Proxy.newProxyInstance(
                     ICreatureController.class.getClassLoader(), new Class<?>[]{ICreatureController.class},
                     (proxy, method, args) -> switch (method.getName()) {
-                        case "shouldFleeOrAttack" -> false;
+                        case "shouldFleeOrAttack", "collectPay" -> false;
                         case "isAssignedTaskValid", "isAtAssignedTaskTarget", "isTooMuchGold" -> true;
                         case "dropGoldToTreasury" -> treasuryAvailable;
                         case "executeAssignedTask", "dropGold" -> { actions.add(method.getName()); yield null; }

@@ -37,6 +37,7 @@ class GateCollapseSmoke {
                 kwd.getPlayers().forEach((id, player) -> keepers.put(id, new Keeper(player)));
                 var level = (ILevelInfo) Proxy.newProxyInstance(ILevelInfo.class.getClassLoader(), new Class<?>[]{ILevelInfo.class},
                         (proxy, method, parameters) -> switch (method.getName()) {
+                            case "getPaydayCycle" -> 0L;
                             case "getLevelData" -> kwd;
                             case "getPlayers" -> keepers;
                             case "getPlayer" -> keepers.get((short) parameters[0]);

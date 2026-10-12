@@ -472,49 +472,50 @@ public final class CreaturesController implements ICreaturesController {
 
     @Override
     public void levelUpCreature(EntityId entityId, int level, int experience) {
+        synchronized (GameWorldController.GOLD_LOCK) {
+            // Get all the components needed
+            CreatureComponent creatureComponent = entityData.getComponent(entityId, CreatureComponent.class);
+            CreatureExperience creatureExperience = entityData.getComponent(entityId, CreatureExperience.class);
+            Health health = entityData.getComponent(entityId, Health.class);
+            Gold gold = entityData.getComponent(entityId, Gold.class);
+            Senses senses = entityData.getComponent(entityId, Senses.class);
+            Threat threat = entityData.getComponent(entityId, Threat.class);
+            CreatureMeleeAttack creatureMeleeAttack = entityData.getComponent(entityId, CreatureMeleeAttack.class);
+            Regeneration regeneration = entityData.getComponent(entityId, Regeneration.class);
 
-        // Get all the components needed
-        CreatureComponent creatureComponent = entityData.getComponent(entityId, CreatureComponent.class);
-        CreatureExperience creatureExperience = entityData.getComponent(entityId, CreatureExperience.class);
-        Health health = entityData.getComponent(entityId, Health.class);
-        Gold gold = entityData.getComponent(entityId, Gold.class);
-        Senses senses = entityData.getComponent(entityId, Senses.class);
-        Threat threat = entityData.getComponent(entityId, Threat.class);
-        CreatureMeleeAttack creatureMeleeAttack = entityData.getComponent(entityId, CreatureMeleeAttack.class);
-        Regeneration regeneration = entityData.getComponent(entityId, Regeneration.class);
+            // Create a new versions of them
+            creatureComponent = new CreatureComponent(creatureComponent);
+            creatureExperience = new CreatureExperience(creatureExperience);
+            health = new Health(health);
+            gold = new Gold(gold);
+            senses = new Senses(senses);
+            threat = new Threat(threat);
+            creatureMeleeAttack = new CreatureMeleeAttack(creatureMeleeAttack);
+            if (regeneration == null) {
+                regeneration = new Regeneration(0, null);
+            } else {
+                regeneration = new Regeneration(regeneration);
+            }
 
-        // Create a new versions of them
-        creatureComponent = new CreatureComponent(creatureComponent);
-        creatureExperience = new CreatureExperience(creatureExperience);
-        health = new Health(health);
-        gold = new Gold(gold);
-        senses = new Senses(senses);
-        threat = new Threat(threat);
-        creatureMeleeAttack = new CreatureMeleeAttack(creatureMeleeAttack);
-        if (regeneration == null) {
-            regeneration = new Regeneration(0, null);
-        } else {
-            regeneration = new Regeneration(regeneration);
-        }
+            // Set the new stats
+            creatureExperience.level = level;
+            creatureExperience.experience = experience;
 
-        // Set the new stats
-        creatureExperience.level = level;
-        creatureExperience.experience = experience;
+            // Update stats
+            setAttributesByLevel(creatureComponent, creatureExperience, health, gold, senses, threat, creatureMeleeAttack, regeneration);
+            setSpells(entityId, kwdFile.getCreature(creatureComponent.creatureId), level);
 
-        // Update stats
-        setAttributesByLevel(creatureComponent, creatureExperience, health, gold, senses, threat, creatureMeleeAttack, regeneration);
-        setSpells(entityId, kwdFile.getCreature(creatureComponent.creatureId), level);
-
-        // Set the new components to the entity
-        entityData.setComponents(entityId, creatureComponent, creatureExperience, health, gold, senses, threat, creatureMeleeAttack);
-        Mobile mobile = entityData.getComponent(entityId, Mobile.class);
-        if (mobile != null) {
-            entityData.setComponent(entityId, new Mobile(mobile.canFly, mobile.canWalkOnWater, mobile.canWalkOnLava, creatureComponent.speed));
-        }
-        if (regeneration.ownLandHealthIncrease > 0) {
-            entityData.setComponent(entityId, regeneration);
-        } else {
-            entityData.removeComponent(entityId, Regeneration.class);
+            // Set the new components to the entity
+            entityData.setComponents(entityId, creatureComponent, creatureExperience, health, gold, senses, threat, creatureMeleeAttack);
+            Mobile mobile = entityData.getComponent(entityId, Mobile.class);
+            if (mobile != null) {
+                entityData.setComponent(entityId, new Mobile(mobile.canFly, mobile.canWalkOnWater, mobile.canWalkOnLava, creatureComponent.speed));
+            }
+            if (regeneration.ownLandHealthIncrease > 0) {
+                entityData.setComponent(entityId, regeneration);
+            } else {
+                entityData.removeComponent(entityId, Regeneration.class);
+            }
         }
     }
 
@@ -691,21 +692,25 @@ public final class CreaturesController implements ICreaturesController {
 
     @Override
     public void makeCreaturesHappy(short playerId) {
-        EntitySet entities = entityData.getEntities(new FieldFilter<>(Owner.class, "ownerId", playerId), Owner.class, CreatureMood.class);
-        for (Entity entity : entities) {
-            entityData.setComponent(entity.getId(), new CreatureMood());
+        synchronized (GameWorldController.GOLD_LOCK) {
+            EntitySet entities = entityData.getEntities(new FieldFilter<>(Owner.class, "ownerId", playerId), Owner.class, CreatureMood.class);
+            for (Entity entity : entities) {
+                entityData.setComponent(entity.getId(), new CreatureMood());
+            }
         }
     }
 
     @Override
     public void angerEnemyCreatures(short playerId) {
-        EntitySet entities = entityData.getEntities(Owner.class, CreatureMood.class);
-        for (Entity entity : entities) {
-            if (entity.get(Owner.class).ownerId == playerId) {
-                continue;
+        synchronized (GameWorldController.GOLD_LOCK) {
+            EntitySet entities = entityData.getEntities(Owner.class, CreatureMood.class);
+            for (Entity entity : entities) {
+                if (entity.get(Owner.class).ownerId == playerId) {
+                    continue;
+                }
+                entityData.setComponent(entity.getId(), new CreatureMood(CreatureMood.MAX_ANGER, CreatureMood.MAX_ANGER,
+                        CreatureMood.MAX_ANGER, CreatureMood.MAX_ANGER, CreatureMood.MAX_ANGER, CreatureMood.MAX_ANGER));
             }
-            entityData.setComponent(entity.getId(), new CreatureMood(CreatureMood.MAX_ANGER, CreatureMood.MAX_ANGER,
-                    CreatureMood.MAX_ANGER, CreatureMood.MAX_ANGER, CreatureMood.MAX_ANGER, CreatureMood.MAX_ANGER));
         }
     }
 

@@ -16,6 +16,8 @@
  */
 package toniarts.openkeeper.game.logic;
 
+import toniarts.openkeeper.game.controller.GameWorldController;
+
 import com.simsilica.es.Entity;
 import com.simsilica.es.EntityData;
 import com.simsilica.es.EntitySet;
@@ -67,57 +69,59 @@ public final class CreatureMoodSystem implements IGameLogicUpdatable {
 
     @Override
     public void processTick(float tpf) {
-        entities.applyChanges();
-        for (Entity entity : entities) {
-            CreatureMood mood = entity.get(CreatureMood.class);
-            CreatureSleep sleep = entity.get(CreatureSleep.class);
-            Owner owner = entity.get(Owner.class);
-            Creature creature = kwdFile.getCreature(entity.get(CreatureComponent.class).creatureId);
-            if (creature == null) {
-                continue;
-            }
-
-            int unhappyThreshold = CreatureMood.toRuntimeThreshold(
-                    creature.getAttributes().getUnhappyThreshold());
-
-            // DKII clears reason 2 immediately after a bed is successfully assigned.
-            if (hasAssignedLair(sleep)) {
-                if (mood.noLair != 0) {
-                    CreatureMood updatedMood = mood.clear(CreatureMood.REASON_NO_LAIR);
-                    entityData.setComponent(entity.getId(), updatedMood);
-                    logger.log(Level.INFO,
-                            "Creature mood: {0} ({1}, player {2}) assigned bed {3}; "
-                            + "cleared no-lair {4}->0, state {5}->{6}, counters {7}->{8}",
-                            new Object[]{creature.getName(), entity.getId(), owner.ownerId,
-                                sleep.lairObjectId, mood.noLair,
-                                stateName(mood.getState(unhappyThreshold)),
-                                stateName(updatedMood.getState(unhappyThreshold)),
-                                counters(mood), counters(updatedMood)});
+        synchronized (GameWorldController.GOLD_LOCK) {
+            entities.applyChanges();
+            for (Entity entity : entities) {
+                CreatureMood mood = entity.get(CreatureMood.class);
+                CreatureSleep sleep = entity.get(CreatureSleep.class);
+                Owner owner = entity.get(Owner.class);
+                Creature creature = kwdFile.getCreature(entity.get(CreatureComponent.class).creatureId);
+                if (creature == null) {
+                    continue;
                 }
-                continue;
-            }
 
-            if (creature.getLairObjectId() == 0
-                    || !isLairAvailableOrOwned(owner.ownerId)) {
-                continue;
-            }
+                int unhappyThreshold = CreatureMood.toRuntimeThreshold(
+                        creature.getAttributes().getUnhappyThreshold());
 
-            int anger = CreatureMood.toRuntimeValue(creature.getAttributes().getAngerNoLair());
-            if (anger != 0) {
-                CreatureMood updatedMood = mood.add(CreatureMood.REASON_NO_LAIR, anger);
-                entityData.setComponent(entity.getId(), updatedMood);
-                int oldState = mood.getState(unhappyThreshold);
-                int newState = updatedMood.getState(unhappyThreshold);
-                if (mood.noLair == 0
-                        || mood.noLair / LOG_COUNTER_INTERVAL
-                        != updatedMood.noLair / LOG_COUNTER_INTERVAL
-                        || oldState != newState) {
-                    logger.log(Level.INFO,
-                            "Creature mood: {0} ({1}, player {2}) no-lair {3}->{4} "
-                            + "(+{5}), threshold {6}, state {7}->{8}, counters {9}",
-                            new Object[]{creature.getName(), entity.getId(), owner.ownerId,
-                                mood.noLair, updatedMood.noLair, anger, unhappyThreshold,
-                                stateName(oldState), stateName(newState), counters(updatedMood)});
+                // DKII clears reason 2 immediately after a bed is successfully assigned.
+                if (hasAssignedLair(sleep)) {
+                    if (mood.noLair != 0) {
+                        CreatureMood updatedMood = mood.clear(CreatureMood.REASON_NO_LAIR);
+                        entityData.setComponent(entity.getId(), updatedMood);
+                        logger.log(Level.INFO,
+                                "Creature mood: {0} ({1}, player {2}) assigned bed {3}; "
+                                + "cleared no-lair {4}->0, state {5}->{6}, counters {7}->{8}",
+                                new Object[]{creature.getName(), entity.getId(), owner.ownerId,
+                                    sleep.lairObjectId, mood.noLair,
+                                    stateName(mood.getState(unhappyThreshold)),
+                                    stateName(updatedMood.getState(unhappyThreshold)),
+                                    counters(mood), counters(updatedMood)});
+                    }
+                    continue;
+                }
+
+                if (creature.getLairObjectId() == 0
+                        || !isLairAvailableOrOwned(owner.ownerId)) {
+                    continue;
+                }
+
+                int anger = CreatureMood.toRuntimeValue(creature.getAttributes().getAngerNoLair());
+                if (anger != 0) {
+                    CreatureMood updatedMood = mood.add(CreatureMood.REASON_NO_LAIR, anger);
+                    entityData.setComponent(entity.getId(), updatedMood);
+                    int oldState = mood.getState(unhappyThreshold);
+                    int newState = updatedMood.getState(unhappyThreshold);
+                    if (mood.noLair == 0
+                            || mood.noLair / LOG_COUNTER_INTERVAL
+                            != updatedMood.noLair / LOG_COUNTER_INTERVAL
+                            || oldState != newState) {
+                        logger.log(Level.INFO,
+                                "Creature mood: {0} ({1}, player {2}) no-lair {3}->{4} "
+                                + "(+{5}), threshold {6}, state {7}->{8}, counters {9}",
+                                new Object[]{creature.getName(), entity.getId(), owner.ownerId,
+                                    mood.noLair, updatedMood.noLair, anger, unhappyThreshold,
+                                    stateName(oldState), stateName(newState), counters(updatedMood)});
+                    }
                 }
             }
         }

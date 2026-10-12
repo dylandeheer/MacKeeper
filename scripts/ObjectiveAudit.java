@@ -52,6 +52,7 @@ class ObjectiveAudit {
                                 return null;
                             });
                             ILevelInfo info = proxy(ILevelInfo.class, (name, values) -> switch (name) {
+                                case "getPaydayCycle" -> 0L;
                                 case "getLevelData" -> kwd;
                                 case "getActionPoint" -> kwd.getThings(Thing.ActionPoint.class).stream()
                                         .filter(p -> p.getId() == ((Number) values[0]).intValue()).findFirst().map(ActionPoint::new).orElse(null);

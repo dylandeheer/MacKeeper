@@ -51,6 +51,8 @@ public interface ILevelInfo {
      */
     int getLevelScore();
 
+    long getPaydayCycle();
+
     Float getTimeLimit();
 
     GameTimer getTimer(int id);

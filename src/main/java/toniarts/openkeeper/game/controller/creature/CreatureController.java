@@ -16,6 +16,14 @@
  */
 package toniarts.openkeeper.game.controller.creature;
 
+import toniarts.openkeeper.game.task.TaskType;
+
+import toniarts.openkeeper.game.controller.GameWorldController;
+
+import toniarts.openkeeper.game.component.CreatureSalary;
+
+import toniarts.openkeeper.game.logic.PaydaySystem;
+
 import com.badlogic.gdx.ai.fsm.DefaultStateMachine;
 import com.badlogic.gdx.ai.fsm.StateMachine;
 import com.badlogic.gdx.ai.pfa.GraphPath;
@@ -424,6 +432,23 @@ public final class CreatureController extends EntityController implements ICreat
         return getGold() >= getMaxGold() && isWorker();
     }
 
+    private double nextPayCheck;
+
+    @Override
+    public boolean collectPay() {
+        if (gameTimer.getGameTime() < nextPayCheck || !PaydaySystem.eligible(entityData, entityId)) return false;
+        Task current = getAssignedTask();
+        if (current != null && current.getTaskType() == TaskType.COLLECT_PAY) return false;
+        var delay = gameSettings.get(Variable.MiscVariable.MiscType.DELAY_BEFORE_PAY_REEVALUATION_SECONDS);
+        nextPayCheck = gameTimer.getGameTime() + (delay == null ? 4 : Math.max(0.1, delay.getValue()));
+        var salary = entityData.getComponent(entityId, CreatureSalary.class);
+        if (salary != null && salary.employer == getOwnerId() && salary.owed > 0 && taskManager.assignPaydayTask(this)) {
+            navigateToAssignedTask();
+            return true;
+        }
+        return false;
+    }
+
     @Override
     public boolean dropGoldToTreasury() {
         if (getGold() > 0 && getOwnerId() >= Player.KEEPER1_ID && isWorker()) {
@@ -483,23 +508,25 @@ public final class CreatureController extends EntityController implements ICreat
 
     @Override
     public void dropGold() {
-        Gold carried = entityData.getComponent(entityId, Gold.class);
-        if (carried == null || carried.gold <= 0) {
-            return;
-        }
-        int maxPile = (int) gameSettings.get(Variable.MiscVariable.MiscType.MAX_GOLD_PILE_OUTSIDE_TREASURY).getValue();
-        if (maxPile <= 0) {
-            throw new IllegalStateException("Loose gold pile capacity must be positive");
-        }
-        Point coordinates = getCreatureCoordinates();
-        short owner = getOwnerId();
-        int remaining = carried.gold;
-        while (remaining > 0) {
-            int amount = Math.min(remaining, maxPile);
-            objectsController.addLooseGold(owner, coordinates.x, coordinates.y, amount, maxPile);
-            remaining -= amount;
-            // Debit only completed piles, so a failed spawn leaves the rest in the purse.
-            entityData.setComponent(entityId, new Gold(remaining, carried.maxGold));
+        synchronized (GameWorldController.GOLD_LOCK) {
+            Gold carried = entityData.getComponent(entityId, Gold.class);
+            if (carried == null || carried.gold <= 0) {
+                return;
+            }
+            int maxPile = (int) gameSettings.get(Variable.MiscVariable.MiscType.MAX_GOLD_PILE_OUTSIDE_TREASURY).getValue();
+            if (maxPile <= 0) {
+                throw new IllegalStateException("Loose gold pile capacity must be positive");
+            }
+            Point coordinates = getCreatureCoordinates();
+            short owner = getOwnerId();
+            int remaining = carried.gold;
+            while (remaining > 0) {
+                int amount = Math.min(remaining, maxPile);
+                objectsController.addLooseGold(owner, coordinates.x, coordinates.y, amount, maxPile);
+                remaining -= amount;
+                // Debit only completed piles, so a failed spawn leaves the rest in the purse.
+                entityData.setComponent(entityId, new Gold(remaining, carried.maxGold));
+            }
         }
     }
 
@@ -989,20 +1016,22 @@ public final class CreatureController extends EntityController implements ICreat
 
     @Override
     public void addGold(int amount) {
-        Gold gold = entityData.getComponent(entityId, Gold.class);
+        synchronized (GameWorldController.GOLD_LOCK) {
+            Gold gold = entityData.getComponent(entityId, Gold.class);
 
-        // Drop excess gold, we can only carry so much
-        int maxGoldCanAdd = Math.max(0, gold.maxGold - gold.gold);
-        int goldToAdd = Math.min(amount, maxGoldCanAdd);
-        int looseGold = amount - goldToAdd;
+            // Drop excess gold, we can only carry so much
+            int maxGoldCanAdd = Math.max(0, gold.maxGold - gold.gold);
+            int goldToAdd = Math.min(amount, maxGoldCanAdd);
+            int looseGold = amount - goldToAdd;
 
-        if (goldToAdd > 0) {
-            entityData.setComponent(entityId, new Gold(gold.gold + goldToAdd, gold.maxGold));
-        }
+            if (goldToAdd > 0) {
+                entityData.setComponent(entityId, new Gold(gold.gold + goldToAdd, gold.maxGold));
+            }
 
-        if (looseGold > 0) {
-            Point coordinates = getCreatureCoordinates();
-            objectsController.addLooseGold(getOwnerId(), coordinates.x, coordinates.y, looseGold, (int) gameSettings.get(Variable.MiscVariable.MiscType.MAX_GOLD_PILE_OUTSIDE_TREASURY).getValue());
+            if (looseGold > 0) {
+                Point coordinates = getCreatureCoordinates();
+                objectsController.addLooseGold(getOwnerId(), coordinates.x, coordinates.y, looseGold, (int) gameSettings.get(Variable.MiscVariable.MiscType.MAX_GOLD_PILE_OUTSIDE_TREASURY).getValue());
+            }
         }
     }
 
@@ -1018,8 +1047,10 @@ public final class CreatureController extends EntityController implements ICreat
 
     @Override
     public void substractGold(int amount) {
-        Gold gold = entityData.getComponent(entityId, Gold.class);
-        entityData.setComponent(entityId, new Gold(gold.gold - amount, gold.maxGold));
+        synchronized (GameWorldController.GOLD_LOCK) {
+            Gold gold = entityData.getComponent(entityId, Gold.class);
+            entityData.setComponent(entityId, new Gold(gold.gold - amount, gold.maxGold));
+        }
     }
 
     @Override
@@ -1396,12 +1427,14 @@ public final class CreatureController extends EntityController implements ICreat
 
     @Override
     public void giveObject(IObjectController object) {
-        if (object.getType() == AbstractRoomController.ObjectType.GOLD) {
-            addGold(entityData.getComponent(object.getEntityId(), Gold.class).gold);
-            entityData.removeComponent(object.getEntityId(), Gold.class);
-            object.remove();
-        } else {
-            logger.log(Level.WARNING, "Object {0} receiving not specified!", object.getType());
+        synchronized (GameWorldController.GOLD_LOCK) {
+            if (object.getType() == AbstractRoomController.ObjectType.GOLD) {
+                addGold(entityData.getComponent(object.getEntityId(), Gold.class).gold);
+                entityData.removeComponent(object.getEntityId(), Gold.class);
+                object.remove();
+            } else {
+                logger.log(Level.WARNING, "Object {0} receiving not specified!", object.getType());
+            }
         }
     }
 

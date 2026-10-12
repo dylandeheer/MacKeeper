@@ -193,6 +193,7 @@ class HeroGateCollapseTest {
             level = proxy(ILevelInfo.class, (method, args) -> switch (method) {
                 case "getPlayers" -> keepers;
                 case "getPlayer" -> keepers.get((short) args[0]);
+                case "getPaydayCycle" -> 0L;
                 case "getLevelData" -> kwd;
                 default -> throw new AssertionError(method);
             });

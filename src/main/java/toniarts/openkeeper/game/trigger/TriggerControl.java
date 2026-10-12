@@ -50,6 +50,9 @@ public class TriggerControl extends Control {
     private static final short LEVEL_SCORE_FLAG_ID = 128;
     private static final short TIME_LIMIT_TIMER_ID = 16;
 
+    private final long initialPaydayCycle;
+    private final java.util.Map<Integer, Long> observedPaydays = new java.util.HashMap<>();
+
     protected TriggerGenericData trigger;
     protected final TriggerGenericData root;
 
@@ -66,6 +69,7 @@ public class TriggerControl extends Control {
         this.gameController = gameController;
         this.levelInfo = levelInfo;
         this.gameTimer = gameTimer;
+        this.initialPaydayCycle = levelInfo.getPaydayCycle();
         this.mapController = mapController;
         this.creaturesController = creaturesController;
 
@@ -167,7 +171,11 @@ public class TriggerControl extends Control {
             case LEVEL_CREATURES:
                 return false;
             case LEVEL_PAY_DAY:
-                return false;
+                long payday = levelInfo.getPaydayCycle();
+                long observed = observedPaydays.getOrDefault(trigger.getId(), initialPaydayCycle);
+                if (payday <= observed) return false;
+                observedPaydays.put(trigger.getId(), payday);
+                return true;
             case LEVEL_PLAYED:
                 return false;
             default:

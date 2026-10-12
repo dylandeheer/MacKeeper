@@ -9,7 +9,7 @@ The parser loaded all **66 maps**, including **24 campaign variants**, **5 secre
 | Trigger | Occurrences | Campaign maps | Source finding |
 |---|---:|---:|---|
 | `MAKE_OBJECTIVE` (player-scoped off) | 14 | 5 | PlayerTriggerControl.makeObjectiveOff remains empty; player-target semantics need verification. |
-| `LEVEL_PAY_DAY` | 1 | 1 | TriggerControl always returns false; no payday system is present. |
+| `LEVEL_PAY_DAY` | 1 | 1 | Implemented cycle observation and physical collection; Level 1 authored timing passes a headless movement/transaction check. Mission progression and original parity remain unverified. |
 
 These are confirmed examples, not an exhaustive support matrix. Additional media, creature, party and player actions require semantic review. The room ownership actions occur in `Level17.kwd`; the payday condition occurs in `level1.kwd`.
 

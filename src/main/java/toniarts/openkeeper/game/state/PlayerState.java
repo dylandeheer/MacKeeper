@@ -16,6 +16,8 @@
  */
 package toniarts.openkeeper.game.state;
 
+import toniarts.openkeeper.game.logic.PaydaySystem;
+
 import com.jme3.app.Application;
 import com.jme3.app.state.AbstractAppState;
 import com.jme3.app.state.AppStateManager;
@@ -517,7 +519,7 @@ public final class PlayerState extends AbstractAppState implements PlayerListene
 
     String getTooltipText(String text) {
         int dungeonHealth = 0;
-        int paydayCost = 0;
+        long paydayCost = PaydaySystem.estimateNextPayroll(entityData, playerId);
 
         return text.replaceAll("%19%", String.valueOf(dungeonHealth))
                 .replaceAll("%20", String.valueOf(paydayCost));
