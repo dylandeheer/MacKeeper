@@ -230,47 +230,47 @@ public final class GameServerState extends AbstractAppState {
 
         @Override
         public void onSelectTiles(Vector2f start, Vector2f end, boolean select, short playerId) {
-            mapController.selectTiles(start, end, select, playerId);
+            game.runPlayerCommand(() -> mapController.selectTiles(start, end, select, playerId));
         }
 
         @Override
         public void onBuild(Vector2f start, Vector2f end, short roomId, short playerId) {
-            gameWorldController.build(start, end, playerId, roomId);
+            game.runPlayerCommand(() -> gameWorldController.build(start, end, playerId, roomId));
         }
 
         @Override
         public void onSell(Vector2f start, Vector2f end, short playerId) {
-            gameWorldController.sell(start, end, playerId);
+            game.runPlayerCommand(() -> gameWorldController.sell(start, end, playerId));
         }
 
         @Override
         public void onInteract(EntityId entity, short playerId) {
-            gameWorldController.interact(entity, playerId);
+            game.runPlayerCommand(() -> gameWorldController.interact(entity, playerId));
         }
 
         @Override
         public void onPickUp(EntityId entity, short playerId) {
-            gameWorldController.pickUp(entity, playerId);
+            game.runPlayerCommand(() -> gameWorldController.pickUp(entity, playerId));
         }
 
         @Override
         public void onDrop(EntityId entity, Point tile, Vector2f coordinates, EntityId dropOnEntity, short playerId) {
-            gameWorldController.drop(entity, tile, coordinates, dropOnEntity, playerId);
+            game.runPlayerCommand(() -> gameWorldController.drop(entity, tile, coordinates, dropOnEntity, playerId));
         }
 
         @Override
         public void onCastKeeperSpell(short keeperSpellId, EntityId target, Point tile, Vector2f position, short playerId) {
-            gameWorldController.castKeeperSpell(keeperSpellId, target, tile, position, playerId);
+            game.runPlayerCommand(() -> gameWorldController.castKeeperSpell(keeperSpellId, target, tile, position, playerId));
         }
 
         @Override
         public void onPlaceDoor(short doorId, Point tile, short playerId) {
-            gameWorldController.placeDoor(doorId, tile, playerId);
+            game.runPlayerCommand(() -> gameWorldController.placeDoor(doorId, tile, playerId));
         }
 
         @Override
         public void onPlaceTrap(short trapId, Point tile, short playerId) {
-            gameWorldController.placeTrap(trapId, tile, playerId);
+            game.runPlayerCommand(() -> gameWorldController.placeTrap(trapId, tile, playerId));
         }
 
         @Override
@@ -299,7 +299,7 @@ public final class GameServerState extends AbstractAppState {
 
         @Override
         public void onGetGold(int amount, short playerId) {
-            gameWorldController.getGold(amount, playerId);
+            game.runPlayerCommand(() -> gameWorldController.getGold(amount, playerId));
         }
 
         @Override
@@ -308,7 +308,10 @@ public final class GameServerState extends AbstractAppState {
                 return; // No! Bad!
             }
 
-            // See the cheat
+            game.runPlayerCommand(() -> applyCheat(cheat, playerId));
+        }
+
+        private void applyCheat(CheatState.CheatType cheat, short playerId) {
             switch (cheat) {
                 case LEVEL_MAX: {
                     gameWorldController.getCreaturesController().levelUpCreatures(playerId, Utils.MAX_CREATURE_LEVEL);

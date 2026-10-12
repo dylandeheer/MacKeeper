@@ -20,6 +20,8 @@ import com.simsilica.es.EntityData;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Function;
+import toniarts.openkeeper.utils.SimulationGate;
 import toniarts.openkeeper.game.controller.GameController;
 import toniarts.openkeeper.game.controller.IGameController;
 import toniarts.openkeeper.game.controller.IGameWorldController;
@@ -40,6 +42,10 @@ import toniarts.openkeeper.utils.GameLoop;
 public final class GameLoopManager {
 
     private final List<GameLoop> loops = new ArrayList<>();
+    private final SimulationGate simulationGate = new SimulationGate();
+    private volatile boolean closed;
+    private final java.util.concurrent.atomic.AtomicBoolean started = new java.util.concurrent.atomic.AtomicBoolean();
+    private final java.util.concurrent.CompletableFuture<Void> shutdown = new java.util.concurrent.CompletableFuture<>();
 
     private final GameSessionServerService gameService;
 
@@ -96,7 +102,7 @@ public final class GameLoopManager {
                 new HaulingSystem(entityData),
                 (IGameLogicUpdatable) taskManager);
 
-        loops.add(new GameLoop(gameLogicThread, 1_000_000_000 / levelInfo.getLevelData().getGameLevel().getTicksPerSec(), "Logic"));
+        loops.add(new GameLoop(gameLogicThread, 1_000_000_000 / levelInfo.getLevelData().getGameLevel().getTicksPerSec(), "Logic", simulationGate));
 
         // Animation systems
         final GameLogicManager gameAnimationThread = new GameLogicManager(
@@ -104,29 +110,78 @@ public final class GameLoopManager {
                         entityData,
                         gameController.getLevelVariable(Variable.MiscVariable.MiscType.TIME_BEFORE_DUNGEON_HEART_CONSTRUCTION_BEGINS)),
                 new CreatureFallSystem(entityData));
-        loops.add(new GameLoop(gameAnimationThread, GameLoop.INTERVAL_FPS_60, "Animation"));
+        loops.add(new GameLoop(gameAnimationThread, GameLoop.INTERVAL_FPS_60, "Animation", simulationGate));
 
         // Steering
-        loops.add(new GameLoop(new GameLogicManager(new MovementSystem(entityData)), GameLoop.INTERVAL_FPS_60, "Steering"));
+        loops.add(new GameLoop(new GameLogicManager(new MovementSystem(entityData)), GameLoop.INTERVAL_FPS_60, "Steering", simulationGate));
+    }
+
+    /** Run a complete player command under the same capture boundary as all loops. */
+    public void runPlayerCommand(Runnable command) {
+        simulationGate.mutate(() -> {
+            if (closed) throw new IllegalStateException("Game is closed");
+            command.run();
+        });
+    }
+
+    /**
+     * Capture detached state once all simulation systems have started. No loop
+     * or player command can mutate the world inside this callback. Encode and
+     * write the returned snapshot after leaving this boundary.
+     */
+    public <T> T captureSnapshot(Function<IGameController, T> capture) {
+        return simulationGate.snapshot(() -> {
+            if (closed || loops.stream().anyMatch(loop -> !loop.isInitialized())) {
+                throw new IllegalStateException("Game is not ready for a snapshot");
+            }
+            return capture.apply(gameController);
+        });
     }
 
     public void pause() {
-        loops.stream().forEach(GameLoop::pause);
-        gameService.setGamePaused(true);
+        runPlayerCommand(() -> {
+            loops.forEach(GameLoop::pause);
+            gameService.setGamePaused(true);
+        });
     }
 
     public void resume() {
-        loops.stream().forEach(GameLoop::resume);
-        gameService.setGamePaused(false);
+        runPlayerCommand(() -> {
+            loops.forEach(GameLoop::resume);
+            gameService.setGamePaused(false);
+        });
     }
 
     public void start() {
-        loops.stream().forEach(GameLoop::start);
+        runPlayerCommand(() -> {
+            if (!started.compareAndSet(false, true)) throw new IllegalStateException("Game has already started");
+            loops.forEach(GameLoop::start);
+        });
     }
 
     public void stop() {
-        loops.forEach(GameLoop::stop);
-        loops.clear();
+        // Close admission under the boundary, then join outside it so workers
+        // can acquire the update lock for their cleanup.
+        boolean closeOwner = simulationGate.snapshot(() -> {
+            if (closed) return false;
+            closed = true;
+            return true;
+        });
+        if (closeOwner) {
+            try {
+                loops.forEach(GameLoop::requestStop);
+                loops.forEach(GameLoop::stop);
+                loops.clear();
+                shutdown.complete(null);
+            } catch (RuntimeException | Error failure) {
+                shutdown.completeExceptionally(failure);
+                throw failure;
+            }
+        } else {
+            // Every caller must wait for cleanup, even when another thread
+            // closed admission. join() preserves the caller's interrupt flag.
+            shutdown.join();
+        }
     }
 
     public IGameController getGameController() {
