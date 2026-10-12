@@ -21,11 +21,12 @@ class OwnerSnapshotSmoke {
             List<PlayerHandControl.State> hands, GameTimeController.State clock, List<GameTimer.State> timers,
             LevelSnapshots.State level, Map<Short, PlayerStatsControl.State> statistics, List<RoomState> rooms, List<PlayerControlState> players,
             List<toniarts.openkeeper.game.controller.map.FlashTileControl.State> flashes,
-            toniarts.openkeeper.game.logic.PlayerCreatureSystem.State creatureIndex) { }
+            toniarts.openkeeper.game.logic.PlayerCreatureSystem.State creatureIndex,
+            toniarts.openkeeper.game.logic.PlayerSpellbookSystem.State spellbookIndex) { }
 
     public static void main(String[] args) throws Exception {
         String base = Path.of(args[0]).toAbsolutePath().normalize() + "/";
-        int ownerCount = 0, pickedUp = 0;
+        int ownerCount = 0, pickedUp = 0, observedBooks = 0;
         for (String name : List.of("level1", "level17", "TrapTime", "level10")) {
             var kwd = KwdFile.load(base, Path.of(base, "Data/editor/maps/" + name + ".kwd"));
             var data = new GameEntityData();
@@ -41,8 +42,25 @@ class OwnerSnapshotSmoke {
                 }
                 // Exercise ordinary pickup of an actual owned creature. Use the
                 // production command boundary, not mutation from a capture callback.
+                var seededBooks = new java.util.concurrent.atomic.AtomicInteger();
                 manager.runPlayerCommand(() -> {
                     var game = manager.getGameController();
+                    var map = (MapController) game.getGameWorldController().getMapController();
+                    for (var roomState : map.captureRoomStates()) {
+                        var room = map.getRoomController(roomState.entityId());
+                        var bookType = toniarts.openkeeper.game.controller.room.AbstractRoomController.ObjectType.SPELL_BOOK;
+                        if (!room.hasObjectControl(bookType)) continue;
+                        var owner = game.getPlayerController(room.getOwnerId());
+                        if (owner == null || owner.getResearchControl() == null) continue;
+                        toniarts.openkeeper.game.controller.room.storage.IRoomObjectControl<EntityId> storage = room.getObjectControl(bookType);
+                        if (storage.isFullCapacity() || storage.getAvailableCoordinates().isEmpty()) continue;
+                        var spell = kwd.getKeeperSpells().getFirst();
+                        owner.getSpellControl().setTypeAvailable(spell, true, false);
+                        var point = storage.getAvailableCoordinates().iterator().next();
+                        var book = game.getGameWorldController().getObjectsController().addRoomSpellBook(room.getOwnerId(), point.x, point.y, new PlayerSpell(spell.getId()));
+                        require(storage.addItem(book, point) == null, "Probe book did not enter library");
+                        seededBooks.incrementAndGet();break;
+                    }
                     var controller = game.getPlayerController((short) 3);
                     if (controller == null) return;
                     ((MapController) game.getGameWorldController().getMapController()).flashTiles(List.of(new toniarts.openkeeper.utils.Point(0, 0)), (short) 3, 2);
@@ -54,8 +72,14 @@ class OwnerSnapshotSmoke {
                         if (!controller.getHandControl().isEmpty()) break;
                     }
                 });
+                if (seededBooks.get() > 0) {
+                    long bookDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+                    while (manager.captureSnapshotWithSystems((game, systems) -> systems.spellbooks().entries().isEmpty())) {
+                        require(System.nanoTime() < bookDeadline, "Seeded research book was not observed");Thread.sleep(20);
+                    }
+                }
                 for (int round = 0; round < 3; round++) {
-                    var capture = manager.captureSnapshot((game, creatureIndex) -> {
+                    var capture = manager.captureSnapshotWithSystems((game, systems) -> {
                         try {
                             List<GameTimer.State> timers = new ArrayList<>();
                             for (int i = 0; i < 16; i++) timers.add(game.getLevelInfo().getTimer(i).captureState());
@@ -67,7 +91,7 @@ class OwnerSnapshotSmoke {
                                     new LevelSnapshots.State(LevelState.capture(game.getLevelInfo()), ((GameTimeController) game.getGameTimer()).captureState()), Map.copyOf(statistics),
                                     ((MapController) game.getGameWorldController().getMapController()).captureRoomStates(),
                                     game.getPlayerControllers().values().stream().map(player -> ((PlayerController) player).captureState()).toList(),
-                                    ((MapController) game.getGameWorldController().getMapController()).captureFlashControls(), creatureIndex);
+                                    ((MapController) game.getGameWorldController().getMapController()).captureFlashControls(), systems.creatures(), systems.spellbooks());
                         } catch (IOException e) { throw new UncheckedIOException(e); }
                     });
                     var staged = GameEntityData.restore(EntitySnapshots.decode(EntitySnapshots.encode(capture.entities())));
@@ -87,11 +111,27 @@ class OwnerSnapshotSmoke {
                             require(state.equals(statistics.captureState()), "Interaction history differs");
                         }
                         byte[] beforeHands = EntitySnapshots.encode(staged.capture());
-                        var objects = (IObjectsController) Proxy.newProxyInstance(IObjectsController.class.getClassLoader(),
-                                new Class<?>[]{IObjectsController.class}, (p, m, a) -> {throw new AssertionError("Room binding created objects: " + m.getName());});
+                        var mapRef = new IMapController[1];
+                        var world = (IGameWorldController) Proxy.newProxyInstance(IGameWorldController.class.getClassLoader(),
+                                new Class<?>[]{IGameWorldController.class}, (p, m, a) -> {
+                                    if (m.getName().equals("getMapController")) return mapRef[0];
+                                    throw new AssertionError("Unexpected staged world call: " + m.getName());
+                                });
+                        var gameRef = (IGameController) Proxy.newProxyInstance(IGameController.class.getClassLoader(),
+                                new Class<?>[]{IGameController.class}, (p, m, a) -> {
+                                    if (m.getName().equals("getGameWorldController")) return world;
+                                    throw new AssertionError("Unexpected staged game call: " + m.getName());
+                                });
+                        var objects = ObjectsController.restoreBindings(kwd, staged, kwd.getVariables(), new GameTimeController(capture.clock()), gameRef, level);
                         byte[] roomBytes = RoomSnapshots.encode(capture.rooms());
                         var map = MapController.restore(kwd, objects, kwd.getVariables(), new GameTimeController(capture.clock()),
                                 staged, level, RoomSnapshots.decode(roomBytes));
+                        mapRef[0] = map;
+                        int objectCount = 0;
+                        for (var id : staged.findEntities(null, ObjectComponent.class)) {
+                            var object = objects.createController(id);
+                            require(id.equals(object.getEntityId()), "Object binding changed identity");objectCount++;
+                        }
                         require(Arrays.equals(roomBytes, RoomSnapshots.encode(map.captureRoomStates())), "Live room state differs");
                         require(Arrays.equals(beforeHands, EntitySnapshots.encode(staged.capture())), "Binding live rooms mutated entities");
                         var flashes = MapControlSnapshots.decode(MapControlSnapshots.encode(capture.flashes()));
@@ -108,6 +148,14 @@ class OwnerSnapshotSmoke {
                         var creatureSystem = toniarts.openkeeper.game.logic.PlayerCreatureSystem.restoreState(staged, kwd, stagedPlayers, observed);
                         try {require(observed.equals(creatureSystem.captureState()), "Observed creature cache differs");}
                         finally {creatureSystem.stop();}
+                        var books = SpellbookIndexSnapshots.decode(SpellbookIndexSnapshots.encode(capture.spellbookIndex()));
+                        observedBooks += books.entries().size();
+                        var beforeResearch = stagedPlayers.stream().map(p -> ((PlayerController) p).captureState()).toList();
+                        var bookSystem = toniarts.openkeeper.game.logic.PlayerSpellbookSystem.restoreState(staged, kwd, stagedPlayers, books);
+                        try {
+                            require(books.equals(bookSystem.captureState()), "Observed spellbook cache differs");
+                            require(beforeResearch.equals(stagedPlayers.stream().map(p -> ((PlayerController) p).captureState()).toList()), "Book system binding replayed research discovery");
+                        } finally {bookSystem.stop();}
                         require(Arrays.equals(beforeHands, EntitySnapshots.encode(staged.capture())), "Binding players/flash controls mutated entities");
                         List<PlayerHandControl> hands = new ArrayList<>();
                         for (var state : capture.hands()) {
@@ -130,15 +178,17 @@ class OwnerSnapshotSmoke {
                         }
                         Thread.sleep(300);
                         require(Arrays.equals(beforeHands, EntitySnapshots.encode(capture.entities())), "Staged hand/live play mutated capture");
-                        System.out.println("PASS " + name + " round=" + round + " keepers=" + keepers.size() + " hands=" + hands.size() + " rooms=" + capture.rooms().size() + " controls=" + capture.players().size() + " flashes=" + capture.flashes().size() + " statOwners=" + capture.statistics().size() + " levelBytes=" + LevelSnapshots.encode(levelState).length
+                        System.out.println("PASS " + name + " round=" + round + " keepers=" + keepers.size() + " hands=" + hands.size() + " rooms=" + capture.rooms().size() + " objects=" + objectCount + " books=" + books.entries().size() + " controls=" + capture.players().size() + " flashes=" + capture.flashes().size() + " statOwners=" + capture.statistics().size() + " levelBytes=" + LevelSnapshots.encode(levelState).length
                                 + " carried=" + capture.hands().stream().mapToInt(h -> h.bottomToTop().size()).sum() + " ticks=" + capture.clock().ticks());
                     } finally { staged.close(); }
                 }
             } finally { manager.stop();data.close(); }
         }
         require(pickedUp > 0, "No actual pickup exercised");
+        require(observedBooks > 0, "No real library research book observed");
+        System.out.println("PASS observed library book round trips=" + observedBooks);
         System.out.println("PASS 12 live owner captures; keeper round trips=" + ownerCount + " carried entity round trips=" + pickedUp);
-        System.out.println("Keeper/hand/level/time/statistics/map/room/player/flash/creature-index sections only. Full world restoration, resumed gameplay and complete save files remain unverified.");
+        System.out.println("Keeper/hand/level/time/statistics/map/room/player/flash/creature-index/spellbook-index/object bindings only. Full world restoration, resumed gameplay and complete save files remain unverified.");
     }
     static void require(boolean ok, String message) { if (!ok) throw new AssertionError(message); }
 }

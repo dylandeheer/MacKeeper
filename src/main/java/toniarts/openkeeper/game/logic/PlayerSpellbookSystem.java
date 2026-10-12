@@ -24,7 +24,10 @@ import com.simsilica.es.filter.FieldFilter;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.Set;
+import java.util.List;
+import java.util.Comparator;
+import toniarts.openkeeper.game.data.ResearchableType;
+import toniarts.openkeeper.game.save.GameEntityData;
 import toniarts.openkeeper.game.component.Owner;
 import toniarts.openkeeper.game.component.Stored;
 import toniarts.openkeeper.game.component.Spellbook;
@@ -44,9 +47,53 @@ public final class PlayerSpellbookSystem implements IGameLogicUpdatable {
     private final IKwdFile kwdFile;
     private final EntitySet spellbookEntities;
     private final Map<Short, IPlayerController> playerControllersByPlayerId;
-    private final Map<EntityId, Short> ownersByEntityId = new HashMap<>();
+    private final Map<EntityId, Entry> observed = new HashMap<>();
+    private boolean reconcileOnNextTick;
+
+    /** Last values observed by this system, possibly older than the current ECS. */
+    public record Entry(EntityId entityId, short ownerId, ResearchableType type, short typeId) {
+        public Entry {
+            if (entityId == null || entityId.getId() < 0 || ownerId < 0 || ownerId > 255
+                    || type == null || typeId < 0 || typeId > 255)
+                throw new IllegalArgumentException("Invalid observed spellbook");
+        }
+        private Spellbook spellbook() { return new Spellbook(type, typeId); }
+        private static Entry from(Entity entity) {
+            var book = entity.get(Spellbook.class);
+            return new Entry(entity.getId(), entity.get(Owner.class).ownerId, book.type, book.typeId);
+        }
+    }
+
+    public record State(List<Entry> entries) {
+        public State {
+            entries = List.copyOf(entries);
+            if (entries.size() > 65_536 || entries.stream().map(Entry::entityId).distinct().count() != entries.size())
+                throw new IllegalArgumentException("Invalid observed spellbook index");
+        }
+    }
+
+    public State captureState() {
+        return new State(observed.values().stream().sorted(Comparator.comparing(Entry::entityId)).toList());
+    }
+
+    /** Bind observations without discovering/upgrading research a second time. */
+    public static PlayerSpellbookSystem restoreState(GameEntityData data, IKwdFile definition,
+            Collection<IPlayerController> players, State state) {
+        for (var entry : state.entries()) {
+            if (!data.wasAllocated(entry.entityId()) || getResearchableType(definition, entry.spellbook()) == null)
+                throw new IllegalArgumentException("Observed spellbook reference/definition missing");
+        }
+        var ids = new java.util.HashSet<Short>();
+        for (var player : players) if (!ids.add(player.getKeeper().getId()))
+            throw new IllegalArgumentException("Duplicate player controller");
+        return new PlayerSpellbookSystem(data, definition, players, state);
+    }
 
     public PlayerSpellbookSystem(EntityData entityData, IKwdFile kwdFile, Collection<IPlayerController> playerControllers) {
+        this(entityData, kwdFile, playerControllers, null);
+    }
+
+    private PlayerSpellbookSystem(EntityData entityData, IKwdFile kwdFile, Collection<IPlayerController> playerControllers, State saved) {
         this.kwdFile = kwdFile;
         playerControllersByPlayerId = HashMap.newHashMap(playerControllers.size());
         for (IPlayerController playerController : playerControllers) {
@@ -56,59 +103,62 @@ public final class PlayerSpellbookSystem implements IGameLogicUpdatable {
         }
 
         spellbookEntities = entityData.getEntities(new FieldFilter(Stored.class, "objectType", AbstractRoomController.ObjectType.SPELL_BOOK), Spellbook.class, Stored.class, Owner.class);
-        processAddedEntities(spellbookEntities);
+        if (saved == null) processAddedEntities(spellbookEntities);
+        else {
+            for (var entry : saved.entries()) observed.put(entry.entityId(), entry);
+            reconcileOnNextTick = true;
+        }
     }
 
     @Override
     public void processTick(float tpf) {
-        if (spellbookEntities.applyChanges()) {
-
-            processDeletedEntities(spellbookEntities.getRemovedEntities());
-
+        boolean changed = spellbookEntities.applyChanges();
+        if (reconcileOnNextTick) {
+            // Partition before callbacks mutate the saved observations. A fresh query
+            // has no history of books that left storage before the snapshot.
+            var current = new HashMap<EntityId, Entity>();
+            for (var entity : spellbookEntities) current.put(entity.getId(), entity);
+            var removed = observed.keySet().stream().filter(id -> !current.containsKey(id)).sorted().toList();
+            var added = current.values().stream().filter(e -> !observed.containsKey(e.getId())).toList();
+            var retained = current.values().stream().filter(e -> observed.containsKey(e.getId())).toList();
+            removed.forEach(this::removeObserved);
+            processAddedEntities(added);
+            processChangedEntities(retained);
+            reconcileOnNextTick = false;
+        } else if (changed) {
+            spellbookEntities.getRemovedEntities().stream().map(Entity::getId).sorted().forEach(this::removeObserved);
             processAddedEntities(spellbookEntities.getAddedEntities());
-
             processChangedEntities(spellbookEntities.getChangedEntities());
         }
     }
 
-    private void processAddedEntities(Set<Entity> entities) {
-        for (Entity entity : entities) {
-            Spellbook spellbook = entity.get(Spellbook.class);
-            short ownerId = entity.get(Owner.class).ownerId;
-            ownersByEntityId.put(entity.getId(), ownerId);
-            AbstractResearchablePlayerControl researchablePlayerControl = getResearchablePlayerControl(playerControllersByPlayerId, ownerId, spellbook);
-            if (researchablePlayerControl != null) {
-                researchablePlayerControl.onResearchResultsAdded(getResearchableType(kwdFile, spellbook));
-            }
+    private void processAddedEntities(Collection<Entity> entities) {
+        for (Entity entity : entities.stream().sorted(Comparator.comparing(Entity::getId)).toList()) {
+            Entry entry = Entry.from(entity);
+            observed.put(entry.entityId(), entry);
+            var control = getResearchablePlayerControl(playerControllersByPlayerId, entry.ownerId(), entry.spellbook());
+            if (control != null) control.onResearchResultsAdded(getResearchableType(kwdFile, entry.spellbook()));
         }
     }
 
-    private void processDeletedEntities(Set<Entity> entities) {
-        for (Entity entity : entities) {
-            Spellbook spellbook = entity.get(Spellbook.class);
-            short ownerId = entity.get(Owner.class).ownerId;
-            ownersByEntityId.remove(entity.getId());
-            AbstractResearchablePlayerControl researchablePlayerControl = getResearchablePlayerControl(playerControllersByPlayerId, ownerId, spellbook);
-            if (researchablePlayerControl != null) {
-                researchablePlayerControl.onResearchResultsRemoved(getResearchableType(kwdFile, spellbook));
-            }
-        }
+    private void removeObserved(EntityId id) {
+        Entry entry = observed.remove(id);
+        var control = getResearchablePlayerControl(playerControllersByPlayerId, entry.ownerId(), entry.spellbook());
+        if (control != null) control.onResearchResultsRemoved(getResearchableType(kwdFile, entry.spellbook()));
     }
 
-    private void processChangedEntities(Set<Entity> entities) {
-        for (Entity entity : entities) {
-            Spellbook spellbook = entity.get(Spellbook.class);
-            short newOwnerId = entity.get(Owner.class).ownerId;
-            short oldOwnerId = ownersByEntityId.put(entity.getId(), newOwnerId);
-            if (newOwnerId != oldOwnerId) {
-                AbstractResearchablePlayerControl newResearchablePlayerControl = getResearchablePlayerControl(playerControllersByPlayerId, newOwnerId, spellbook);
-                AbstractResearchablePlayerControl oldResearchablePlayerControl = getResearchablePlayerControl(playerControllersByPlayerId, oldOwnerId, spellbook);
-                if (newResearchablePlayerControl != null) {
-                    newResearchablePlayerControl.onResearchResultsAdded(getResearchableType(kwdFile, spellbook));
-                }
-                if (oldResearchablePlayerControl != null) {
-                    oldResearchablePlayerControl.onResearchResultsRemoved(getResearchableType(kwdFile, spellbook));
-                }
+    private void processChangedEntities(Collection<Entity> entities) {
+        for (Entity entity : entities.stream().sorted(Comparator.comparing(Entity::getId)).toList()) {
+            Entry entry = Entry.from(entity);
+            Entry previous = observed.put(entry.entityId(), entry);
+            if (entry.ownerId() != previous.ownerId()) {
+                // Preserve the live system's transfer order and use of the current
+                // book type for both notifications. Type-only changes have no callback.
+                var book = entry.spellbook();
+                var next = getResearchablePlayerControl(playerControllersByPlayerId, entry.ownerId(), book);
+                var old = getResearchablePlayerControl(playerControllersByPlayerId, previous.ownerId(), book);
+                if (next != null) next.onResearchResultsAdded(getResearchableType(kwdFile, book));
+                if (old != null) old.onResearchResultsRemoved(getResearchableType(kwdFile, book));
             }
         }
     }

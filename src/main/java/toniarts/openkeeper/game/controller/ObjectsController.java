@@ -129,6 +129,20 @@ public final class ObjectsController implements IObjectsController {
      */
     public ObjectsController(IKwdFile kwdFile, EntityData entityData, Map<Variable.MiscVariable.MiscType, Variable.MiscVariable> gameSettings,
             IGameTimer gameTimer, IGameController gameController, ILevelInfo levelInfo) {
+        this(kwdFile, entityData, gameSettings, gameTimer, gameController, levelInfo, true);
+    }
+
+    /** Bind an already restored entity store without loading the map's original objects.
+     * Active chicken state machines are restored separately by their owning system. */
+    public static ObjectsController restoreBindings(IKwdFile kwdFile, EntityData entityData,
+            Map<Variable.MiscVariable.MiscType, Variable.MiscVariable> gameSettings,
+            IGameTimer gameTimer, IGameController gameController, ILevelInfo levelInfo) {
+        return new ObjectsController(kwdFile, entityData, gameSettings, gameTimer, gameController, levelInfo, false);
+    }
+
+    private ObjectsController(IKwdFile kwdFile, EntityData entityData,
+            Map<Variable.MiscVariable.MiscType, Variable.MiscVariable> gameSettings,
+            IGameTimer gameTimer, IGameController gameController, ILevelInfo levelInfo, boolean initialize) {
         this.kwdFile = kwdFile;
         this.entityData = entityData;
         this.gameSettings = gameSettings;
@@ -136,8 +150,7 @@ public final class ObjectsController implements IObjectsController {
         this.gameController = gameController;
         this.levelInfo = levelInfo;
 
-        // Load objects
-        loadObjects();
+        if (initialize) loadObjects();
     }
 
     private void loadObjects() {

@@ -51,6 +51,10 @@ public final class GameLoopManager {
 
     private final IGameController gameController;
     private final PlayerCreatureSystem playerCreatureSystem;
+    private final PlayerSpellbookSystem playerSpellbookSystem;
+
+    /** Implemented system sections; not yet the complete simulation state. */
+    public record SystemState(PlayerCreatureSystem.State creatures, PlayerSpellbookSystem.State spellbooks) { }
 
     /**
      * Single use game states
@@ -88,7 +92,7 @@ public final class GameLoopManager {
                         gameWorldController.getMapController()),
                 new DeathSystem(entityData, gameSettings, positionSystem),
                 playerCreatureSystem = new PlayerCreatureSystem(entityData, levelInfo.getLevelData(), playerControllers.values()),
-                new PlayerSpellbookSystem(entityData, levelInfo.getLevelData(), playerControllers.values()),
+                playerSpellbookSystem = new PlayerSpellbookSystem(entityData, levelInfo.getLevelData(), playerControllers.values()),
                 (IGameLogicUpdatable) gameController,
                 new CreatureSpawnSystem(gameWorldController.getCreaturesController(), playerControllers.values(),
                         gameSettings, levelInfo, gameWorldController.getMapController()),
@@ -142,6 +146,12 @@ public final class GameLoopManager {
     /** Capture the last-observed creature index under the same boundary as its player controls and ECS. */
     public <T> T captureSnapshot(java.util.function.BiFunction<IGameController, PlayerCreatureSystem.State, T> capture) {
         return captureSnapshot(game -> capture.apply(game, playerCreatureSystem.captureState()));
+    }
+
+    /** Capture implemented system sections together with controllers and ECS. */
+    public <T> T captureSnapshotWithSystems(java.util.function.BiFunction<IGameController, SystemState, T> capture) {
+        return captureSnapshot(game -> capture.apply(game, new SystemState(
+                playerCreatureSystem.captureState(), playerSpellbookSystem.captureState())));
     }
 
     public void pause() {
