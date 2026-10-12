@@ -35,7 +35,7 @@ The original retail game data is a local test dependency and must never be commi
 - On Apple M1 Max, the bundled ARM64 Java 25 app initialized OpenGL 4.1 and OpenAL, played the Bullfrog intro, displayed the main menu, campaign map and mission briefing, and loaded campaign mission 1.
 - Visually verified Escape pause and resume and a running dungeon after the opening cinematic. This does not establish mission completion or campaign compatibility.
 - Fixed two errors found by actual launch: Cocoa rejects setting a normal window icon; the video material required GLSL150 and the engine's GLSL compatibility header for the core OpenGL profile.
-- All 238 automated tests pass, including setup/game launch isolation, property persistence and synthetic data validation. Mac packaging and bundled command-line help/data checks pass locally; remote CI status is separate.
+- All 252 automated tests pass, including setup/game launch isolation, property persistence and synthetic data validation. Mac packaging and bundled command-line help/data checks pass locally; remote CI status is separate.
 - Development builds use an ad hoc local signature. Developer ID signing/notarization and Intel hardware testing remain pending.
 
 Log4j runtime constraints were updated from the upstream 2.15.0 dependency to 2.26.1, documented in [Apache's release notes](https://logging.apache.org/log4j/2.x/release-notes.html). Other inherited dependencies still need a full release audit.
@@ -56,7 +56,7 @@ Log4j runtime constraints were updated from the upstream 2.15.0 dependency to 2.
 
 - Starting funds now use a separate reserve, spent before room treasure. Wide keeper balances preserve funds through capture; individual room purchases remain bounded. All 66 maps/234 funded player entries pass the initial-reserve audit. See [STARTING-GOLD.md](STARTING-GOLD.md) for transaction, serialization and callback evidence and limitations.
 
-- Computer keepers now retain authored AI identity and execute economy decisions on the authoritative simulation thread. All 66 maps pass profile checks; two seeded twelve-minute production-system headless TrapTime runs verify normal mining/worker excavation/claiming and paid rooms for both opponents. The full suite has 238 tests. This is the economy foundation, with remaining opponent strategy and coverage recorded in [KEEPER-AI.md](KEEPER-AI.md).
+- Computer keepers now retain authored AI identity and execute economy decisions on the authoritative simulation thread. All 66 maps pass profile checks; two seeded twelve-minute production-system headless TrapTime runs verify normal mining/worker excavation/claiming and paid rooms for both opponents. The full suite has 252 tests. This is the economy foundation, with remaining opponent strategy and coverage recorded in [KEEPER-AI.md](KEEPER-AI.md).
 
 - Failed assigned-task paths now retry once per game second, with immediate retries for changed tasks/locations. A seeded headless Level 10 comparison shows lower simulation cost; the benchmark and limitations are in [PERFORMANCE.md](PERFORMANCE.md).
 
@@ -77,3 +77,5 @@ Fortified-wall breach events now execute the two shipped Level 1/Pressure flag a
 Save/load now has a shared simulation capture boundary, five concurrency regressions and an owned Level 1 live-thread probe. Capture time is excluded from game clocks; interrupted and concurrent shutdown wait for all workers. The authoritative state inventory and remaining persistence/restore work are in [SAVE-LOAD.md](SAVE-LOAD.md).
 
 Entity snapshots now encode all 65 component types with explicit schemas and reconstruct independent stores while retaining IDs and allocator state. Nineteen new tests and twelve live ECS round trips across four owned maps pass. This does not restore a playable simulation; controller/task/trigger/RNG/session state and complete save-file handling remain open in [SAVE-LOAD.md](SAVE-LOAD.md).
+
+Keeper and hand persistence now preserve complete keeper values, research object sharing and carried-entity order with explicit versioned sections. Clock/timer helpers retain saved values through startup. Fourteen regressions and twelve live owned-map captures pass; full-world restore and saved-game UI remain pending. See [SAVE-LOAD.md](SAVE-LOAD.md).

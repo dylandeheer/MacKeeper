@@ -303,6 +303,56 @@ public final class Keeper implements Comparable<Keeper>, IIndexable, Savable {
         return currentResearch;
     }
 
+    /** Copy under the simulation snapshot boundary. Map definitions are not copied. */
+    public KeeperState captureState() {
+        boolean shared = currentResearch != null && java.util.stream.Stream.of(
+                availableRooms, availableSpells, availableDoors, availableTraps)
+                .flatMap(Collection::stream).anyMatch(entity -> entity == currentResearch);
+        return new KeeperState(id, ai, aiType, gold, goldReserve, goldMined, mana, manaGain, manaLoose, maxMana,
+                dungeonHeartLocation, possession,
+                availableRooms.stream().map(KeeperState.Research::capture).toList(),
+                availableSpells.stream().map(KeeperState.Research::capture).toList(), availableCreatures,
+                availableDoors.stream().map(KeeperState.Research::capture).toList(),
+                availableTraps.stream().map(KeeperState.Research::capture).toList(),
+                currentResearch == null ? null : KeeperState.Research.capture(currentResearch), shared,
+                destroyed, killedByPlayerId, creaturesLost, enemyCreaturesKilled, heroesKilled,
+                java.util.Arrays.stream(creatureKillsByPlayer).boxed().toList(), allies);
+    }
+
+    /** Reconstruct values without initial money, research initialization or defeat callbacks. */
+    public static Keeper restoreState(KeeperState state, Player definition) {
+        if (definition != null && definition.getPlayerId() != state.id()) {
+            throw new IllegalArgumentException("Keeper does not match map player definition");
+        }
+        Keeper result = new Keeper(state.ai(), state.id());
+        result.player = definition;result.aiType = state.aiType();
+        result.gold = state.gold();result.goldReserve = state.goldReserve();result.goldMined = state.goldMined();
+        result.mana = state.mana();result.manaGain = state.manaGain();result.manaLoose = state.manaLoose();result.maxMana = state.maxMana();
+        result.dungeonHeartLocation = state.dungeonHeartLocation();result.possession = state.possession();
+        result.availableRooms = restoreResearch(state.availableRooms());result.availableSpells = restoreResearch(state.availableSpells());
+        result.availableDoors = restoreResearch(state.availableDoors());result.availableTraps = restoreResearch(state.availableTraps());
+        result.availableCreatures = new ArrayList<>(state.availableCreatures());
+        if (state.currentResearch() != null) {
+            if (state.currentResearchShared()) {
+                result.currentResearch = java.util.stream.Stream.of(result.availableRooms, result.availableSpells,
+                        result.availableDoors, result.availableTraps).flatMap(Collection::stream)
+                        .filter(entity -> entity.getId() == state.currentResearch().id()
+                                && entity.getResearchableType() == state.currentResearch().type()).findFirst().orElseThrow();
+            } else result.currentResearch = state.currentResearch().restore();
+        }
+        result.destroyed = state.destroyed();result.killedByPlayerId = state.killedByPlayerId();
+        result.creaturesLost = state.creaturesLost();result.enemyCreaturesKilled = state.enemyCreaturesKilled();result.heroesKilled = state.heroesKilled();
+        result.creatureKillsByPlayer = state.creatureKillsByPlayer().stream().mapToLong(Long::longValue).toArray();
+        result.allies = new HashSet<>(state.allies());
+        return result;
+    }
+
+    private static List<ResearchableEntity> restoreResearch(List<KeeperState.Research> states) {
+        List<ResearchableEntity> restored = new ArrayList<>(states.size());
+        for (var state : states) restored.add(state.restore());
+        return restored;
+    }
+
     @Override
     public void write(JmeExporter ex) throws IOException {
         OutputCapsule out = ex.getCapsule(this);

@@ -1,6 +1,6 @@
 # Save/load implementation and state contract
 
-Save/load is incomplete. A consistent **in-memory simulation capture boundary**, explicit component codecs and staged entity-store restoration are implemented. There is no complete game-save container, restored simulation or functional Save/Load menu yet. Existing `Savable` implementations and network component serializers do not cover a running game.
+Save/load is incomplete. A consistent **in-memory simulation capture boundary**, explicit component/keeper/hand codecs and staged entity-store/owner restoration are implemented. Clock and level-timer value capture/restore helpers are also present. There is no complete game-save container, restored simulation or functional Save/Load menu yet. Existing `Savable` implementations and network component serializers do not cover a running game.
 
 ## Implemented boundary
 
@@ -22,9 +22,19 @@ This gate does **not** yet capture session-owned camera-transition acknowledgeme
 
 The current prerelease section format is big-endian: `MKES`, section version 1, next entity ID, entity count, then entity IDs and length-prefixed component records. Each component has `MKCS`, container version 1, a type identifier, an explicit schema version and its declared fields. Format changes require version changes and explicit migrations when supported. Bounds are 64 MiB per ECS section, one million entities, 1 MiB per component, 65,536 bytes per UTF-8 string, 65,536 list entries and 256 player-flag entries. These structural checks are not a checksum or proof that arbitrary edited values form a valid game. A complete save still needs data identity, whole-container integrity, per-owner semantic validation and atomic file replacement.
 
+## Implemented keeper, hand and time values
+
+`KeeperState` captures every authoritative keeper field, including possession, the complete per-player kill matrix, alliances, resource totals, research progress and concrete research subtype. The map `Player` definition is bound separately and must match the saved ID; binding does not overwrite the runtime AI identity. Restoration directly assigns values without granting starting money or replaying defeat/research callbacks. Collections are detached and each restored keeper gets independent mutable collections and research objects.
+
+The current research target may reference a catalog entry or remain detached after an availability change. The snapshot records that object relationship explicitly. Shared targets rebind to the restored catalog object; detached targets remain separate even when they have equal values. `KeeperSnapshots` uses the big-endian `MKKS` version 1 section, named enum values, explicit field order, a 128 KiB section limit and at most 256 entries per catalog/alliance list. It rejects invalid resource/combat counts, catalog types/duplicates, missing shared research targets, invalid IDs, truncated/trailing input and unsupported versions. These are structural and per-keeper checks; cross-owner/map policies remain part of full-world validation.
+
+`PlayerHandControl.State` captures capacity and entity IDs in bottom-to-top order. `HandSnapshots` uses `MKHS` version 1, bounded to 65,536 carried entities and a 524,306-byte section. Restoring against a staged entity store requires every saved entry to have the matching `InHand` owner/index/type/record ID and exactly one creature/object component. Extra carried entities belonging to this keeper are rejected. Binding writes no components and does not replay pickups. Heroes and neutral players have no hand controller and therefore no hand section.
+
+`GameTimeController.State` and `GameTimer.State` preserve finite nonnegative elapsed time, tick count and timer activity. A restored game clock survives normal `start()` without resetting to zero. These time values are currently detached in-memory records; the complete level/time section codec and restored-world wiring are still pending. Global AI time, scheduler phases and periodic system accumulators are separate work.
+
 ## Authoritative state inventory
 
-The source inventory includes these owners. Entity-store capture/codecs/staged restore are implemented; other owners still need explicit capture, validation and restore code. Derived indexes may be rebuilt only if doing so preserves the resumed behavior and cannot repeat initialization side effects.
+The source inventory includes these owners. Entity-store, keeper and hand capture/codecs/staged restore are implemented; clock/timer value helpers are present. Remaining owners and complete-world binding still need explicit capture, validation and restore code. Derived indexes may be rebuilt only if doing so preserves the resumed behavior and cannot repeat initialization side effects.
 
 | Owner | State to preserve or reconstruct |
 | --- | --- |
@@ -67,7 +77,7 @@ Important encoding cases are nullable attack times inherited from `Attack`, priv
 
 ## Verification, 2026-10-13
 
-Five asset-free concurrency regressions cover parallel updates and exclusion, failed callbacks and reentry, three real loop clocks, capture while paused, and interrupted/concurrent shutdown. Nineteen entity/component persistence tests cover schema completeness, every field, detached mutation, named enum fixtures, references, allocator preservation/exhaustion/concurrency, repeated round trips and malformed input. The full suite has 238 tests.
+Five asset-free concurrency regressions cover parallel updates and exclusion, failed callbacks and reentry, three real loop clocks, capture while paused, and interrupted/concurrent shutdown. Nineteen entity/component persistence tests cover schema completeness, every field, detached mutation, named enum fixtures, references, allocator preservation/exhaustion/concurrency, repeated round trips and malformed input. Fourteen keeper/hand/time regressions additionally check every keeper field, research subtype and object sharing, map binding, mutation isolation, corrupt input, hand/component consistency, restored LIFO behavior and clock continuation. The full suite has 252 tests.
 
 `scripts/verify-snapshot-boundary.sh "/path/to/Dungeon Keeper II"` runs the production logic, animation and steering threads on the owned Level 1 data. Ten 100 ms captures hold a detached digest of the game clock, flags, timers, players, tiles and live entity state unchanged. A one-second capture is excluded from the next game-clock delta; the check waits for the actual authored 4 Hz logic tick. Paused capture and a blocked player command also pass. An appended delayed worker verifies both interrupted and concurrent manager shutdown callers wait for cleanup and preserve interrupt status.
 
@@ -76,3 +86,5 @@ These are capture-boundary checks, not a complete-state hash, save round trip, o
 `scripts/verify-entity-snapshots.sh "/path/to/Dungeon Keeper II"` captures three live snapshots each on Levels 1, 17, TrapTime and 10, encodes outside the simulation gate, decodes and restores into independent stores. All 12 ECS round trips pass byte comparison after recapture; allocation resumes at the saved next ID, and continued original play plus staged-store mutation cannot change the captured snapshot. The measured run covered 352,150 component records and 46 live component types; synthetic fixtures cover all 65 types. Capture calls took 5–65 ms in this short run on the test Mac, including boundary wait, without establishing broad save-performance acceptance.
 
 These are entity-state round trips. Restored stores have no running controllers, tasks, triggers, RNG or session. Resumed gameplay equivalence is still unproven.
+
+`scripts/verify-owner-snapshots.sh "/path/to/Dungeon Keeper II"` runs all three production loops on Levels 1, 17, TrapTime and 10. Three captures per map preserve 51 keeper records and 12 actual carried-creature records. Keeper and hand sections round-trip outside the gate, bind to independent restored ECS stores without component writes, and preserve stack order. Popping staged hands and continued original play cannot alter the detached capture. Saved clocks survive startup and advance; all 16 timer values per capture restore unchanged. This is short live-capture and staged-owner evidence, not resumed gameplay or a complete saved game.

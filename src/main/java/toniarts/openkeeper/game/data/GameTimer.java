@@ -28,6 +28,18 @@ public final class GameTimer {
     public GameTimer() {
     }
 
+    public record State(float time, boolean active) {
+        public State {
+            if (!Float.isFinite(time) || time < 0) throw new IllegalArgumentException("Invalid level timer state");
+        }
+    }
+
+    public State captureState() { return new State(time, active); }
+
+    public static GameTimer restoreState(State state) {
+        GameTimer timer = new GameTimer();timer.time = state.time();timer.active = state.active();return timer;
+    }
+
     /**
      * Activates and resets the timer
      */

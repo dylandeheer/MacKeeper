@@ -18,6 +18,9 @@ package toniarts.openkeeper.game.controller.player;
 
 import com.simsilica.es.EntityData;
 import com.simsilica.es.EntityId;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
 import toniarts.openkeeper.game.component.CreatureComponent;
 import toniarts.openkeeper.game.component.InHand;
 import toniarts.openkeeper.game.component.ObjectComponent;
@@ -50,6 +53,61 @@ public final class PlayerHandControl {
         this.stack = new EntityId[size];
         this.entityData = entityData;
         this.maxCount = size;
+    }
+
+    /** Immutable bottom-to-top order, captured under the simulation boundary. */
+    public record State(short playerId, int capacity, List<EntityId> bottomToTop) {
+        public static final int MAX_CAPACITY = 65_536;
+
+        public State {
+            bottomToTop = List.copyOf(bottomToTop);
+            if (playerId < 0 || playerId > 255 || capacity < 0 || capacity > MAX_CAPACITY
+                    || bottomToTop.size() > capacity || new HashSet<>(bottomToTop).size() != bottomToTop.size()
+                    || bottomToTop.stream().anyMatch(id -> id.getId() < 0)) {
+                throw new IllegalArgumentException("Invalid saved hand");
+            }
+        }
+    }
+
+    public State captureState() {
+        List<EntityId> entities = new ArrayList<>(count);
+        for (int i = 0; i < count; i++) entities.add(stack[i]);
+        return new State(keeper.getId(), maxCount, entities);
+    }
+
+    /**
+     * Bind to an independently restored entity store, without replaying pickups.
+     * Validates the complete hand/component relationship before returning a hand;
+     * neither successful nor rejected restoration writes entity components.
+     */
+    public static PlayerHandControl restoreState(Keeper keeper, EntityData data, State state) {
+        if (keeper.getId() != state.playerId()) throw new IllegalArgumentException("Hand owner mismatch");
+        var ids = new HashSet<>(state.bottomToTop());
+        for (int i = 0; i < state.bottomToTop().size(); i++) {
+            EntityId id = state.bottomToTop().get(i);
+            InHand hand = data.getComponent(id, InHand.class);
+            CreatureComponent creature = data.getComponent(id, CreatureComponent.class);
+            ObjectComponent object = data.getComponent(id, ObjectComponent.class);
+            if (hand == null || hand.playerId != state.playerId() || hand.index != state.capacity() - i - 1
+                    || (creature == null) == (object == null)
+                    || hand.type != (creature != null ? ViewType.CREATURE : ViewType.OBJECT)
+                    || hand.id != (creature != null ? creature.creatureId : object.objectId)) {
+                throw new IllegalArgumentException("Saved hand does not match entity " + id);
+            }
+        }
+        var carried = data.getEntities(InHand.class);
+        try {
+            for (var entity : carried) {
+                if (entity.get(InHand.class).playerId == state.playerId() && !ids.contains(entity.getId())) {
+                    throw new IllegalArgumentException("Saved hand omits carried entity " + entity.getId());
+                }
+            }
+        } finally {
+            carried.release();
+        }
+        PlayerHandControl result = new PlayerHandControl(keeper, state.capacity(), data);
+        for (EntityId id : state.bottomToTop()) result.stack[result.count++] = id;
+        return result;
     }
 
     /**
