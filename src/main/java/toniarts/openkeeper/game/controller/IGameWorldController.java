@@ -21,6 +21,7 @@ import toniarts.openkeeper.game.controller.room.IRoomController;
 import com.jme3.math.Vector2f;
 import com.simsilica.es.EntityId;
 import java.util.Collection;
+import java.util.Set;
 import toniarts.openkeeper.game.listener.PlayerActionListener;
 import toniarts.openkeeper.utils.Point;
 
@@ -88,6 +89,9 @@ public interface IGameWorldController {
      * @return map controller
      */
     public IMapController getMapController();
+
+    /** Snapshot of object, door and trap positions that block room construction. */
+    Set<Point> getConstructionBlockingTiles();
 
     /**
      * Build a building to the wanted area

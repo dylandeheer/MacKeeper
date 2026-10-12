@@ -388,7 +388,8 @@ public final class GameWorldController implements IGameWorldController, IPlayerA
         }
     }
 
-    private Set<Point> getConstructionBlockingTiles() {
+    @Override
+    public Set<Point> getConstructionBlockingTiles() {
         Set<Point> blockedTiles = new HashSet<>();
         addConstructionBlockingPositions(blockedTiles, ObjectComponent.class);
         addConstructionBlockingPositions(blockedTiles, DoorComponent.class);

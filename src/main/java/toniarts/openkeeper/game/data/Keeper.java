@@ -74,6 +74,10 @@ public final class Keeper implements Comparable<Keeper>, IIndexable, Savable {
     public Keeper(Player player) {
         this.player = player;
         this.id = player.getPlayerId();
+        this.ai = player.isAi();
+        if (player.getAiAttributes() != null && player.getAiAttributes().getAiType() != null) {
+            this.aiType = player.getAiAttributes().getAiType();
+        }
     }
 
     @Override

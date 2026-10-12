@@ -35,7 +35,7 @@ The original retail game data is a local test dependency and must never be commi
 - On Apple M1 Max, the bundled ARM64 Java 25 app initialized OpenGL 4.1 and OpenAL, played the Bullfrog intro, displayed the main menu, campaign map and mission briefing, and loaded campaign mission 1.
 - Visually verified Escape pause and resume and a running dungeon after the opening cinematic. This does not establish mission completion or campaign compatibility.
 - Fixed two errors found by actual launch: Cocoa rejects setting a normal window icon; the video material required GLSL150 and the engine's GLSL compatibility header for the core OpenGL profile.
-- All 121 automated tests pass, including setup/game launch isolation, property persistence and synthetic data validation. Mac packaging and bundled command-line help/data checks pass locally; remote CI status is separate.
+- All 130 automated tests pass, including setup/game launch isolation, property persistence and synthetic data validation. Mac packaging and bundled command-line help/data checks pass locally; remote CI status is separate.
 - Development builds use an ad hoc local signature. Developer ID signing/notarization and Intel hardware testing remain pending.
 
 Log4j runtime constraints were updated from the upstream 2.15.0 dependency to 2.26.1, documented in [Apache's release notes](https://logging.apache.org/log4j/2.x/release-notes.html). Other inherited dependencies still need a full release audit.
@@ -55,3 +55,5 @@ Log4j runtime constraints were updated from the upstream 2.15.0 dependency to 2.
 - Implemented the payday clock, per-creature debt/advance ledger, physical room collection, gold gifts, unpaid anger and trigger cycle observation. The suite now has 121 tests; owned Levels 1, 2 and 17 pass real navigation/arrival/collection checks. Protocol version is now 4. See [PAYDAY.md](PAYDAY.md) for evidence and explicit parity gaps, including gift gratitude, presentation, persistence and full mission acceptance.
 
 - Starting funds now use a separate reserve, spent before room treasure. Wide keeper balances preserve funds through capture; individual room purchases remain bounded. All 66 maps/234 funded player entries pass the initial-reserve audit. See [STARTING-GOLD.md](STARTING-GOLD.md) for transaction, serialization and callback evidence and limitations.
+
+- Computer keepers now retain authored AI identity and execute economy decisions on the authoritative simulation thread. All 66 maps pass profile checks; a production-system headless TrapTime run verifies normal mining/worker excavation/claiming and four paid rooms for AI player 4. The full suite has 130 tests. This is the economy foundation, with remaining opponent strategy and coverage recorded in [KEEPER-AI.md](KEEPER-AI.md).
