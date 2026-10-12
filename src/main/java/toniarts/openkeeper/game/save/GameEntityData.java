@@ -70,6 +70,9 @@ public final class GameEntityData extends DefaultEntityData {
         setStringIndex(new MemStringIndex());
     }
 
+    /** Allocated IDs include removed entities whose references can outlive them. */
+    public boolean wasAllocated(EntityId id) { return id != null && id.getId() >= 0 && id.getId() < ids.next.get(); }
+
     @Override public EntityId createEntity() {
         EntityId id = super.createEntity();alive.add(id);return id;
     }

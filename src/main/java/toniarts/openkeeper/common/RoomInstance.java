@@ -48,6 +48,16 @@ public final class RoomInstance extends EntityInstance<Room> {
         }
     }
 
+    /** Rebind an authored room definition without an authored initial room instance. */
+    public static RoomInstance restoreDefinition(Room room, Thing.Room.Direction direction) {
+        return new RoomInstance(room, direction, true);
+    }
+
+    private RoomInstance(Room room, Thing.Room.Direction direction, boolean restored) {
+        super(room);
+        this.direction = direction;
+    }
+
     public Room getRoom() {
         return super.getEntity();
     }

@@ -79,29 +79,86 @@ public abstract class AbstractRoomController extends AbstractRoomInformation imp
     protected boolean[][] map;
     protected Point start;
     protected final IObjectsController objectsController;
-    protected final Set<EntityId> floorFurniture = new HashSet<>();
-    protected final Set<EntityId> wallFurniture = new HashSet<>();
+    protected final Set<EntityId> floorFurniture = new java.util.LinkedHashSet<>();
+    protected final Set<EntityId> wallFurniture = new java.util.LinkedHashSet<>();
     private final Set<EntityId> pillars;
+    private boolean restoring;
+    private toniarts.openkeeper.game.data.RoomState restoringState;
 
     protected AbstractRoomController(EntityId entityId, EntityData entityData, IKwdFile kwdFile,
             RoomInstance roomInstance, IObjectsController objectsController, ObjectType defaultStorageType) {
+        this(entityId, entityData, kwdFile, roomInstance, objectsController, defaultStorageType, true);
+    }
+
+    protected AbstractRoomController(EntityId entityId, EntityData entityData, IKwdFile kwdFile,
+            RoomInstance roomInstance, IObjectsController objectsController, ObjectType defaultStorageType, boolean initialize) {
         super(entityId);
 
+        this.restoring = !initialize;
         this.entityData = entityData;
         this.kwdFile = kwdFile;
         this.roomInstance = roomInstance;
         this.objectsController = objectsController;
         if (hasPillars()) {
-            pillars = new HashSet<>();
+            pillars = new java.util.LinkedHashSet<>();
         } else {
             pillars = Collections.emptySet();
         }
 
-        entityData.setComponents(entityId,
+        if (initialize) entityData.setComponents(entityId,
                 new RoomComponent(roomInstance.getRoom().getRoomId(), roomInstance.isDestroyed(), defaultStorageType, roomInstance.getCenter()),
                 new Owner(roomInstance.getOwnerId(), roomInstance.getOwnerId()),
                 new Health(roomInstance.getHealth(), roomInstance.getMaxHealth())
         );
+    }
+
+    protected final boolean isRestoring() { return restoring; }
+
+    public final toniarts.openkeeper.game.data.RoomState captureState() {
+        var storage = new java.util.EnumMap<ObjectType, toniarts.openkeeper.game.data.RoomState.StorageState>(ObjectType.class);
+        objectControls.forEach((type, control) -> storage.put(type,
+                ((toniarts.openkeeper.game.controller.room.storage.AbstractRoomObjectControl<?>) control).captureState()));
+        var walls = roomInstance.getWallSections();
+        return new toniarts.openkeeper.game.data.RoomState(entityId, roomInstance.getRoom().getId(),
+                new java.util.ArrayList<>(roomInstance.getCoordinates()), roomInstance.getDirection(), roomInstance.getOwnerId(),
+                roomInstance.isDestroyed(), roomInstance.getHealth(), roomInstance.getMaxHealth(),
+                walls == null ? null : walls.stream().map(w -> new toniarts.openkeeper.game.data.RoomState.Wall(w.direction(), w.coordinates())).toList(),
+                java.util.List.copyOf(floorFurniture), java.util.List.copyOf(wallFurniture), java.util.List.copyOf(pillars), storage, captureDoor());
+    }
+
+    protected Point captureDoor() { return null; }
+    protected void restoreDoor(Point door) {
+        if (door != null) throw new IllegalArgumentException("Unexpected room door");
+    }
+
+    /** Only available while binding this room's saved storage controllers. */
+    public final toniarts.openkeeper.game.data.RoomState.StorageState storageForRestore(ObjectType type) {
+        if (!restoring) return null;
+        if (restoringState == null || !restoringState.storage().containsKey(type)) throw new IllegalArgumentException("Missing saved room storage: " + type);
+        return restoringState.storage().get(type);
+    }
+
+    /** Called on a new, noninitializing controller against an independent entity store. */
+    public final void bindRestoredState(toniarts.openkeeper.game.data.RoomState state) {
+        if (!restoring || restoringState != null || !state.entityId().equals(entityId)) throw new IllegalStateException("Invalid room restoration phase");
+        restoringState = state;
+        for (var group : java.util.List.of(state.floorFurniture(), state.wallFurniture(), state.pillars())) {
+            for (EntityId id : group) {
+                // Construction animation can remove plugs while the room still
+                // retains their IDs. Preserve those allocated tombstones.
+                if (!(entityData instanceof toniarts.openkeeper.game.save.GameEntityData saved && saved.wasAllocated(id))
+                        && entityData.getComponent(id, toniarts.openkeeper.game.component.ObjectComponent.class) == null) {
+                    throw new IllegalArgumentException("Missing saved furniture: " + id);
+                }
+            }
+        }
+        floorFurniture.addAll(state.floorFurniture());wallFurniture.addAll(state.wallFurniture());
+        if (!hasPillars() && !state.pillars().isEmpty()) throw new IllegalArgumentException("Pillars on unsupported room");
+        pillars.addAll(state.pillars());
+        construct(); // Restoring mode builds only geometry indexes and storage bindings.
+        if (!objectControls.keySet().equals(state.storage().keySet())) throw new IllegalArgumentException("Room storage types differ");
+        restoreDoor(state.door());
+        restoringState = null;restoring = false;
     }
 
     @Override
@@ -118,6 +175,7 @@ public abstract class AbstractRoomController extends AbstractRoomInformation imp
     @Override
     public void construct() {
         setupCoordinates();
+        if (restoring) return;
 
         // Construct the room objects
         removeObjects();

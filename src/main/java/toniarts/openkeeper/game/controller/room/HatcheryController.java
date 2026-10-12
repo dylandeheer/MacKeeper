@@ -38,10 +38,14 @@ public final class HatcheryController extends NormalRoomController implements IC
     private RoomFoodControl roomFoodControl;
 
     public HatcheryController(EntityId entityId, EntityData entityData, IKwdFile kwdFile, RoomInstance roomInstance, IObjectsController objectsController, IGameTimer gameTimer) {
-        super(entityId, entityData, kwdFile, roomInstance, objectsController, ObjectType.FOOD);
+        this(entityId, entityData, kwdFile, roomInstance, objectsController, gameTimer, true);
+    }
+
+    public HatcheryController(EntityId entityId, EntityData entityData, IKwdFile kwdFile, RoomInstance roomInstance, IObjectsController objectsController, IGameTimer gameTimer, boolean initialize) {
+        super(entityId, entityData, kwdFile, roomInstance, objectsController, ObjectType.FOOD, initialize);
 
         this.gameTimer = gameTimer;
-        entityData.setComponent(entityId, new ChickenGenerator(gameTimer.getGameTime()));
+        if (initialize) entityData.setComponent(entityId, new ChickenGenerator(gameTimer.getGameTime()));
     }
 
     @Override

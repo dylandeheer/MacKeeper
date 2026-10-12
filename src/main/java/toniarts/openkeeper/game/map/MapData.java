@@ -58,6 +58,35 @@ public final class MapData implements IMapData {
         }
     }
 
+    private MapData(int width, int height) {
+        this.width = width;this.height = height;
+        tiles = new IMapTileController[width][height];
+    }
+
+    /** Bind a complete rectangular grid from saved components without creating or resetting tiles. */
+    public static MapData restore(IKwdFile definition, EntityData data) {
+        int width = definition.getMap().getWidth(), height = definition.getMap().getHeight();
+        if (width <= 0 || height <= 0 || (long) width * height > 1_000_000) throw new IllegalArgumentException("Invalid saved map dimensions");
+        MapData result = new MapData(width, height);
+        var ids = data.findEntities(null, MapTile.class);
+        if (ids.size() != width * height) throw new IllegalArgumentException("Saved map tile count differs");
+        for (EntityId id : ids) {
+            MapTile tile = data.getComponent(id, MapTile.class);
+            Point point = tile.p;
+            if (point == null || point.x < 0 || point.y < 0 || point.x >= width || point.y >= height
+                    || tile.index != point.y * width + point.x || result.tiles[point.x][point.y] != null
+                    || definition.getTerrain(tile.terrainId) == null
+                    || data.getComponent(id, Owner.class) == null
+                    || data.getComponent(id, toniarts.openkeeper.game.component.Health.class) == null
+                    || data.getComponent(id, toniarts.openkeeper.game.component.Gold.class) == null
+                    || data.getComponent(id, toniarts.openkeeper.game.component.Mana.class) == null) {
+                throw new IllegalArgumentException("Invalid saved map tile: " + id);
+            }
+            result.tiles[point.x][point.y] = new MapTileController(id, data);
+        }
+        return result;
+    }
+
     private static MapTileController createMapTile(EntityData entityData, Tile tile, IKwdFile kwdFile, int x, int y, int index,
             Map<Short, Keeper> playersById) {
         EntityId entityId = entityData.createEntity();

@@ -35,7 +35,12 @@ public final class TrainingRoomController extends NormalRoomController {
 
     public TrainingRoomController(EntityId entityId, EntityData entityData, IKwdFile kwdFile, RoomInstance roomInstance, IObjectsController objectsController,
             IGameTimer gameTimer) {
-        super(entityId, entityData, kwdFile, roomInstance, objectsController, ObjectType.TRAINEE);
+        this(entityId, entityData, kwdFile, roomInstance, objectsController, gameTimer, true);
+    }
+
+    public TrainingRoomController(EntityId entityId, EntityData entityData, IKwdFile kwdFile, RoomInstance roomInstance, IObjectsController objectsController,
+            IGameTimer gameTimer, boolean initialize) {
+        super(entityId, entityData, kwdFile, roomInstance, objectsController, ObjectType.TRAINEE, initialize);
 
         this.gameTimer = gameTimer;
     }

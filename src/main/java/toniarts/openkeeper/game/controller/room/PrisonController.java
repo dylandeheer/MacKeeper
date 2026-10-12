@@ -40,10 +40,17 @@ public final class PrisonController extends DoubleQuadController {
     private final IGameTimer gameTimer;
 
     private Point door;
+    @Override protected Point captureDoor() { return door; }
+    @Override protected void restoreDoor(Point value) { door = value; }
 
     public PrisonController(EntityId entityId, EntityData entityData, IKwdFile kwdFile, RoomInstance roomInstance, IObjectsController objectsController,
             IGameTimer gameTimer) {
-        super(entityId, entityData, kwdFile, roomInstance, objectsController, ObjectType.PRISONER);
+        this(entityId, entityData, kwdFile, roomInstance, objectsController, gameTimer, true);
+    }
+
+    public PrisonController(EntityId entityId, EntityData entityData, IKwdFile kwdFile, RoomInstance roomInstance, IObjectsController objectsController,
+            IGameTimer gameTimer, boolean initialize) {
+        super(entityId, entityData, kwdFile, roomInstance, objectsController, ObjectType.PRISONER, initialize);
 
         this.gameTimer = gameTimer;
     }

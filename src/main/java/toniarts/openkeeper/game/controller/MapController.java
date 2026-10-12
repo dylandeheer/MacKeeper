@@ -89,17 +89,78 @@ public final class MapController extends Container implements IMapController {
             Map<Variable.MiscVariable.MiscType, Variable.MiscVariable> gameSettings,
             IGameTimer gameTimer, EntityData entityData, ILevelInfo levelInfo) {
 
+        this(kwdFile, objectsController, gameSettings, gameTimer, entityData, levelInfo,
+                new MapData(kwdFile, entityData, levelInfo.getPlayers().values()));
+        loadRooms();
+    }
+
+    private MapController(IKwdFile kwdFile, IObjectsController objectsController,
+            Map<Variable.MiscVariable.MiscType, Variable.MiscVariable> gameSettings,
+            IGameTimer gameTimer, EntityData entityData, ILevelInfo levelInfo, IMapData mapData) {
         this.kwdFile = kwdFile;
         this.objectsController = objectsController;
-        this.mapData = new MapData(kwdFile, entityData, levelInfo.getPlayers().values());
+        this.mapData = mapData;
         this.gameSettings = gameSettings;
         this.gameTimer = gameTimer;
         this.entityData = entityData;
         this.mapInformation = new MapInformation<>(mapData, kwdFile, levelInfo.getPlayers().values(), roomControllers::get);
         this.levelInfo = levelInfo;
 
-        // Load rooms
-        loadRooms();
+
+    }
+
+    public java.util.List<toniarts.openkeeper.game.data.RoomState> captureRoomStates() {
+        return roomControllers.values().stream().sorted(java.util.Comparator.comparing(IRoomController::getEntityId))
+                .map(room -> ((toniarts.openkeeper.game.controller.room.AbstractRoomController) room).captureState()).toList();
+    }
+
+    /** Staged map and room bindings. Container controls/listeners are bound separately. */
+    public static MapController restore(IKwdFile definition, IObjectsController objects,
+            Map<Variable.MiscVariable.MiscType, Variable.MiscVariable> settings, IGameTimer timer,
+            EntityData data, ILevelInfo level, java.util.List<toniarts.openkeeper.game.data.RoomState> states) {
+        var map = MapData.restore(definition, data);
+        MapController result = new MapController(definition, objects, settings, timer, data, level, map);
+        java.util.Set<EntityId> roomIds = new java.util.HashSet<>();
+        java.util.Set<Point> coordinates = new java.util.HashSet<>();
+        for (var state : states) {
+            if (!roomIds.add(state.entityId())) throw new IllegalArgumentException("Duplicate saved room");
+            for (Point point : state.coordinates()) {
+                var tile = map.getTile(point);
+                if (tile == null || !state.entityId().equals(tile.getRoomId()) || !coordinates.add(point)) {
+                    throw new IllegalArgumentException("Saved room/tile relationship differs");
+                }
+            }
+        }
+        if (!roomIds.equals(data.findEntities(null, toniarts.openkeeper.game.component.RoomComponent.class))) {
+            throw new IllegalArgumentException("Saved room inventory differs");
+        }
+        for (var tile : map) {
+            if (tile.getRoomId() != null && (!roomIds.contains(tile.getRoomId()) || !coordinates.contains(tile.getLocation()))) {
+                throw new IllegalArgumentException("Unbound saved room tile");
+            }
+        }
+        for (var state : states) {
+            var room = RoomControllerFactory.restoreRoom(data, definition, state, objects, settings, timer);
+            result.roomControllers.put(room.getEntityId(), room);
+        }
+        java.util.Set<EntityId> storageIds = new java.util.HashSet<>(), members = new java.util.HashSet<>();
+        for (var state : states) for (var storage : state.storage().values()) {
+            if (!storageIds.add(storage.entityId())) throw new IllegalArgumentException("Storage belongs to multiple rooms");
+            for (var contents : storage.objectsByCoordinate().values()) for (var id : contents) {
+                if (!members.add(id)) throw new IllegalArgumentException("Entity stored in multiple locations");
+            }
+        }
+        for (var id : data.findEntities(null, toniarts.openkeeper.game.component.Storage.class)) {
+            var storage = data.getComponent(id, toniarts.openkeeper.game.component.Storage.class);
+            if (roomIds.contains(storage.room) && !storageIds.contains(id)) throw new IllegalArgumentException("Unbound saved storage");
+        }
+        for (var id : data.findEntities(null, toniarts.openkeeper.game.component.Stored.class)) {
+            var stored = data.getComponent(id, toniarts.openkeeper.game.component.Stored.class);
+            if (roomIds.contains(stored.room)
+                    && toniarts.openkeeper.game.controller.room.storage.AbstractRoomObjectControl.isIndexedStorage(stored.objectType)
+                    && !members.contains(id)) throw new IllegalArgumentException("Unbound saved stored item");
+        }
+        return result;
     }
 
     private void loadRooms() {

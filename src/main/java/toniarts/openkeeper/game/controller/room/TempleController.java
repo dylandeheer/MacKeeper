@@ -40,7 +40,11 @@ public final class TempleController extends DoubleQuadController {
     private static final int MIN_HAND_SIZE = 5;
 
     public TempleController(EntityId entityId, EntityData entityData, IKwdFile kwdFile, toniarts.openkeeper.common.RoomInstance roomInstance, IObjectsController objectsController) {
-        super(entityId, entityData, kwdFile, roomInstance, objectsController);
+        this(entityId, entityData, kwdFile, roomInstance, objectsController, true);
+    }
+
+    public TempleController(EntityId entityId, EntityData entityData, IKwdFile kwdFile, toniarts.openkeeper.common.RoomInstance roomInstance, IObjectsController objectsController, boolean initialize) {
+        super(entityId, entityData, kwdFile, roomInstance, objectsController, initialize);
     }
 
     @Override
