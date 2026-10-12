@@ -27,7 +27,7 @@ import com.jme3.network.serializing.serializers.FieldSerializer;
 import com.jme3.network.service.HostedService;
 import com.jme3.network.service.rmi.RmiHostedService;
 import com.jme3.network.service.rpc.RpcHostedService;
-import com.simsilica.es.base.DefaultEntityData;
+import toniarts.openkeeper.game.save.GameEntityData;
 import com.simsilica.es.server.EntityDataHostedService;
 import com.simsilica.ethereal.EtherealHost;
 import toniarts.openkeeper.utils.Point;
@@ -250,7 +250,7 @@ public final class NetworkServer {
         server.getServices().addService(ethereal);
 
         // The ES objects
-        server.getServices().addService(new EntityDataHostedService(NetworkConstants.ES_CHANNEL, new DefaultEntityData(), false));
+        server.getServices().addService(new EntityDataHostedService(NetworkConstants.ES_CHANNEL, new GameEntityData(), false));
 
         server.start();
 

@@ -1,6 +1,6 @@
 # Save/load implementation and state contract
 
-Save/load is incomplete. The implemented first step is a consistent **in-memory simulation capture boundary**. There is no save-file format, restored world or functional Save/Load menu yet. Existing `Savable` implementations and network component serializers do not cover a running game.
+Save/load is incomplete. A consistent **in-memory simulation capture boundary**, explicit component codecs and staged entity-store restoration are implemented. There is no complete game-save container, restored simulation or functional Save/Load menu yet. Existing `Savable` implementations and network component serializers do not cover a running game.
 
 ## Implemented boundary
 
@@ -12,9 +12,19 @@ Shutdown closes admission, signals every loop, then joins outside the gate so wo
 
 This gate does **not** yet capture session-owned camera-transition acknowledgements or client presentation state. Local/hosted services change transition state outside the server command listener, and trigger conditions can observe it. That state needs an authoritative restore contract before complete saves can use this boundary.
 
+## Implemented entity-state section
+
+`ComponentSnapshots` explicitly registers all 65 concrete component types and every field, including inherited attack fields and private AI state. A captured snapshot privately owns its copied values; neither the live component nor a restored component can mutate it. Each restore returns fresh vectors, collections and components. Strings, nulls, empty collections, false map entries, wide integer balances and entity references remain distinct. Creature/chicken AI states and the integer-backed melee attack type use enum names in the wire format.
+
+`GameEntityData` is now the authoritative store in local and hosted sessions. It retains zero-based IDs, empty entities, removed-ID gaps and the next allocation value. Staged restore builds a separate store and cannot replace the current session. References to removed but previously allocated targets survive, because ordinary systems can retain those until their next update; references beyond the allocation counter fail validation. Per-field semantic validation, such as whether a required room must exist, belongs to the complete world reconstruction contract and is still pending. The allocator cannot wrap at exhaustion. The inherited entity string index is initialized explicitly for the subclass; current component schemas contain actual strings, not string-index IDs.
+
+`EntitySnapshots` encodes/decodes this ECS section after detached capture. It rejects negative/out-of-range IDs, duplicate entities or components, unknown types/versions, trailing/truncated data, malformed UTF-8, invalid booleans/enums, non-finite numbers and excessive lengths. The format uses explicit stable type identifiers and explicit field order; it does not use reflective class loading, Java serialization, network registration order or enum ordinals.
+
+The current prerelease section format is big-endian: `MKES`, section version 1, next entity ID, entity count, then entity IDs and length-prefixed component records. Each component has `MKCS`, container version 1, a type identifier, an explicit schema version and its declared fields. Format changes require version changes and explicit migrations when supported. Bounds are 64 MiB per ECS section, one million entities, 1 MiB per component, 65,536 bytes per UTF-8 string, 65,536 list entries and 256 player-flag entries. These structural checks are not a checksum or proof that arbitrary edited values form a valid game. A complete save still needs data identity, whole-container integrity, per-owner semantic validation and atomic file replacement.
+
 ## Authoritative state inventory
 
-The source inventory includes these owners; each row needs explicit capture, validation and restore code. Derived indexes may be rebuilt only if doing so preserves the resumed behavior and cannot repeat initialization side effects.
+The source inventory includes these owners. Entity-store capture/codecs/staged restore are implemented; other owners still need explicit capture, validation and restore code. Derived indexes may be rebuilt only if doing so preserves the resumed behavior and cannot repeat initialization side effects.
 
 | Owner | State to preserve or reconstruct |
 | --- | --- |
@@ -35,7 +45,7 @@ The source inventory includes these owners; each row needs explicit capture, val
 
 ### Component schema coverage
 
-The component directory currently has 65 concrete component types, an abstract `Attack` base and the `ViewType` enum. A save codec must explicitly cover all concrete types, including inherited and private fields; network registration is not a complete schema.
+The component directory currently has 65 concrete component types, an abstract `Attack` base and the `ViewType` enum. The component codec covers all concrete types, including inherited and private fields; a source-inventory regression fails if a new component or field lacks coverage. Network registration is not a complete schema.
 
 | Group | Concrete types |
 | --- | --- |
@@ -57,8 +67,12 @@ Important encoding cases are nullable attack times inherited from `Attack`, priv
 
 ## Verification, 2026-10-13
 
-Five asset-free concurrency regressions cover parallel updates and exclusion, failed callbacks and reentry, three real loop clocks, capture while paused, and interrupted/concurrent shutdown. The full suite has 219 tests.
+Five asset-free concurrency regressions cover parallel updates and exclusion, failed callbacks and reentry, three real loop clocks, capture while paused, and interrupted/concurrent shutdown. Nineteen entity/component persistence tests cover schema completeness, every field, detached mutation, named enum fixtures, references, allocator preservation/exhaustion/concurrency, repeated round trips and malformed input. The full suite has 238 tests.
 
 `scripts/verify-snapshot-boundary.sh "/path/to/Dungeon Keeper II"` runs the production logic, animation and steering threads on the owned Level 1 data. Ten 100 ms captures hold a detached digest of the game clock, flags, timers, players, tiles and live entity state unchanged. A one-second capture is excluded from the next game-clock delta; the check waits for the actual authored 4 Hz logic tick. Paused capture and a blocked player command also pass. An appended delayed worker verifies both interrupted and concurrent manager shutdown callers wait for cleanup and preserve interrupt status.
 
 These are capture-boundary checks, not a complete-state hash, save round trip, original-game parity, rendered acceptance or live network acceptance.
+
+`scripts/verify-entity-snapshots.sh "/path/to/Dungeon Keeper II"` captures three live snapshots each on Levels 1, 17, TrapTime and 10, encodes outside the simulation gate, decodes and restores into independent stores. All 12 ECS round trips pass byte comparison after recapture; allocation resumes at the saved next ID, and continued original play plus staged-store mutation cannot change the captured snapshot. The measured run covered 352,150 component records and 46 live component types; synthetic fixtures cover all 65 types. Capture calls took 5–65 ms in this short run on the test Mac, including boundary wait, without establishing broad save-performance acceptance.
+
+These are entity-state round trips. Restored stores have no running controllers, tasks, triggers, RNG or session. Resumed gameplay equivalence is still unproven.

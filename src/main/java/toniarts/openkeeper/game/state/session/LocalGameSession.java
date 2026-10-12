@@ -13,7 +13,7 @@ import com.jme3.math.Vector3f;
 import com.jme3.util.SafeArrayList;
 import com.simsilica.es.EntityData;
 import com.simsilica.es.EntityId;
-import com.simsilica.es.base.DefaultEntityData;
+import toniarts.openkeeper.game.save.GameEntityData;
 import toniarts.openkeeper.utils.Point;
 import java.io.ByteArrayOutputStream;
 import java.io.FileNotFoundException;
@@ -61,7 +61,7 @@ public final class LocalGameSession implements GameSessionServerService, GameSes
     private static final short PLAYER_ID = Player.KEEPER1_ID;
 
     private boolean playerInTransition = false;
-    private final EntityData entityData = new DefaultEntityData();
+    private final EntityData entityData = new GameEntityData();
     private final SafeArrayList<GameSessionListener> listeners = new SafeArrayList<>(GameSessionListener.class);
     private final SafeArrayList<GameSessionServiceListener> serverListeners = new SafeArrayList<>(GameSessionServiceListener.class);
 
