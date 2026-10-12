@@ -107,7 +107,7 @@ public final class PlayerRoomControl extends AbstractResearchablePlayerControl<R
             if (dungeonHeart == room) {
                 dungeonHeart = roomControllers.values().stream()
                         .flatMap(Set::stream)
-                        .filter(IRoomController::isDungeonHeart)
+                        .filter(candidate -> candidate.isDungeonHeart() && !candidate.isDestroyed())
                         .findFirst().orElse(null);
                 keeper.setDungeonHeartLocation(dungeonHeart == null ? null : dungeonHeart.getRoomInstance().getCenter());
             }

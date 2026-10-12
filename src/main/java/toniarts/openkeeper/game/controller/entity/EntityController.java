@@ -227,9 +227,14 @@ public class EntityController implements IEntityController {
     }
 
     public static void setDamage(EntityData entityData, EntityId entityId, int damageAmount) {
+        setDamage(entityData, entityId, damageAmount, (short) 0);
+    }
+
+    public static void setDamage(EntityData entityData, EntityId entityId, int damageAmount, short sourcePlayerId) {
         Damage damage = entityData.getComponent(entityId, Damage.class);
         int damageTotal = damage != null ? damage.damage : 0;
-        entityData.setComponent(entityId, new Damage(damageTotal + damageAmount));
+        short source = damageAmount > 0 ? sourcePlayerId : damage == null ? 0 : damage.sourcePlayerId;
+        entityData.setComponent(entityId, new Damage((int) Math.clamp((long) damageTotal + damageAmount, Integer.MIN_VALUE, Integer.MAX_VALUE), source));
     }
 
     @Override

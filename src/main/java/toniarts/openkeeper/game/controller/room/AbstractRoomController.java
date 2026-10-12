@@ -264,16 +264,16 @@ public abstract class AbstractRoomController extends AbstractRoomInformation imp
     public void remove() {
         roomInstance.setDestroyed(true);
 
-        // Destroy the controls
-        for (IRoomObjectControl control : objectControls.values()) {
-            control.destroy();
-        }
-
-        // Remove objects
-        removeObjects();
+        releaseContents();
 
         // Remove us
         entityData.removeEntity(entityId);
+    }
+
+    protected final void releaseContents() {
+        for (IRoomObjectControl control : objectControls.values()) control.destroy();
+        objectControls.clear();
+        removeObjects();
     }
 
     private void removeObjects() {

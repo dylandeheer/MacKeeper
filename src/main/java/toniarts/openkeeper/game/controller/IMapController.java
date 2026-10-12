@@ -161,6 +161,9 @@ public interface IMapController extends IMapInformation<IMapTileController>, IGa
     /** Collapse the complete hero gate at this tile, preserving its footprint and ruins. */
     boolean collapseHeroGate(Point point);
 
+    /** Retain heart ruins, release contents and remove the live room from player controls. */
+    boolean destroyDungeonHeart(Point point);
+
     /**
      * Set specified tiles flashing for certain period of time
      *

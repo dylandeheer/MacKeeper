@@ -41,3 +41,5 @@ Escape opens the pause menu during a game and leaves possession when possessing 
 Run `./gradlew test` for synthetic, asset-free tests. Nifty GUI is pinned to an immutable commit and Gradle dependency versions are locked. When intentionally updating dependencies, review changes from `./gradlew test installDist --write-locks`.
 
 Keep proprietary assets, local game settings and generated bundles out of Git. The bundled engine is GPL-3.0-or-later; dependencies retain their own licenses. Dungeon Keeper II is owned by its respective rights holders. This project is not affiliated with them or the unrelated MacKeeper utility product.
+
+Dungeon-heart combat and defeat behavior, owned-data verification and remaining limits are recorded in [docs/DUNGEON-HEART.md](docs/DUNGEON-HEART.md).

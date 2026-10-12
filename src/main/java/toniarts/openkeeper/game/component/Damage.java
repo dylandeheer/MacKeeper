@@ -27,13 +27,19 @@ import com.simsilica.es.EntityComponent;
 public final class Damage implements EntityComponent {
 
     public int damage;
+    public short sourcePlayerId;
 
     public Damage() {
         // For serialization
     }
 
     public Damage(int damage) {
+        this(damage, (short) 0);
+    }
+
+    public Damage(int damage, short sourcePlayerId) {
         this.damage = damage;
+        this.sourcePlayerId = sourcePlayerId;
     }
 
 }

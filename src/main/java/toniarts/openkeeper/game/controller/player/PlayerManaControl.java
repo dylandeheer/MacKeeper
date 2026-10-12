@@ -47,6 +47,7 @@ public final class PlayerManaControl {
      * @param loose mana loose
      */
     public void updateMana(int gain, int loose) {
+        if (keeper.isDestroyed()) { gain = 0; loose = 0; }
 
         keeper.setManaGain(gain);
         keeper.setManaLoose(loose);

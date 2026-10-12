@@ -119,8 +119,9 @@ public final class CreatureSpawnSystem extends GameTimeCounter {
             return;
         }
 
-        double timeSinceLastSpawn = timeElapsed - entrance.getLastSpawnTime();
         IPlayerController player = playerControllersById.get(entrance.getOwnerId());
+        if (player == null || player.getKeeper().isDestroyed()) return;
+        double timeSinceLastSpawn = timeElapsed - entrance.getLastSpawnTime();
         boolean spawned = false;
         EntityId entityId = null;
         if (timeSinceLastSpawn >= freeImpCoolDownTime && entrance.isDungeonHeart()) {

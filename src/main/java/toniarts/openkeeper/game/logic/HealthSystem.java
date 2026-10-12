@@ -16,6 +16,9 @@
  */
 package toniarts.openkeeper.game.logic;
 
+import toniarts.openkeeper.game.controller.room.FiveByFiveRotatedController;
+import toniarts.openkeeper.game.component.ObjectComponent;
+import toniarts.openkeeper.game.controller.IGameWorldController;
 import com.jme3.util.SafeArrayList;
 import com.simsilica.es.Entity;
 import com.simsilica.es.EntityData;
@@ -73,6 +76,7 @@ public final class HealthSystem extends GameTimeCounter {
     private final ILevelInfo levelInfo;
     private final Map<Short, IPlayerController> playerControllersById;
     private final IMapController mapController;
+    private final IGameWorldController world;
 
     private final EntitySet healthEntities;
     private final EntitySet damageEntities;
@@ -84,7 +88,9 @@ public final class HealthSystem extends GameTimeCounter {
     public HealthSystem(EntityData entityData, IEntityPositionLookup entityPositionLookup,
             Map<Variable.MiscVariable.MiscType, Variable.MiscVariable> gameSettings,
             ICreaturesController creaturesController, ILevelInfo levelInfo,
-            Collection<IPlayerController> playerControllers, IMapController mapController) {
+            Collection<IPlayerController> playerControllers, IMapController mapController,
+            IGameWorldController world) {
+        this.world = world;
 
         this.entityData = entityData;
         this.entityPositionLookup = entityPositionLookup;
@@ -152,12 +158,13 @@ public final class HealthSystem extends GameTimeCounter {
             }
 
             // Normal health related routines
-            Health health = healthEntities.getEntity(entityId).get(Health.class);
+            // Destruction can remove room contents earlier in this same tick.
+            Health health = entityData.getComponent(entityId, Health.class);
             if (health == null) {
                 continue;
             }
 
-            int healthChange = calculateHealthChange(entityId, health, timeElapsed);
+            long healthChange = calculateHealthChange(entityId, health, timeElapsed);
             if (healthChange == 0) {
                 continue;
             }
@@ -166,12 +173,19 @@ public final class HealthSystem extends GameTimeCounter {
             if (health.health + healthChange <= 0) {
                 processHealthDepleted(entityId, health);
             } else {
-                entityData.setComponent(entityId, new Health(Math.min(health.health + healthChange, health.maxHealth), health.maxHealth));
+                entityData.setComponent(entityId, new Health((int) Math.min(health.health + healthChange, health.maxHealth), health.maxHealth));
             }
         }
     }
 
     private void processHealthDepleted(EntityId entityId, Health health) {
+
+        var object = entityData.getComponent(entityId, ObjectComponent.class);
+        if (object != null && object.objectId == FiveByFiveRotatedController.OBJECT_HEART_ID) {
+            Damage damage = damageEntities.getEntity(entityId) == null ? null : damageEntities.getEntity(entityId).get(Damage.class);
+            entityData.setComponent(entityId, new Health(0, health.maxHealth));
+            if (world.destroyDungeonHeart(entityId, damage == null ? (short) 0 : damage.sourcePlayerId)) return;
+        }
 
         // Death or destruction!!!!
         // No body, just vanish from the world
@@ -264,8 +278,8 @@ public final class HealthSystem extends GameTimeCounter {
                 .getFlags().contains(Creature.CreatureFlag.GENERATE_DEAD_BODY);
     }
 
-    private int calculateHealthChange(EntityId entityId, Health health, double gameTime) {
-        int delta = 0;
+    private long calculateHealthChange(EntityId entityId, Health health, double gameTime) {
+        long delta = 0;
 
         // Damage (or healing)
         Entity entity = damageEntities.getEntity(entityId);

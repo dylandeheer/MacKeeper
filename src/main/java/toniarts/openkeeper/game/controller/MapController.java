@@ -744,6 +744,20 @@ public final class MapController extends Container implements IMapController {
         }
     }
 
+    @Override
+    public boolean destroyDungeonHeart(Point point) {
+        synchronized (GameWorldController.GOLD_LOCK) {
+            IRoomController room = getRoomControllerByCoordinates(point);
+            if (room == null || !room.isDungeonHeart() || room.isDestroyed()) return false;
+            room.destroy();
+            room.setHealth(0);
+            for (Point coordinate : room.getRoomInstance().getCoordinates()) mapData.getTile(coordinate).setHealth(0);
+            notifyOnSold(room.getOwnerId(), room);
+            notifyTileChange(room.getRoomInstance().getCoordinates());
+            return true;
+        }
+    }
+
     private IRoomController getCollapsibleHeroGate(Point point) {
         IRoomController room = getRoomControllerByCoordinates(point);
         if (room != null) return room.getRoom().isHeroGate() ? room : null;

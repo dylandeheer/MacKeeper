@@ -157,11 +157,11 @@ public final class DungeonHeartConstruction extends GameTimeCounter {
     private void showStepsAndArches(EntityId entityId) {
         for (EntityId stairsEntityId : dungeonHeartStairs.get(entityId)) {
             ObjectViewState originalState = entityData.getComponent(stairsEntityId, ObjectViewState.class);
-            entityData.setComponent(stairsEntityId, new ObjectViewState(originalState.objectId, originalState.state, originalState.animState, true));
+            if (originalState != null) entityData.setComponent(stairsEntityId, new ObjectViewState(originalState.objectId, originalState.state, originalState.animState, true));
         }
         for (EntityId archesEntityId : dungeonHeartArches.get(entityId)) {
             ObjectViewState originalState = entityData.getComponent(archesEntityId, ObjectViewState.class);
-            entityData.setComponent(archesEntityId, new ObjectViewState(originalState.objectId, originalState.state, originalState.animState, true));
+            if (originalState != null) entityData.setComponent(archesEntityId, new ObjectViewState(originalState.objectId, originalState.state, originalState.animState, true));
         }
     }
 

@@ -6,7 +6,7 @@ A twelve-minute headless Level 10 probe at checkpoint `7c7c0268` took approximat
 
 The WORK state retries navigation whenever a creature is stopped. Previously, a failed path left the creature stopped and caused the same search on the next simulation tick. Failed assigned-task routes now wait one game second before retrying. A changed task, start tile or destination retries immediately; successful routes are not throttled. A rewound clock also permits an immediate retry. Doors opening or paths being dug can therefore recover within one game second without permanently caching a failure. Null task targets are handled safely.
 
-Five controller tests exercise retry frequency, changed tasks/locations, route recovery, successful-path behavior, missing targets and clock rewind. The complete asset-free suite contains 144 tests. Both twelve-minute TrapTime economy seeds also pass after this change, preserving their construction totals (84/75 and 84/25 tiles for keepers 4/5).
+Five controller tests exercise retry frequency, changed tasks/locations, route recovery, successful-path behavior, missing targets and clock rewind. At that checkpoint, the complete asset-free suite contained 144 tests. Both twelve-minute TrapTime economy seeds also pass after this change, preserving their construction totals (84/75 and 84/25 tiles for keepers 4/5).
 
 ## Reproduction
 

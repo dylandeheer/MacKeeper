@@ -58,7 +58,9 @@ public final class FiveByFiveRotatedController extends AbstractRoomController im
 
     @Override
     public void destroy() {
+        if (isDestroyed()) return;
         super.destroy();
+        releaseContents();
 
         entityData.removeComponent(entityId, ImpGenerator.class);
     }
@@ -66,6 +68,7 @@ public final class FiveByFiveRotatedController extends AbstractRoomController im
     @Override
     public void construct() {
         super.construct();
+        if (isDestroyed()) return;
 
         addObjectControl(new RoomGoldControl(kwdFile, this, entityData, gameTimer, objectsController) {
 

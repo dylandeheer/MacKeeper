@@ -516,6 +516,7 @@ class RoomOwnershipTest {
             case "getRoom" -> type;
             case "getRoomInstance" -> instance;
             case "isDungeonHeart" -> true;
+            case "isDestroyed" -> false;
             default -> throw new AssertionError(method);
         });
     }

@@ -16,6 +16,9 @@
  */
 package toniarts.openkeeper.game.controller.creature;
 
+import toniarts.openkeeper.tools.convert.map.Terrain;
+import toniarts.openkeeper.game.controller.room.FiveByFiveRotatedController;
+import toniarts.openkeeper.game.component.ObjectComponent;
 import toniarts.openkeeper.game.task.TaskType;
 
 import toniarts.openkeeper.game.controller.GameWorldController;
@@ -560,39 +563,140 @@ public final class CreatureController extends EntityController implements ICreat
     }
 
     @Override
-    public ICreatureController getAttackTarget() {
-        AttackTarget attackTarget = entityData.getComponent(entityId, AttackTarget.class);
-        ICreatureController attackTargetController = null;
-        if (attackTarget == null || isIncapacitated(attackTarget.entityId)
-                || isFleeing(attackTarget.entityId) || isCaptive(attackTarget.entityId)) {
+    public IEntityController getAttackTarget() {
+        AttackTarget previous = entityData.getComponent(entityId, AttackTarget.class);
+        if (previous != null && isAttackableCreature(previous.entityId)) {
+            return creaturesController.createController(previous.entityId);
+        }
 
-            // Pick a new target
-            // TODO: is there any preference? Now just take the nearest
-            // TODO: creatures only now
-            EntityId nearestEnemy = null;
-            float nearestDistance = Float.MAX_VALUE;
-            for (EntityId entity : entityPositionLookup.getSensedEntities(entityId)) {
-                if (creaturesController.isValidEntity(entity)
-                        && isEnemy(entity)
-                        && !(isIncapacitated(entity) || isFleeing(entity) || isCaptive(entity))
-                        && (hasPathToEntity(entity) || isWithinAttackDistance(entity))) {
-                    float distance = getDistanceToCreature(entity);
-                    if (distance < nearestDistance) {
-                        nearestDistance = distance;
-                        nearestEnemy = entity;
-                    }
+        // Defenders take precedence over a heart, including while already attacking it.
+        EntityId nearestEnemy = null;
+        float nearestDistance = Float.MAX_VALUE;
+        var sensed = entityPositionLookup.getSensedEntities(entityId);
+        for (EntityId target : sensed) {
+            if (isAttackableCreature(target) && (isWithinAttackDistance(target) || hasPathToEntity(target))) {
+                float distance = getDistanceToCreature(target);
+                if (nearestEnemy == null || distance < nearestDistance || distance == nearestDistance && target.compareTo(nearestEnemy) < 0) {
+                    nearestDistance = distance;
+                    nearestEnemy = target;
                 }
             }
-            if (nearestEnemy != null) {
-                attackTargetController = creaturesController.createController(nearestEnemy);
-                setAttackTarget(nearestEnemy);
-            } else {
-                setAttackTarget(null);
-            }
-        } else {
-            attackTargetController = creaturesController.createController(attackTarget.entityId);
         }
-        return attackTargetController;
+        if (nearestEnemy != null) {
+            setAttackTarget(nearestEnemy);
+            return creaturesController.createController(nearestEnemy);
+        }
+        if (previous != null && heartRoom(previous.entityId) != null && isEnemy(previous.entityId)
+                && (isWithinAttackDistance(previous.entityId) || heartApproach(heartRoom(previous.entityId)) != null)) {
+            return entityPositionLookup.getEntityController(previous.entityId);
+        }
+        for (EntityId target : sensed) {
+            IRoomController heart = heartRoom(target);
+            if (heart != null && isEnemy(target)
+                    && (isWithinAttackDistance(target) || heartApproach(heart) != null)) {
+                float distance = getDistanceToCreature(target);
+                if (nearestEnemy == null || distance < nearestDistance || distance == nearestDistance && target.compareTo(nearestEnemy) < 0) {
+                    nearestDistance = distance;
+                    nearestEnemy = target;
+                }
+            }
+        }
+        setAttackTarget(nearestEnemy);
+        return nearestEnemy == null ? null : entityPositionLookup.getEntityController(nearestEnemy);
+    }
+
+    private boolean isAttackableCreature(EntityId target) {
+        Health health = entityData.getComponent(target, Health.class);
+        return health != null && health.health > 0 && creaturesController.isValidEntity(target) && isEnemy(target)
+                && entityData.getComponent(target, Position.class) != null
+                && !(isIncapacitated(target) || isFleeing(target) || isCaptive(target));
+    }
+
+    private IRoomController heartRoom(EntityId target) {
+        var object = entityData.getComponent(target, ObjectComponent.class);
+        if (object == null || object.objectId != FiveByFiveRotatedController.OBJECT_HEART_ID) return null;
+        Position position = entityData.getComponent(target, Position.class);
+        Health health = entityData.getComponent(target, Health.class);
+        if (position == null || health == null || health.health <= 0) return null;
+        IRoomController room = mapController.getRoomControllerByCoordinates(WorldUtils.vectorToPoint(position.position));
+        return room != null && room.isDungeonHeart() && !room.isDestroyed()
+                && room.getFloorFurniture().contains(target) ? room : null;
+    }
+
+    private record FailedHeartPath(Point start, double time) { }
+    private final Map<EntityId, FailedHeartPath> failedHeartPaths = new java.util.HashMap<>();
+
+    private Point heartApproach(IRoomController heart) {
+        Point start = getCreatureCoordinates(), center = heart.getRoomInstance().getCenter();
+        float range = getPreferredAttackDistance();
+        Navigation current = entityData.getComponent(entityId, Navigation.class);
+        if (current != null && center.equals(current.faceTarget)) {
+            if (heart.getRoomInstance().getCoordinates().contains(current.target)
+                    && heart.isTileAccessible(null, current.target)
+                    && canAttackHeartFrom(current.target.x, current.target.y, range, center)
+                    && remainingRouteIsAccessible(current)) return current.target;
+            entityData.removeComponent(entityId, Navigation.class);
+        }
+        double now = gameTimer.getGameTime();
+        FailedHeartPath failed = failedHeartPaths.get(heart.getEntityId());
+        if (failed != null && failed.start.equals(start) && now >= failed.time && now - failed.time < 1) return null;
+        // The central 3x3 is impassable. Short-range melee must avoid unreachable corner swings.
+        Point destination = heart.getRoomInstance().getCoordinates().stream()
+                .filter(p -> heart.isTileAccessible(null, p) && canAttackHeartFrom(p.x, p.y, range, center))
+                .sorted(Comparator.<Point>comparingDouble(p -> p.distance(start)).thenComparingInt(p -> p.y).thenComparingInt(p -> p.x))
+                .filter(p -> p.equals(start) || navigationService.findPath(start, p, this) != null)
+                .findFirst().orElse(null);
+        if (destination == null) failedHeartPaths.put(heart.getEntityId(), new FailedHeartPath(new Point(start.x, start.y), now));
+        else failedHeartPaths.remove(heart.getEntityId());
+        return destination;
+    }
+
+    private boolean remainingRouteIsAccessible(Navigation route) {
+        Vector3f position = getPosition();
+        int nearest = 0;
+        float distance = Float.MAX_VALUE;
+        for (int i = 0; i < route.navigationPath.size(); i++) {
+            var waypoint = route.navigationPath.get(i);
+            float candidate = waypoint.dst2(position.x, position.z);
+            if (candidate < distance) { nearest = i; distance = candidate; }
+        }
+        for (int i = nearest; i < route.navigationPath.size(); i++) {
+            var waypoint = route.navigationPath.get(i);
+            var tile = mapController.getMapData().getTile(WorldUtils.vectorToPoint(waypoint));
+            if (tile == null || !navigationService.isAccessible(null, tile, this)) return false;
+        }
+        return true;
+    }
+
+    private boolean canAttackHeartFrom(float x, float z, float range, Point center) {
+        // Measure to the central 3x3 footprint, not the below-floor model origin.
+        float dx = Math.max(0, Math.abs(x - center.x) - 1.5f);
+        float dz = Math.max(0, Math.abs(z - center.y) - 1.5f);
+        return range >= 0 && dx * dx + dz * dz <= range * range
+                && clearHeartAttackLine(WorldUtils.vectorToPoint(new Vector2f(x, z)), center);
+    }
+
+    private boolean clearHeartAttackLine(Point from, Point target) {
+        int x = from.x, y = from.y, dx = target.x - x, dy = target.y - y;
+        int nx = Math.abs(dx), ny = Math.abs(dy), sx = Integer.signum(dx), sy = Integer.signum(dy);
+        int ix = 0, iy = 0;
+        // Supercover tile ray: both neighbors must be clear at a diagonal corner.
+        while (ix < nx || iy < ny) {
+            long horizontal = (1L + 2L * ix) * ny, vertical = (1L + 2L * iy) * nx;
+            if (horizontal == vertical) {
+                if (blocksHeartAttack(x + sx, y) || blocksHeartAttack(x, y + sy)) return false;
+                x += sx; y += sy; ix++; iy++;
+            } else if (horizontal < vertical) { x += sx; ix++; }
+            else { y += sy; iy++; }
+            if (blocksHeartAttack(x, y)) return false;
+        }
+        return true;
+    }
+
+    private boolean blocksHeartAttack(int x, int y) {
+        var tile = mapController.getMapData().getTile(x, y);
+        return tile == null || mapController.getTerrain(tile).getFlags().contains(Terrain.TerrainFlag.SOLID)
+                || entityPositionLookup.isTileBlocked(tile, getOwnerId());
     }
 
     private boolean hasPathToEntity(EntityId entity) {
@@ -673,6 +777,11 @@ public final class CreatureController extends EntityController implements ICreat
     }
 
     private boolean isInRange(float range, EntityId target) {
+        IRoomController heart = heartRoom(target);
+        if (heart != null) {
+            Vector3f position = getPosition();
+            return canAttackHeartFrom(position.x, position.z, range, heart.getRoomInstance().getCenter());
+        }
         return range >= getDistanceToCreature(target) || (isStopped() && isAtSameTile(target));
     }
 
@@ -701,6 +810,8 @@ public final class CreatureController extends EntityController implements ICreat
 
     @Override
     public void executeAttack(EntityId attackTarget) {
+        // Targets can be captured, picked up or destroyed between selection and execution.
+        if (!isAttackableCreature(attackTarget) && (heartRoom(attackTarget) == null || !isEnemy(attackTarget))) return;
 
         // TODO: how to apply the damage? Create a component for THIS creature that adds the damage to enemy after the countdown is finished?
         // Always prefer melee if in range
@@ -711,7 +822,7 @@ public final class CreatureController extends EntityController implements ICreat
                 stateMachine.changeState(CreatureState.MELEE_ATTACK);
 
                 // Set the damage
-                setDamage(attackTarget, creatureMeleeAttack.damage);
+                EntityController.setDamage(entityData, attackTarget, creatureMeleeAttack.damage, getOwnerId());
             }
         } else {
             Optional<CreatureSpell> attack = getPreferredAttackSpell(attackTarget);
@@ -732,7 +843,7 @@ public final class CreatureController extends EntityController implements ICreat
 
                 // TODO: Of course not like that, the shot is created and it does what it does
                 // Set the damage
-                setDamage(attackTarget, creatureSpell.getShotData1());
+                EntityController.setDamage(entityData, attackTarget, creatureSpell.getShotData1(), getOwnerId());
             }
         }
     }
@@ -764,6 +875,17 @@ public final class CreatureController extends EntityController implements ICreat
 
     @Override
     public void navigateToAttackTarget(EntityId attackTarget) {
+        IRoomController heart = heartRoom(attackTarget);
+        if (heart != null) {
+            if (!isEnemy(attackTarget)) return;
+            Point destination = heartApproach(heart);
+            Navigation current = entityData.getComponent(entityId, Navigation.class);
+            if (destination != null && !destination.equals(getCreatureCoordinates())
+                    && (current == null || !destination.equals(current.target))) {
+                createNavigation(getCreatureCoordinates(), destination, heart.getRoomInstance().getCenter());
+            }
+            return;
+        }
         Vector3f targetPosition = getPosition(entityData, attackTarget);
         if (targetPosition != null) {
 

@@ -16,6 +16,7 @@
  */
 package toniarts.openkeeper.game.controller;
 
+import toniarts.openkeeper.game.controller.room.FiveByFiveRotatedController;
 import toniarts.openkeeper.game.component.CreatureMood;
 
 import toniarts.openkeeper.game.logic.PaydaySystem;
@@ -143,7 +144,10 @@ public final class GameWorldController implements IGameWorldController, IPlayerA
         this.createNewGame(gameController, levelInfo);
     }
 
+    private IGameController gameController;
+
     private void createNewGame(IGameController gameController, ILevelInfo levelInfo) {
+        this.gameController = gameController;
 
         // Load objects
         objectsController = new ObjectsController(kwdFile, entityData, gameSettings, gameTimer, gameController, levelInfo);
@@ -166,6 +170,43 @@ public final class GameWorldController implements IGameWorldController, IPlayerA
         // Setup player stuff
         initPlayerMoney();
         initPlayerRooms();
+    }
+
+    @Override
+    public boolean destroyDungeonHeart(EntityId heart, short attackerId) {
+        synchronized (GOLD_LOCK) {
+            ObjectComponent object = entityData.getComponent(heart, ObjectComponent.class);
+            Position position = entityData.getComponent(heart, Position.class);
+            Health health = entityData.getComponent(heart, Health.class);
+            if (object == null || object.objectId != FiveByFiveRotatedController.OBJECT_HEART_ID
+                    || position == null || health == null || health.health > 0) return false;
+            IRoomController room = mapController.getRoomControllerByCoordinates(WorldUtils.vectorToPoint(position.position));
+            if (room == null || !room.isDungeonHeart() || room.isDestroyed() || !room.getFloorFurniture().contains(heart)) return false;
+            IPlayerController player = playerControllers.get(room.getOwnerId());
+            if (player == null) return false;
+            var storage = room.getObjectControl(ObjectType.GOLD);
+            int stored = storage == null ? 0 : storage.getCurrentCapacity();
+            int capacity = storage == null ? 0 : storage.getMaxCapacity();
+            if (stored > player.getKeeper().getGold() - player.getKeeper().getGoldReserve()) {
+                throw new IllegalStateException("Heart treasure exceeds the keeper's physical balance");
+            }
+            if (!mapController.destroyDungeonHeart(room.getRoomInstance().getCenter())) return false;
+            player.getGoldControl().subGold(stored);
+            player.getGoldControl().setGoldMax(player.getGoldControl().getGoldMax() - capacity);
+            Keeper keeper = player.getKeeper();
+            if (player.getRoomControl().getDungeonHeart() == null && !keeper.isDestroyed()) {
+                keeper.setDestroyed(true);
+                int mana = keeper.getMana();
+                player.getManaControl().addMana(-mana);
+                IPlayerController attacker = playerControllers.get(attackerId);
+                if (attacker != null && attacker.getManaControl() != null
+                        && !attacker.getKeeper().isDestroyed() && keeper.isEnemy(attackerId)) {
+                    attacker.getManaControl().addMana(mana);
+                }
+                if (!keeper.isAi()) gameController.endGame(keeper.getId(), false);
+            }
+            return true;
+        }
     }
 
     private void initPlayerMoney() {

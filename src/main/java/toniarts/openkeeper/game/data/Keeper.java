@@ -135,6 +135,8 @@ public final class Keeper implements Comparable<Keeper>, IIndexable, Savable {
         return destroyed;
     }
 
+    public void setDestroyed(boolean destroyed) { this.destroyed = destroyed; }
+
     public AIType getAiType() {
         return aiType;
     }

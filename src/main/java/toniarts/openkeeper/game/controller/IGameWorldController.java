@@ -119,6 +119,9 @@ public interface IGameWorldController {
      */
     void destroyRoomTiles(Collection<Point> points);
 
+    /** Resolve depletion of the live heart object; returns false for unrelated or stale entities. */
+    boolean destroyDungeonHeart(EntityId heart, short attackerId);
+
     /**
      * Interact with given entity
      *
