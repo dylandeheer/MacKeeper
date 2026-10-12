@@ -39,6 +39,7 @@ import java.io.IOException;
 import java.lang.System.Logger;
 import java.lang.System.Logger.Level;
 import java.nio.file.Paths;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
@@ -152,7 +153,8 @@ public abstract class AssetsConverter implements IConversionTaskUpdate {
      */
     public static boolean isConversionNeeded(ConvertProcess convertProcess, AppSettings settings) {
         String key = convertProcess.getSettingName();
-        return convertProcess.getVersion() > settings.getInteger(key);
+        return !Files.isDirectory(toniarts.openkeeper.utils.AppPaths.convertedAssets())
+                || convertProcess.getVersion() > settings.getInteger(key);
     }
 
     /**
@@ -264,7 +266,7 @@ public abstract class AssetsConverter implements IConversionTaskUpdate {
      * @return the current folder
      */
     public static String getCurrentFolder() {
-        String currentFolder = Paths.get("").toAbsolutePath().toString();
+        String currentFolder = toniarts.openkeeper.utils.AppPaths.dataDirectory().toString();
         return PathUtils.fixFilePath(currentFolder);
     }
 

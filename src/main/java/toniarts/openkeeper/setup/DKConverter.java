@@ -102,7 +102,7 @@ public abstract class DKConverter extends javax.swing.JFrame implements IFrameCl
         setTitle("Converting files... Please wait...");
         setResizable(false);
 
-        jLabel1.setText("<html>OpenKeeper needs the original Dungeon Keeper II files in order to work. Some of these files needs to be converted by the OpenKeeper to make them usable. This process might take awhile. It is however not done every time you start OpenKeeper, only when the process is changed due a version change etc.</html>");
+        jLabel1.setText("<html>MacKeeper is preparing your Dungeon Keeper II files. Your original files stay unchanged. Prepared data is reused on later launches.</html>");
 
         totalProgressLabel.setText("Running conversion... (hover mouse for detailed progress)");
 

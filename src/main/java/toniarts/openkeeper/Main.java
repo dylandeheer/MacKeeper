@@ -95,10 +95,9 @@ public final class Main extends SimpleApplication {
     private static boolean folderOk = false;
     private static boolean conversionOk = false;
     public static final String VERSION = "*ALPHA*";
-    public static final String TITLE = "OpenKeeper";
-    private static final String USER_HOME_FOLDER = System.getProperty("user.home").concat(File.separator).concat(".").concat(TITLE).concat(File.separator);
-    private static final String SCREENSHOTS_FOLDER = USER_HOME_FOLDER.concat("SCRSHOTS").concat(File.separator);
-    private static final Object LOCK = new Object();
+    public static final String TITLE = "MacKeeper";
+    private static final String USER_HOME_FOLDER = toniarts.openkeeper.utils.AppPaths.dataDirectory().toString() + File.separator;
+    private static final String SCREENSHOTS_FOLDER = toniarts.openkeeper.utils.AppPaths.screenshots().toString() + File.separator;
     private static Map<String, String> params;
     private static boolean debug;
 
@@ -127,11 +126,20 @@ public final class Main extends SimpleApplication {
         System.setProperty("java.util.logging.SimpleFormatter.format", "%1$tF %1$tT %4$s %2$s - %5$s%6$s%n");
         suppressMissingAssetWarnings();
 
-        // Finally start it if everything went ok
-        if (checkSetup(app)) {
+        // Swing setup and GLFW rendering must not share the macOS first thread.
+        if (params.containsKey("setup-only")) {
+            System.exit(checkSetup(app) ? 0 : 2);
+        }
+        if (params.containsKey("setup-complete")) {
+            if (!PathUtils.checkDkFolder(getDkIIFolder()) || AssetsConverter.isConversionNeeded(getSettings())) {
+                logger.log(Level.ERROR, "Game data setup is incomplete. Run the MacKeeper launcher.");
+                System.exit(2);
+            }
+            app.start();
+        } else if (checkSetup(app)) {
             app.start();
         } else {
-            logger.log(Level.WARNING, "Application setup not complete!!");
+            logger.log(Level.WARNING, "Application setup not complete.");
         }
     }
 
@@ -191,14 +199,13 @@ public final class Main extends SimpleApplication {
 
             // Let the user select
             setLookNFeel();
-            DKFolderSelector frame = new DKFolderSelector() {
+            openFrameAndWait(() -> new DKFolderSelector() {
                 @Override
                 protected void continueOk(String path) {
                     PathUtils.setDKIIFolder(PathUtils.fixFilePath(path));
                     folderOk = true;
                 }
-            };
-            openFrameAndWait(frame);
+            });
         } else {
             folderOk = true;
         }
@@ -214,13 +221,12 @@ public final class Main extends SimpleApplication {
                     Thread.currentThread().getContextClassLoader()
                             .getResource("com/jme3/asset/Desktop.cfg")); // Get temporary asset manager instance since we not yet have one ourselves
             assetManager.registerLocator(AssetsConverter.getAssetsFolder(), FileLocator.class);
-            DKConverter frame = new DKConverter(getDkIIFolder(), assetManager) {
+            openFrameAndWait(() -> new DKConverter(getDkIIFolder(), assetManager) {
                 @Override
                 protected void continueOk() {
                     conversionOk = true;
                 }
-            };
-            openFrameAndWait(frame);
+            });
         } else if (folderOk) {
             conversionOk = true;
         }
@@ -296,55 +302,48 @@ public final class Main extends SimpleApplication {
     /**
      * Opens up a given frame and waits for it to finish
      *
-     * @param frame the frame to open
+     * @param createFrame constructs the frame on the Swing event thread
      * @throws InterruptedException
      */
-    private static void openFrameAndWait(final JFrame frame) throws InterruptedException {
-        frame.setVisible(true);
-
-        Thread t = new Thread() {
-            @Override
-            public void run() {
-                synchronized (LOCK) {
-                    while (frame.isVisible()) {
-                        try {
-                            LOCK.wait();
-                        } catch (InterruptedException e) {
-                            logger.log(Level.WARNING, "Lock interrupted!");
-                        }
+    private static void openFrameAndWait(java.util.function.Supplier<JFrame> createFrame) throws InterruptedException {
+        var closed = new java.util.concurrent.CountDownLatch(1);
+        try {
+            javax.swing.SwingUtilities.invokeAndWait(() -> {
+                JFrame frame = createFrame.get();
+                frame.addWindowListener(new WindowAdapter() {
+                    @Override
+                    public void windowClosing(WindowEvent event) {
+                        if (frame instanceof IFrameClosingBehavior behavior && !behavior.canCloseWindow()) return;
+                        frame.dispose();
                     }
-                }
-            }
-        };
-        t.start();
-
-        frame.addWindowListener(new WindowAdapter() {
-            @Override
-            public void windowClosing(WindowEvent arg0) {
-
-                // See if it is allowed
-                if (frame instanceof IFrameClosingBehavior && !((IFrameClosingBehavior) frame).canCloseWindow()) {
-                    return; // You shall not pass!
-                }
-
-                synchronized (LOCK) {
-                    frame.dispose();
-                    LOCK.notify();
-                }
-            }
-        });
-
-        // Special
-        if (frame instanceof DKConverter) {
-            ((DKConverter) frame).startConversion();
+                    @Override
+                    public void windowClosed(WindowEvent event) {
+                        closed.countDown();
+                    }
+                });
+                frame.setVisible(true);
+                if (frame instanceof DKConverter converter) converter.startConversion();
+            });
+        } catch (InvocationTargetException e) {
+            throw new IllegalStateException("Could not open game setup", e.getCause());
         }
-
-        // Wait the dialog to finish
-        t.join();
+        closed.await();
     }
 
     @Override
     public void simpleInitApp() {
+        inputManager.deleteMapping(SimpleApplication.INPUT_MAPPING_EXIT);
+        inputManager.addMapping("MacKeeperPause", new com.jme3.input.controls.KeyTrigger(com.jme3.input.KeyInput.KEY_ESCAPE));
+        inputManager.addListener((com.jme3.input.controls.ActionListener) (name, pressed, tpf) -> {
+            if (pressed) return;
+            var possession = stateManager.getState(toniarts.openkeeper.view.PossessionInteractionState.class);
+            if (possession != null && possession.isEnabled()) {
+                possession.exitPossession();
+                return;
+            }
+            var player = stateManager.getState(toniarts.openkeeper.game.state.PlayerState.class);
+            if (player != null && player.isEnabled()) player.getScreen().pauseMenu();
+        }, "MacKeeperPause");
 
         if (debug) {
             ((GLRenderer)renderer).setDebugEnabled(true); // get debug names for GL objects

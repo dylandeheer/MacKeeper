@@ -105,15 +105,15 @@ public abstract class PossessionInteractionState extends AbstractPauseAwareState
             PlayerCamera pc = stateManager.getState(PlayerCameraState.class).getCamera();
             pc.initialize();
             //pc.setLookAt(target.getSpatial().getLocalTranslation());
-            PossessionCameraControl pcc = new PossessionCameraControl(app.getCamera(), Direction.EXIT) {
-                @Override
-                public void onExit() {
-                    PossessionInteractionState.this.onExit();
-                }
-            };
-            //target.getSpatial().addControl(pcc);
             target = null;
         }
+    }
+
+    /** Leave possession and restore the player's controls and HUD exactly once. */
+    public void exitPossession() {
+        if (!isEnabled()) return;
+        setEnabled(false);
+        onExit();
     }
 
     @Override
@@ -182,7 +182,7 @@ public abstract class PossessionInteractionState extends AbstractPauseAwareState
                 if (evt.getButtonIndex() == MouseInput.BUTTON_LEFT) {
                     // attack
                 } else if (evt.getButtonIndex() == MouseInput.BUTTON_RIGHT && evt.isReleased()) {
-                    setEnabled(false);
+                    exitPossession();
                 }
             }
 

@@ -19,15 +19,12 @@ package toniarts.openkeeper.game.data;
 import com.jme3.input.KeyInput;
 import com.jme3.system.AppSettings;
 import java.io.BufferedInputStream;
-import java.io.BufferedOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.OutputStream;
 import java.lang.System.Logger;
 import java.lang.reflect.Field;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -167,7 +164,7 @@ public final class Settings {
         USE_CURSORS(Boolean.class, true, SettingCategory.MISCELLANEOUS),
         // Multiplayer settings
         PLAYER_NAME(String.class, System.getProperty("user.name"), SettingCategory.MISCELLANEOUS),
-        GAME_NAME(String.class, "My OpenKeeper game", SettingCategory.MISCELLANEOUS),
+        GAME_NAME(String.class, "My MacKeeper game", SettingCategory.MISCELLANEOUS),
         MULTIPLAYER_LAST_IP(String.class, "127.0.0.1", SettingCategory.MISCELLANEOUS),
         MULTIPLAYER_LAST_PORT(Integer.class, 7575, SettingCategory.MISCELLANEOUS),
         // Sound settings
@@ -251,8 +248,8 @@ public final class Settings {
     
     private static final Settings INSTANCE;
     private static final int MAX_FPS = 200;
-    private static final Path USER_HOME_FOLDER = Paths.get(System.getProperty("user.home"), ".".concat(Main.TITLE));
-    private static final Path USER_SETTINGS_FILE = USER_HOME_FOLDER.resolve("openkeeper.properties");
+    private static final Path USER_HOME_FOLDER = toniarts.openkeeper.utils.AppPaths.dataDirectory();
+    private static final Path USER_SETTINGS_FILE = USER_HOME_FOLDER.resolve("settings.properties");
     public static final List<String> OPENGL = Settings.getRenderers();
     public static final List<Integer> SAMPLES = new ArrayList<>(Arrays.asList(new Integer[]{0, 2, 4, 6, 8, 16}));
     public static final List<Integer> ANISOTROPHIES = new ArrayList<>(Arrays.asList(new Integer[]{0, 2, 4, 8, 16}));
@@ -267,6 +264,9 @@ public final class Settings {
 
         // Init the settings
         this.settings = settings;
+        settings.setResolution(1280, 800);
+        settings.setResizable(true);
+        settings.setVSync(true);
 
         if (Files.exists(USER_SETTINGS_FILE)) {
             try (InputStream in = Files.newInputStream(USER_SETTINGS_FILE);
@@ -280,7 +280,11 @@ public final class Settings {
 
         // Assing some app level settings
         settings.setTitle(TITLE);
-        settings.setIcons(getApplicationIcons());
+        // GLFW reports a platform error if asked to set a regular Cocoa window icon.
+        // The macOS application icon belongs to the app bundle instead.
+        if (!System.getProperty("os.name").toLowerCase(java.util.Locale.ROOT).contains("mac")) {
+            settings.setIcons(getApplicationIcons());
+        }
 
         // We don't allow this to be changed, assets were not meant to use this
         settings.setGammaCorrection(false);
@@ -330,12 +334,7 @@ public final class Settings {
      * @throws java.io.IOException may fail to save
      */
     public void save() throws IOException {
-        try (OutputStream out = Files.newOutputStream(USER_SETTINGS_FILE);
-                BufferedOutputStream bout = new BufferedOutputStream(out)) {
-            settings.save(bout);
-        } catch (IOException ex) {
-            logger.log(Logger.Level.WARNING, "Settings file failed to save!", ex);
-        }
+        toniarts.openkeeper.utils.AppPaths.writeAtomically(USER_SETTINGS_FILE, settings::save);
     }
 
     /**

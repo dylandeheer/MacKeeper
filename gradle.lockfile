@@ -1,0 +1,52 @@
+# This is a Gradle generated file for dependency locking.
+# Manual edits can break the build and are not advised.
+# This file is expected to be part of source control.
+# To regenerate this file, run: ./gradlew :dependencies --write-locks
+com.badlogicgames.gdx:gdx-ai:1.8.2=compileClasspath,runtimeClasspath,testCompileClasspath,testRuntimeClasspath
+com.badlogicgames.gdx:gdx:1.9.8=compileClasspath,runtimeClasspath,testCompileClasspath,testRuntimeClasspath
+com.github.tonihele.nifty-gui:nifty-default-controls:5f1662da097596b48c254a22f5adf26c76818a29=compileClasspath,runtimeClasspath,testCompileClasspath,testRuntimeClasspath
+com.github.tonihele.nifty-gui:nifty-style-black:5f1662da097596b48c254a22f5adf26c76818a29=runtimeClasspath,testRuntimeClasspath
+com.github.tonihele.nifty-gui:nifty:5f1662da097596b48c254a22f5adf26c76818a29=compileClasspath,runtimeClasspath,testCompileClasspath,testRuntimeClasspath
+com.google.code.findbugs:jsr305:2.0.2=compileClasspath,runtimeClasspath,testCompileClasspath,testRuntimeClasspath
+com.google.code.gson:gson:2.9.1=runtimeClasspath,testRuntimeClasspath
+com.google.guava:guava:19.0=compileClasspath,runtimeClasspath,testCompileClasspath,testRuntimeClasspath
+com.simsilica:lemur:1.16.0=compileClasspath,runtimeClasspath,testCompileClasspath,testRuntimeClasspath
+com.simsilica:sim-ethereal:1.8.0=compileClasspath,runtimeClasspath,testCompileClasspath,testRuntimeClasspath
+com.simsilica:sim-math:1.5.0=compileClasspath,runtimeClasspath,testCompileClasspath,testRuntimeClasspath
+com.simsilica:sio2:1.8.0=compileClasspath,runtimeClasspath,testCompileClasspath,testRuntimeClasspath
+com.simsilica:zay-es-net:1.6.0=compileClasspath,runtimeClasspath,testCompileClasspath,testRuntimeClasspath
+com.simsilica:zay-es:1.6.0=compileClasspath,runtimeClasspath,testCompileClasspath,testRuntimeClasspath
+javax.vecmath:vecmath:1.5.2=compileClasspath,runtimeClasspath,testCompileClasspath,testRuntimeClasspath
+org.apache.logging.log4j:log4j-api:2.26.1=runtimeClasspath,testRuntimeClasspath
+org.apache.logging.log4j:log4j-core:2.26.1=runtimeClasspath,testRuntimeClasspath
+org.apiguardian:apiguardian-api:1.1.2=testCompileClasspath
+org.codehaus.groovy:groovy-all:2.4.5=runtimeClasspath,testRuntimeClasspath
+org.jmonkeyengine:jme3-core:3.9.0-stable=compileClasspath,runtimeClasspath,testCompileClasspath,testRuntimeClasspath
+org.jmonkeyengine:jme3-desktop:3.9.0-stable=compileClasspath,runtimeClasspath,testCompileClasspath,testRuntimeClasspath
+org.jmonkeyengine:jme3-effects:3.9.0-stable=compileClasspath,runtimeClasspath,testCompileClasspath,testRuntimeClasspath
+org.jmonkeyengine:jme3-lwjgl3:3.9.0-stable=compileClasspath,runtimeClasspath,testCompileClasspath,testRuntimeClasspath
+org.jmonkeyengine:jme3-networking:3.9.0-stable=compileClasspath,runtimeClasspath,testCompileClasspath,testRuntimeClasspath
+org.jmonkeyengine:jme3-niftygui:3.9.0-stable=compileClasspath,runtimeClasspath,testCompileClasspath,testRuntimeClasspath
+org.jmonkeyengine:jme3-plugins-json-gson:3.9.0-stable=runtimeClasspath,testRuntimeClasspath
+org.jmonkeyengine:jme3-plugins-json:3.9.0-stable=runtimeClasspath,testRuntimeClasspath
+org.jmonkeyengine:jme3-plugins:3.9.0-stable=compileClasspath,runtimeClasspath,testCompileClasspath,testRuntimeClasspath
+org.junit.jupiter:junit-jupiter-api:5.14.4=testCompileClasspath,testRuntimeClasspath
+org.junit.jupiter:junit-jupiter-engine:5.14.4=testRuntimeClasspath
+org.junit.jupiter:junit-jupiter-params:5.14.4=testCompileClasspath,testRuntimeClasspath
+org.junit.jupiter:junit-jupiter:5.14.4=testCompileClasspath,testRuntimeClasspath
+org.junit.platform:junit-platform-commons:1.14.4=testCompileClasspath,testRuntimeClasspath
+org.junit.platform:junit-platform-engine:1.14.4=testRuntimeClasspath
+org.junit.platform:junit-platform-launcher:1.14.4=testRuntimeClasspath
+org.junit:junit-bom:5.14.4=testCompileClasspath,testRuntimeClasspath
+org.lwjgl:lwjgl-glfw:3.3.6=compileClasspath,runtimeClasspath,testCompileClasspath,testRuntimeClasspath
+org.lwjgl:lwjgl-jawt:3.3.6=compileClasspath,runtimeClasspath,testCompileClasspath,testRuntimeClasspath
+org.lwjgl:lwjgl-jemalloc:3.3.6=compileClasspath,runtimeClasspath,testCompileClasspath,testRuntimeClasspath
+org.lwjgl:lwjgl-openal:3.3.6=compileClasspath,runtimeClasspath,testCompileClasspath,testRuntimeClasspath
+org.lwjgl:lwjgl-opencl:3.3.6=compileClasspath,runtimeClasspath,testCompileClasspath,testRuntimeClasspath
+org.lwjgl:lwjgl-opengl:3.3.6=compileClasspath,runtimeClasspath,testCompileClasspath,testRuntimeClasspath
+org.lwjgl:lwjgl:3.3.6=compileClasspath,runtimeClasspath,testCompileClasspath,testRuntimeClasspath
+org.lwjglx:lwjgl3-awt:0.2.3=compileClasspath,runtimeClasspath,testCompileClasspath,testRuntimeClasspath
+org.opentest4j:opentest4j:1.3.0=testCompileClasspath,testRuntimeClasspath
+org.slf4j:slf4j-api:1.7.32=runtimeClasspath,testRuntimeClasspath
+xpp3:xpp3:1.1.4c=compileClasspath,runtimeClasspath,testCompileClasspath,testRuntimeClasspath
+empty=annotationProcessor,testAnnotationProcessor
