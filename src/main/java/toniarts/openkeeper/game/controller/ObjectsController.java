@@ -352,6 +352,22 @@ public final class ObjectsController implements IObjectsController {
         return chickenController;
     }
 
+    /** Restore the active system-owned controllers, including pending removed entities. */
+    public java.util.List<IChickenController> restoreChickenControllers(java.util.List<ChickenController.SavedState> states) {
+        if (!chickenControllersByEntityId.isEmpty()) throw new IllegalStateException("Chicken controllers already bound");
+        if (!(entityData instanceof toniarts.openkeeper.game.save.GameEntityData data))
+            throw new IllegalArgumentException("Restoration requires a tracked entity store");
+        var ids = new java.util.HashSet<EntityId>();
+        for (var state : states) if (!data.wasAllocated(state.entityId()) || !ids.add(state.entityId()))
+            throw new IllegalArgumentException("Invalid or duplicate chicken controller identity");
+        var result = new java.util.ArrayList<IChickenController>();
+        for (var state : states) result.add(ChickenController.restoreState(state, entityData,
+                kwdFile.getObject(OBJECT_EGG_ID), kwdFile.getObject(OBJECT_CHICKEN_ID), gameController.getNavigationService(),
+                gameTimer, this, gameController.getGameWorldController().getMapController()));
+        for (var controller : result) chickenControllersByEntityId.put(controller.getEntityId(), new WeakReference<>(controller));
+        return java.util.List.copyOf(result);
+    }
+
     private IChickenController createChickenControllerInternal(EntityId id) {
         return new ChickenController(id, entityData, kwdFile.getObject(OBJECT_EGG_ID), kwdFile.getObject(OBJECT_CHICKEN_ID), gameController.getNavigationService(), gameTimer, this, gameController.getGameWorldController().getMapController());
     }

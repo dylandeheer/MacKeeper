@@ -52,9 +52,10 @@ public final class GameLoopManager {
     private final IGameController gameController;
     private final PlayerCreatureSystem playerCreatureSystem;
     private final PlayerSpellbookSystem playerSpellbookSystem;
+    private final ChickenAiSystem chickenAiSystem;
 
     /** Implemented system sections; not yet the complete simulation state. */
-    public record SystemState(PlayerCreatureSystem.State creatures, PlayerSpellbookSystem.State spellbooks) { }
+    public record SystemState(PlayerCreatureSystem.State creatures, PlayerSpellbookSystem.State spellbooks, ChickenAiSystem.SavedState chickens) { }
 
     /**
      * Single use game states
@@ -100,7 +101,7 @@ public final class GameLoopManager {
                         playerControllers.values(), gameSettings, levelInfo, gameWorldController.getMapController()),
                 new ManaCalculatorLogic(playerControllers.values(), entityData),
                 new CreatureAiSystem(entityData, gameWorldController.getCreaturesController(), taskManager),
-                new ChickenAiSystem(entityData, gameWorldController.getObjectsController()),
+                chickenAiSystem = new ChickenAiSystem(entityData, gameWorldController.getObjectsController()),
                 new CreatureViewSystem(entityData),
                 new DoorViewSystem(entityData, positionSystem),
                 new LooseObjectSystem(entityData, gameWorldController.getMapController(), playerControllers, positionSystem, gameWorldController),
@@ -151,7 +152,7 @@ public final class GameLoopManager {
     /** Capture implemented system sections together with controllers and ECS. */
     public <T> T captureSnapshotWithSystems(java.util.function.BiFunction<IGameController, SystemState, T> capture) {
         return captureSnapshot(game -> capture.apply(game, new SystemState(
-                playerCreatureSystem.captureState(), playerSpellbookSystem.captureState())));
+                playerCreatureSystem.captureState(), playerSpellbookSystem.captureState(), chickenAiSystem.captureState())));
     }
 
     public void pause() {
