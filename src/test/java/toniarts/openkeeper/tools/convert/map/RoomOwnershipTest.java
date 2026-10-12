@@ -288,6 +288,15 @@ class RoomOwnershipTest {
         } finally { system.stop(); }
     }
 
+    @Test void abandonedPaydayTaskCanBeRemovedWithoutACreature() {
+        MapController map = map(false);
+        var task = new toniarts.openkeeper.game.task.creature.CollectPayTask(
+                null, map, new Point(1,1), OLD, treasury, world, data);
+        assertFalse(task.isValid(null));
+        assertTrue(task.isRemovable());
+        assertEquals(600, previous.getGold());
+    }
+
     private EntityId wageCreature(long owed, int x) {
         EntityId id=data.createEntity();
         CreatureComponent creature=new CreatureComponent();creature.pay=500;

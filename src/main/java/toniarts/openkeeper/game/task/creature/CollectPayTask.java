@@ -28,6 +28,8 @@ public final class CollectPayTask extends AbstractRoomTask {
     }
 
     @Override public boolean isValid(ICreatureController creature) {
+        // AbstractTask probes with null when deciding whether an unassigned task can be removed.
+        if (creature == null) return false;
         CreatureSalary salary = data.getComponent(creature.getEntityId(), CreatureSalary.class);
         return !executed && creature.getOwnerId() == playerId && PaydaySystem.eligible(data, creature.getEntityId())
                 && salary != null && salary.employer == playerId && salary.owed > 0
