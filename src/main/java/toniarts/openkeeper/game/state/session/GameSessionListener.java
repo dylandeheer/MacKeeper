@@ -121,6 +121,9 @@ public interface GameSessionListener extends MapListener, PlayerListener {
     public void onShowMessage(int textId);
 
     @Asynchronous
+    public void onShowObjective(int objectiveId);
+
+    @Asynchronous
     public void onZoomViewToPoint(Vector3f point);
 
     @Asynchronous

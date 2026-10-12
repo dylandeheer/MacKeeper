@@ -223,6 +223,15 @@ public final class LocalGameSession implements GameSessionServerService, GameSes
     }
 
     @Override
+    public void showObjective(int objectiveId, short playerId) {
+        if (playerId == PLAYER_ID) {
+            for (GameSessionListener listener : listeners.getArray()) {
+                listener.onShowObjective(objectiveId);
+            }
+        }
+    }
+
+    @Override
     public void zoomViewToPoint(Vector3f point, short playerId) {
         if (playerId == PLAYER_ID) {
             for (GameSessionListener listener : listeners.getArray()) {

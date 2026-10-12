@@ -377,6 +377,13 @@ public final class GameClientService extends AbstractClientService
         }
 
         @Override
+        public void onShowObjective(int objectiveId) {
+            for (GameSessionListener l : listeners.getArray()) {
+                l.onShowObjective(objectiveId);
+            }
+        }
+
+        @Override
         public void onZoomViewToPoint(Vector3f point) {
             for (GameSessionListener l : listeners.getArray()) {
                 l.onZoomViewToPoint(point);

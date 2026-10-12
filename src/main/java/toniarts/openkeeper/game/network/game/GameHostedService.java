@@ -266,6 +266,16 @@ public final class GameHostedService extends AbstractHostedConnectionService imp
     }
 
     @Override
+    public void showObjective(int objectiveId, short playerId) {
+        for (Map.Entry<ClientInfo, GameSessionImpl> gameSession : players.entrySet()) {
+            if (gameSession.getKey().getKeeper().getId() == playerId) {
+                gameSession.getValue().onShowObjective(objectiveId);
+                break;
+            }
+        }
+    }
+
+    @Override
     public void zoomViewToPoint(Vector3f point, short playerId) {
         for (Map.Entry<ClientInfo, GameSessionImpl> gameSession : players.entrySet()) {
             if (gameSession.getKey().getKeeper().getId() == playerId) {
@@ -711,6 +721,11 @@ public final class GameHostedService extends AbstractHostedConnectionService imp
         @Override
         public void onShowMessage(int textId) {
             getCallback().onShowMessage(textId);
+        }
+
+        @Override
+        public void onShowObjective(int objectiveId) {
+            getCallback().onShowObjective(objectiveId);
         }
 
         @Override

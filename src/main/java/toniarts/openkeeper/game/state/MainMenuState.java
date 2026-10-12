@@ -811,6 +811,11 @@ public final class MainMenuState extends AbstractAppState {
         }
 
         @Override
+        public void showObjective(int objectiveId, short playerId) {
+            throw new UnsupportedOperationException("Objectives are unavailable in the main menu.");
+        }
+
+        @Override
         public void zoomViewToPoint(Vector3f point, short playerId) {
             throw new UnsupportedOperationException("Not supported yet.");
         }

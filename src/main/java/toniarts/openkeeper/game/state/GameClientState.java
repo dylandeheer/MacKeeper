@@ -557,6 +557,14 @@ public final class GameClientState extends AbstractPauseAwareState {
         }
 
         @Override
+        public void onShowObjective(int objectiveId) {
+            // Session callbacks may race level teardown and run off the render thread.
+            app.enqueue(() -> {
+                if (playerState != null) playerState.showObjective(objectiveId);
+            });
+        }
+
+        @Override
         public void onZoomViewToPoint(Vector3f point) {
             playerState.zoomToPoint(point);
         }

@@ -138,7 +138,7 @@ public final class PlayerState extends AbstractAppState implements PlayerListene
             // Get the game state
             final GameClientState gameState = stateManager.getState(GameClientState.class);
             screen.setState(this);
-            screen.initHud(gameState.getLevelData().getGameLevel().getTextTableId().getLevelDictFile(), entityData);
+            screen.initHud(gameState.getLevelData().getGameLevel(), entityData);
 
             // Cursor
             app.getInputManager().setCursorVisible(true);
@@ -473,6 +473,11 @@ public final class PlayerState extends AbstractAppState implements PlayerListene
 
     public void showMessage(int textId) {
         stateManager.getState(SystemMessageState.class).addMessage(SystemMessageState.MessageType.INFO, String.format("${level.%d}", textId));
+    }
+
+    public void showObjective(int objectiveId) {
+        // GameClientState dispatches this on the render thread.
+        if (screen != null) screen.showObjective(objectiveId);
     }
 
     public void zoomToPoint(Vector3f point) {

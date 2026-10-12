@@ -8,9 +8,8 @@ The parser loaded all **66 maps**, including **24 campaign variants**, **5 secre
 
 | Trigger | Occurrences | Campaign maps | Source finding |
 |---|---:|---:|---|
-| `MAKE_OBJECTIVE` | 59 | 21 | PlayerTriggerControl supports neither active markers nor clearing them. |
+| `MAKE_OBJECTIVE` (player-scoped off) | 14 | 5 | PlayerTriggerControl.makeObjectiveOff remains empty; player-target semantics need verification. |
 | `LEVEL_PAY_DAY` | 1 | 1 | TriggerControl always returns false; no payday system is present. |
-| `DISPLAY_OBJECTIVE` | 1 | 1 | PlayerTriggerControl reads the objective and zooms without displaying it. |
 
 These are confirmed examples, not an exhaustive support matrix. Additional media, creature, party and player actions require semantic review. The room ownership actions occur in `Level17.kwd`; the payday condition occurs in `level1.kwd`.
 
@@ -39,6 +38,20 @@ scripts/verify-gate-collapse.sh "/path/to/Dungeon Keeper II" "/path/to/Converted
 ```
 
 The smoke check proves controller state and model construction, not actual campaign progression, original animation/sound timing, network-session behavior or rendered visual fidelity. Those remain acceptance work.
+
+## Objective display and corrected marker inventory
+
+The initial type-only audit incorrectly attributed all 59 `MAKE_OBJECTIVE` commands to the player handler. Tracing each command from its actual level/player/thing/party-member root finds **45 creature-scoped commands** (28 kill, 6 convert, 11 off) and **14 player-scoped off commands** across five maps (`level11A/B/C`, `level12`, `level18`). CreatureTriggerControl already adds/removes PlayerObjective components and CreatureFlowerControl draws their icons. That existing path still needs mission-level validation; this inventory is not proof of original marker semantics. The player-scoped off handler remains incomplete.
+
+`DISPLAY_OBJECTIVE` in `Level19.kwd` (trigger 65497, player 3, text ID 8, no camera action point) now sends an objective callback through local or hosted sessions. The client updates Nifty on the render thread, handles late callbacks after detach, and displays the instruction above the existing briefing. Closing/reopening the panel and returning from the resumable end-game screen retain the latest instruction. New level controllers start without a previous instruction. Missing/out-of-range text IDs preserve the last valid instruction. An optional nonzero action point still moves the camera. Network protocol version 2 rejects clients using the older session interface.
+
+Nine synthetic tests cover trigger dispatch, recipient isolation, local and hosted/client callback paths, optional/missing action points, panel reopening/replacement, missing text, and resumable cleanup. The full suite passes **81 tests**. The network routing test substitutes the transport; it does not prove a live multiplayer session. A native 1280×800 rendering of the production objective panel with owned Level 19 fonts, text and textures was inspected for readable text and overlap. This isolated panel preview is not a complete mission playthrough or original-engine visual comparison.
+
+The reproducible audit below traces roots across all 66 maps, invokes the real display action through TriggerLoader and PlayerTriggerControl, and checks the referenced converted dictionary entry. It reports identifiers/counts only, without copying game text or assets into the repository. Save/load and reconnect restoration of objective state remain part of the wider unfinished state-persistence work.
+
+```sh
+scripts/verify-objectives.sh "/path/to/Dungeon Keeper II" "/path/to/Converted"
+```
 
 ## Reproduce
 

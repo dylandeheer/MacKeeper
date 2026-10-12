@@ -110,6 +110,9 @@ public final class PlayerScreenController implements IPlayerScreenController {
     private Label tooltip;
     private boolean initHud = false;
     private String cinematicText;
+    private GameLevel objectiveLevel;
+    private Integer displayedObjectiveId;
+    private final Deque<Integer> pendingObjectives = new ArrayDeque<>();
     private EntityData entityData;
     private CreatureCardManager creatureCardManager;
     private PossessionInteractionState.Action possessionAction = PossessionInteractionState.Action.MELEE;
@@ -149,6 +152,7 @@ public final class PlayerScreenController implements IPlayerScreenController {
         // The screen controller might sometimes stay in memory
         // So make sure we clean these up or we end up cumulating a lot of uncollectable garbage (memory-leak)
         state = null;
+        objectiveLevel = null;
         entityData = null;
         screen = null;
     }
@@ -204,21 +208,58 @@ public final class PlayerScreenController implements IPlayerScreenController {
         if (element.isVisible()) {
             element.hide();
         } else {
-            GameLevel gameLevel = state.stateManager.getState(GameClientState.class).getLevelData().getGameLevel();
-
-            Label mainObjective = element.findNiftyControl("mainObjective", Label.class);
-            mainObjective.setText(gameLevel.getMainObjective());
-
-            Label subObjective1 = element.findNiftyControl("subObjective1", Label.class);
-            subObjective1.setText(gameLevel.getSubObjective1());
-            Label subObjective2 = element.findNiftyControl("subObjective2", Label.class);
-            subObjective2.setText(gameLevel.getSubObjective2());
-            Label subObjective3 = element.findNiftyControl("subObjective3", Label.class);
-            subObjective3.setText(gameLevel.getSubObjective3());
-
-            element.layoutElements();
-            element.show();
+            showObjectivePanel();
         }
+    }
+
+    /** Called on the render thread; the latest instruction remains available on reopening. */
+    public void showObjective(int objectiveId) {
+        if (objectiveId < 0 || objectiveId > 32767) {
+            logger.log(Level.WARNING, "Invalid objective text ID {0}", objectiveId);
+            return;
+        }
+        if (objectiveLevel == null) {
+            // Preserve the last validated instruction until the dictionary is restored.
+            pendingObjectives.addLast(objectiveId);
+            return;
+        }
+        if (getObjectiveText(objectiveId) == null) {
+            logger.log(Level.WARNING, "Missing objective text ID {0} in the level dictionary", objectiveId);
+            return;
+        }
+        displayedObjectiveId = objectiveId;
+        showObjectivePanel();
+    }
+
+    private void restoreObjectives() {
+        if (objectiveLevel == null) return;
+        while (!pendingObjectives.isEmpty()) showObjective(pendingObjectives.removeFirst());
+        if (displayedObjectiveId != null) showObjectivePanel();
+    }
+
+    private String getObjectiveText(Integer objectiveId) {
+        var dictionary = nifty.getResourceBundles().get("level");
+        if (objectiveId == null || dictionary == null) return null;
+        try {
+            return dictionary.getString(objectiveId.toString(), nifty.getLocale());
+        } catch (MissingResourceException ex) {
+            return null;
+        }
+    }
+
+    private void showObjectivePanel() {
+        if (objectiveLevel == null) return;
+        Element element = nifty.getScreen(SCREEN_HUD_ID).findElementById("objective");
+        element.findNiftyControl("mainObjective", Label.class).setText(objectiveLevel.getMainObjective());
+        element.findNiftyControl("subObjective1", Label.class).setText(objectiveLevel.getSubObjective1());
+        element.findNiftyControl("subObjective2", Label.class).setText(objectiveLevel.getSubObjective2());
+        element.findNiftyControl("subObjective3", Label.class).setText(objectiveLevel.getSubObjective3());
+        Element instruction = element.findElementById("scriptedObjectivePanel");
+        String text = getObjectiveText(displayedObjectiveId);
+        instruction.setVisible(text != null);
+        element.findNiftyControl("scriptedObjective", Label.class).setText(text == null ? "" : text);
+        element.layoutElements();
+        element.show();
     }
 
     @Override
@@ -513,7 +554,9 @@ public final class PlayerScreenController implements IPlayerScreenController {
         }
     }
 
-    protected void initHud(String resource, EntityData entityData) {
+    protected void initHud(GameLevel gameLevel, EntityData entityData) {
+        objectiveLevel = gameLevel;
+        String resource = gameLevel.getTextTableId() == null ? null : gameLevel.getTextTableId().getLevelDictFile();
         Screen hud = nifty.getScreen(SCREEN_HUD_ID);
 
         // Load the level dictionary
@@ -532,6 +575,7 @@ public final class PlayerScreenController implements IPlayerScreenController {
 
         nifty.gotoScreen(PlayerScreenController.SCREEN_HUD_ID);
 
+        restoreObjectives();
         hud.layoutLayers();
     }
 

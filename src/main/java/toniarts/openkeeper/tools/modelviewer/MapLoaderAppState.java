@@ -159,6 +159,11 @@ public final class MapLoaderAppState extends AbstractAppState {
         }
 
         @Override
+        public void showObjective(int objectiveId, short playerId) {
+            throw new UnsupportedOperationException("Objectives are unavailable in the model viewer.");
+        }
+
+        @Override
         public void zoomViewToPoint(Vector3f point, short playerId) {
             throw new UnsupportedOperationException("Not supported yet.");
         }

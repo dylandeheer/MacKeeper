@@ -399,13 +399,10 @@ public class PlayerTriggerControl extends TriggerControl {
     }
 
     private void displayObjective(TriggerActionData trigger) { // Info part
-//        if (playerId == playerState.getPlayerId()) {
-        // TODO this
-        int objectiveId = trigger.getUserData("objectiveId", int.class); // limit 32767
+        int objectiveId = trigger.getUserData("objectiveId", int.class);
+        playerService.showObjective(objectiveId, playerId);
         short apId = trigger.getUserData("actionPointId", short.class);
-        // if != 0 => Zoom To AP = this
-        zoomToAP(apId);
-//        }
+        if (apId != 0) zoomToAP(apId);
     }
 
     private void playSpeech(TriggerActionData trigger) { // Info part

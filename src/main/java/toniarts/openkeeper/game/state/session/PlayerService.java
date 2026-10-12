@@ -95,6 +95,9 @@ public interface PlayerService {
      */
     public void showMessage(int textId, short playerId);
 
+    /** Display and retain a level-dictionary objective for the specified player. */
+    public void showObjective(int objectiveId, short playerId);
+
     /**
      * Zoom camera to a point
      *
