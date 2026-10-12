@@ -483,7 +483,24 @@ public final class CreatureController extends EntityController implements ICreat
 
     @Override
     public void dropGold() {
-        // TODO:
+        Gold carried = entityData.getComponent(entityId, Gold.class);
+        if (carried == null || carried.gold <= 0) {
+            return;
+        }
+        int maxPile = (int) gameSettings.get(Variable.MiscVariable.MiscType.MAX_GOLD_PILE_OUTSIDE_TREASURY).getValue();
+        if (maxPile <= 0) {
+            throw new IllegalStateException("Loose gold pile capacity must be positive");
+        }
+        Point coordinates = getCreatureCoordinates();
+        short owner = getOwnerId();
+        int remaining = carried.gold;
+        while (remaining > 0) {
+            int amount = Math.min(remaining, maxPile);
+            objectsController.addLooseGold(owner, coordinates.x, coordinates.y, amount, maxPile);
+            remaining -= amount;
+            // Debit only completed piles, so a failed spawn leaves the rest in the purse.
+            entityData.setComponent(entityId, new Gold(remaining, carried.maxGold));
+        }
     }
 
     @Override
