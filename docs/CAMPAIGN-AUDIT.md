@@ -53,6 +53,10 @@ The reproducible audit below traces roots across all 66 maps, invokes the real d
 scripts/verify-objectives.sh "/path/to/Dungeon Keeper II" "/path/to/Converted"
 ```
 
+## Level and mood count dependencies
+
+The previously stubbed level/happy/angry counts now implement the original predicates. All five shipped conditions in Level2, Level15a and MPD2/3/4 pass threshold and child-action checks; see [CREATURE-COUNTS.md](CREATURE-COUNTS.md). The inventory remains broader than the implemented subset: creature kill statistics, breach events and other predicates still require work.
+
 ## Reproduce
 
 With `JAVA_HOME` pointing at JDK 25:

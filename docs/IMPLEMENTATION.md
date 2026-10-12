@@ -35,7 +35,7 @@ The original retail game data is a local test dependency and must never be commi
 - On Apple M1 Max, the bundled ARM64 Java 25 app initialized OpenGL 4.1 and OpenAL, played the Bullfrog intro, displayed the main menu, campaign map and mission briefing, and loaded campaign mission 1.
 - Visually verified Escape pause and resume and a running dungeon after the opening cinematic. This does not establish mission completion or campaign compatibility.
 - Fixed two errors found by actual launch: Cocoa rejects setting a normal window icon; the video material required GLSL150 and the engine's GLSL compatibility header for the core OpenGL profile.
-- All 190 automated tests pass, including setup/game launch isolation, property persistence and synthetic data validation. Mac packaging and bundled command-line help/data checks pass locally; remote CI status is separate.
+- All 195 automated tests pass, including setup/game launch isolation, property persistence and synthetic data validation. Mac packaging and bundled command-line help/data checks pass locally; remote CI status is separate.
 - Development builds use an ad hoc local signature. Developer ID signing/notarization and Intel hardware testing remain pending.
 
 Log4j runtime constraints were updated from the upstream 2.15.0 dependency to 2.26.1, documented in [Apache's release notes](https://logging.apache.org/log4j/2.x/release-notes.html). Other inherited dependencies still need a full release audit.
@@ -56,7 +56,7 @@ Log4j runtime constraints were updated from the upstream 2.15.0 dependency to 2.
 
 - Starting funds now use a separate reserve, spent before room treasure. Wide keeper balances preserve funds through capture; individual room purchases remain bounded. All 66 maps/234 funded player entries pass the initial-reserve audit. See [STARTING-GOLD.md](STARTING-GOLD.md) for transaction, serialization and callback evidence and limitations.
 
-- Computer keepers now retain authored AI identity and execute economy decisions on the authoritative simulation thread. All 66 maps pass profile checks; two seeded twelve-minute production-system headless TrapTime runs verify normal mining/worker excavation/claiming and paid rooms for both opponents. The full suite has 190 tests. This is the economy foundation, with remaining opponent strategy and coverage recorded in [KEEPER-AI.md](KEEPER-AI.md).
+- Computer keepers now retain authored AI identity and execute economy decisions on the authoritative simulation thread. All 66 maps pass profile checks; two seeded twelve-minute production-system headless TrapTime runs verify normal mining/worker excavation/claiming and paid rooms for both opponents. The full suite has 195 tests. This is the economy foundation, with remaining opponent strategy and coverage recorded in [KEEPER-AI.md](KEEPER-AI.md).
 
 - Failed assigned-task paths now retry once per game second, with immediate retries for changed tasks/locations. A seeded headless Level 10 comparison shows lower simulation cost; the benchmark and limitations are in [PERFORMANCE.md](PERFORMANCE.md).
 
@@ -67,3 +67,5 @@ Log4j runtime constraints were updated from the upstream 2.15.0 dependency to 2.
 - Terminal outcome/time now survive local/hosted callbacks, the end screen, teardown and debriefing. Client campaign attempts and completion are persisted once, separated by mode and branch, with legacy main-campaign counter fallback. Native loss, win and continue-to-debriefing checks use original assets and assert bound UI labels; they inject outcomes rather than play missions. Camera cleanup and delayed speech/transition callbacks respect session lifetime. Asset paths resolve correctly through a symlinked converted-data root. See [GAME-RESULTS.md](GAME-RESULTS.md).
 
 - Camera sweeps now preserve authored 30 Hz sample timing, including single-frame paths, stationary rotation/FOV changes and repeated-position holds. Stop/cancel completion is idempotent. All 80 converted owned paths and 34,346 sample poses pass headless playback checks; native single-frame/stationary/moving checks are included in result-flow verification. See [CAMERA-PATHS.md](CAMERA-PATHS.md).
+
+- Campaign level/happy/angry creature counts now use verified native predicate semantics, including minimum levels, species filters and worker exclusion. Five new tests pass; all five authored conditions unlock the expected isolated speech/score actions across five maps. See [CREATURE-COUNTS.md](CREATURE-COUNTS.md) for evidence and acceptance limits.

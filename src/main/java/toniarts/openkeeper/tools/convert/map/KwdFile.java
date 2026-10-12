@@ -2438,12 +2438,18 @@ public final class KwdFile implements IKwdFile, IKwdMap {
                             break;
 
                         case PLAYER_CREATURES:
-                        case PLAYER_HAPPY_CREATURES:
-                        case PLAYER_ANGRY_CREATURES:
                             ((TriggerGeneric) trigger).setTargetValueComparison(reader.readByteAsEnum(TriggerGeneric.ComparisonType.class));
                             trigger.setUserData("creatureId", reader.readUnsignedByte());
                             trigger.setUserData("flag", reader.readUnsignedByte()); // 0x1 = Value, !0x1 = Player
                             trigger.setUserData("playerId", reader.readUnsignedByte());
+                            trigger.setUserData("value", reader.readUnsignedInteger());
+                            break;
+
+                        case PLAYER_HAPPY_CREATURES:
+                        case PLAYER_ANGRY_CREATURES:
+                            ((TriggerGeneric) trigger).setTargetValueComparison(reader.readByteAsEnum(TriggerGeneric.ComparisonType.class));
+                            trigger.setUserData("creatureId", reader.readUnsignedByte()); // 0 = Any non-worker
+                            reader.skipBytes(2); // Unused by the native predicates, not a player comparison
                             trigger.setUserData("value", reader.readUnsignedInteger());
                             break;
 
@@ -2494,10 +2500,10 @@ public final class KwdFile implements IKwdFile, IKwdMap {
 
                         case PLAYER_CREATURES_AT_LEVEL:
                             ((TriggerGeneric) trigger).setTargetValueComparison(reader.readByteAsEnum(TriggerGeneric.ComparisonType.class));
-                            // FIXME some bug in editor
-                            trigger.setUserData("targetId", reader.readUnsignedByte()); // = 0, must be a level
-                            trigger.setUserData("flag", reader.readUnsignedByte()); // 0x1 = Value, !0x1 = Player
-                            trigger.setUserData("playerId", reader.readUnsignedByte()); // level also
+                            // DKII 1.70 reads byte 3 as the minimum experience level.
+                            // Bytes 1 and 2 are unused; this condition always compares to a literal.
+                            reader.skipBytes(2);
+                            trigger.setUserData("level", reader.readUnsignedByte());
                             trigger.setUserData("value", reader.readUnsignedInteger());
                             break;
 

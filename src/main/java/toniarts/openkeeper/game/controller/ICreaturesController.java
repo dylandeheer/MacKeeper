@@ -101,6 +101,14 @@ public interface ICreaturesController extends IEntityWrapper<ICreatureController
     @Override
     ICreatureController createController(EntityId entityId);
 
+    /** Counts living non-workers owned by the player at or above the requested level. */
+    int countCreaturesAtLevel(short playerId, int minimumLevel);
+
+    /** Counts living non-workers in a native mood state (0 normal, 1 unhappy, 2 angry).
+     * A creature ID of zero matches every species.
+     */
+    int countCreaturesByMood(short playerId, short creatureId, int moodState);
+
     /**
      * Levels up a creature
      *

@@ -113,9 +113,13 @@ public class PlayerTriggerControl extends TriggerControl {
                 break;
 
             case PLAYER_HAPPY_CREATURES:
-                return false;
             case PLAYER_ANGRY_CREATURES:
-                return false;
+                creatureId = trigger.getUserData("creatureId", short.class);
+                target = creaturesController.countCreaturesByMood(playerId, creatureId,
+                        targetType == TriggerGeneric.TargetType.PLAYER_HAPPY_CREATURES ? 0 : 2);
+                // Unlike PLAYER_CREATURES, these native predicates always compare to a literal.
+                value = trigger.getUserData("value", int.class);
+                break;
             case PLAYER_CREATURES_KILLED:
                 return false;
             case PLAYER_KILLS_CREATURES:
@@ -205,7 +209,9 @@ public class PlayerTriggerControl extends TriggerControl {
             case PLAYER_DESTROYS:
                 return false;
             case PLAYER_CREATURES_AT_LEVEL:
-                return false;
+                target = creaturesController.countCreaturesAtLevel(playerId, trigger.getUserData("level", short.class));
+                value = trigger.getUserData("value", int.class);
+                break;
             case PLAYER_KILLED:
 
                 // DKII 1.70 checks the recorded killer; the second data word is unused.

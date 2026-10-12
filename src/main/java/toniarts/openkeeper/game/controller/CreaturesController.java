@@ -450,6 +450,41 @@ public final class CreaturesController implements ICreaturesController {
     }
 
     @Override
+    public int countCreaturesAtLevel(short playerId, int minimumLevel) {
+        EntitySet entities = entityData.getEntities(new FieldFilter<>(Owner.class, "ownerId", playerId),
+                Owner.class, CreatureComponent.class, CreatureExperience.class, Health.class);
+        try {
+            int count = 0;
+            for (Entity entity : entities) {
+                if (!entity.get(CreatureComponent.class).worker
+                        && entity.get(CreatureExperience.class).level >= minimumLevel) count++;
+            }
+            return count;
+        } finally {
+            entities.release();
+        }
+    }
+
+    @Override
+    public int countCreaturesByMood(short playerId, short creatureId, int moodState) {
+        EntitySet entities = entityData.getEntities(new FieldFilter<>(Owner.class, "ownerId", playerId),
+                Owner.class, CreatureComponent.class, CreatureMood.class, Health.class);
+        try {
+            int count = 0;
+            for (Entity entity : entities) {
+                CreatureComponent component = entity.get(CreatureComponent.class);
+                if (component.worker || (creatureId != 0 && component.creatureId != creatureId)) continue;
+                Creature creature = kwdFile.getCreature(component.creatureId);
+                int threshold = CreatureMood.toRuntimeThreshold(creature.getAttributes().getUnhappyThreshold());
+                if (entity.get(CreatureMood.class).getState(threshold) == moodState) count++;
+            }
+            return count;
+        } finally {
+            entities.release();
+        }
+    }
+
+    @Override
     public void levelUpCreatures(short playerId, int level) {
 
         // Find all the living creatures of the wanted player
