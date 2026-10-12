@@ -28,6 +28,11 @@ import java.util.Set;
  */
 public interface IMapController extends IMapInformation<IMapTileController>, IGameLogicUpdatable {
 
+    /** Register a server-side terrain breach listener. */
+    void addBreachListener(toniarts.openkeeper.game.listener.DungeonBreachListener listener);
+
+    void removeBreachListener(toniarts.openkeeper.game.listener.DungeonBreachListener listener);
+
     /**
      * Set some tiles selected/undelected
      *

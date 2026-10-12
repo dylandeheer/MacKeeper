@@ -24,6 +24,8 @@ import toniarts.openkeeper.game.controller.IGameTimer;
 import toniarts.openkeeper.game.controller.ILevelInfo;
 import toniarts.openkeeper.game.controller.IMapController;
 import toniarts.openkeeper.game.data.Keeper;
+import toniarts.openkeeper.game.listener.DungeonBreachListener;
+import toniarts.openkeeper.tools.convert.map.TriggerGeneric.TargetType;
 import toniarts.openkeeper.game.logic.IGameLogicUpdatable;
 import toniarts.openkeeper.game.state.session.PlayerService;
 import toniarts.openkeeper.tools.convert.map.Player;
@@ -35,10 +37,24 @@ import toniarts.openkeeper.tools.convert.map.Player;
  */
 public final class PlayerTriggerLogicController implements IGameLogicUpdatable {
 
+    private final IMapController mapController;
+    private final DungeonBreachListener breachListener = this::onDungeonBreached;
+
+    private void onDungeonBreached(short defenderId, short attackerId) {
+        for (PlayerTriggerControl control : playerTriggerControls.getArray()) {
+            if (control.getPlayerId() == defenderId) control.fireBreachEvent(TargetType.PLAYER_DUNGEON_BREACHED);
+        }
+        // Defender actions may change conditions observed by the attacker.
+        for (PlayerTriggerControl control : playerTriggerControls.getArray()) {
+            if (control.getPlayerId() == attackerId) control.fireBreachEvent(TargetType.PLAYER_ENEMY_BREACHED);
+        }
+    }
+
     private final SafeArrayList<PlayerTriggerControl> playerTriggerControls = new SafeArrayList<>(PlayerTriggerControl.class);
 
     public PlayerTriggerLogicController(final IGameController gameController, final ILevelInfo levelInfo, final IGameTimer gameTimer, final IMapController mapController,
             final ICreaturesController creaturesController, final PlayerService playerService) {
+        this.mapController = mapController;
         Map<Short, Player> players = levelInfo.getLevelData().getPlayers();
         for (Keeper keeper : levelInfo.getPlayers().values()) {
             int triggerId = players.get(keeper.getId()).getTriggerId();
@@ -52,12 +68,12 @@ public final class PlayerTriggerLogicController implements IGameLogicUpdatable {
 
     @Override
     public void start() {
-
+        mapController.addBreachListener(breachListener);
     }
 
     @Override
     public void stop() {
-
+        mapController.removeBreachListener(breachListener);
     }
 
     @Override

@@ -29,6 +29,7 @@ import toniarts.openkeeper.game.controller.room.AbstractRoomController.ObjectTyp
 import toniarts.openkeeper.game.controller.room.IRoomController;
 import toniarts.openkeeper.game.data.Keeper;
 import toniarts.openkeeper.game.listener.MapListener;
+import toniarts.openkeeper.game.listener.DungeonBreachListener;
 import toniarts.openkeeper.game.listener.RoomListener;
 import toniarts.openkeeper.game.map.IMapData;
 import toniarts.openkeeper.game.map.IMapInformation;
@@ -70,6 +71,7 @@ public final class MapController extends Container implements IMapController {
     private final ILevelInfo levelInfo;
 
     private final Map<EntityId, IRoomController> roomControllers = new HashMap<>();
+    private final SafeArrayList<DungeonBreachListener> breachListeners = new SafeArrayList<>(DungeonBreachListener.class);
     private final SafeArrayList<MapListener> mapListeners = new SafeArrayList<>(MapListener.class);
     private final Map<Short, SafeArrayList<RoomListener>> roomListeners = new HashMap<>();
 
@@ -199,6 +201,16 @@ public final class MapController extends Container implements IMapController {
     @Override
     public IMapData getMapData() {
         return mapData;
+    }
+
+    @Override
+    public void addBreachListener(DungeonBreachListener listener) {
+        if (!breachListeners.contains(listener)) breachListeners.add(listener);
+    }
+
+    @Override
+    public void removeBreachListener(DungeonBreachListener listener) {
+        breachListeners.remove(listener);
     }
 
     @Override
@@ -540,6 +552,16 @@ public final class MapController extends Container implements IMapController {
 //                        WorldUtils.pointToVector3f(point).addLocal(0, MapViewController.FLOOR_HEIGHT, 0),
 //                        terrain.getDestroyedEffectId(), false);
 //            }
+            short previousOwner = tile.getOwnerId();
+            boolean breached = previousOwner != playerId
+                    && terrain.getFlags().contains(Terrain.TerrainFlag.SOLID)
+                    && terrain.getFlags().contains(Terrain.TerrainFlag.OWNABLE)
+                    && terrain.getTerrainId() != terrain.getDestroyedTypeTerrainId();
+            if (breached) {
+                for (DungeonBreachListener listener : breachListeners.getArray()) {
+                    listener.onDungeonBreached(previousOwner, playerId);
+                }
+            }
             changeTerrain(tile, terrain.getDestroyedTypeTerrainId());
 
 //            updateRoomWalls(tile);

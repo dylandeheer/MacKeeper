@@ -34,6 +34,7 @@ import toniarts.openkeeper.game.data.ActionPoint;
 import toniarts.openkeeper.game.data.Keeper;
 import toniarts.openkeeper.game.state.session.PlayerService;
 import toniarts.openkeeper.game.trigger.TriggerActionData;
+import toniarts.openkeeper.game.trigger.TriggerData;
 import toniarts.openkeeper.game.trigger.TriggerControl;
 import toniarts.openkeeper.game.trigger.TriggerGenericData;
 import toniarts.openkeeper.tools.convert.ConversionUtils;
@@ -87,6 +88,36 @@ public class PlayerTriggerControl extends TriggerControl {
 
     public short getPlayerId() {
         return playerId;
+    }
+
+    /**
+     * DKII dispatches these events only to matching root conditions. The encoded
+     * player byte is unused; the affected player is selected by the event source.
+     * Evaluate descendants now, so an event cannot unlock a future condition.
+     */
+    public void fireBreachEvent(TriggerGeneric.TargetType type) {
+        if (type != TriggerGeneric.TargetType.PLAYER_DUNGEON_BREACHED
+                && type != TriggerGeneric.TargetType.PLAYER_ENEMY_BREACHED) {
+            throw new IllegalArgumentException("Not a breach event: " + type);
+        }
+        for (TriggerData child : root.getChildren().getArray()) {
+            if (child instanceof TriggerGenericData condition && condition.getType() == type) {
+                executeEventChildren(condition);
+            }
+        }
+    }
+
+    private void executeEventChildren(TriggerGenericData condition) {
+        condition.subRepeatTimes();
+        for (TriggerData child : condition.getChildren().getArray()) {
+            if (child instanceof TriggerActionData action) {
+                doAction(action);
+                if (!condition.isRepeateable()) condition.detachChild(action);
+            } else if (child instanceof TriggerGenericData nested && isActive(nested)) {
+                executeEventChildren(nested);
+            }
+        }
+        if (condition.getQuantity() == 0) condition.detachFromParent();
     }
 
     @Override
@@ -227,8 +258,8 @@ public class PlayerTriggerControl extends TriggerControl {
                 return killed != null && killed.isDestroyed() && killed.getKilledByPlayerId() != 0
                         && (otherPlayerId == 0 || otherPlayerId == killed.getKilledByPlayerId());
             case PLAYER_DUNGEON_BREACHED:
-                return false;
             case PLAYER_ENEMY_BREACHED:
+                // Dispatched synchronously by fireBreachEvent; never a polling predicate.
                 return false;
 
             case PLAYER_CREATURE_PICKED_UP:
