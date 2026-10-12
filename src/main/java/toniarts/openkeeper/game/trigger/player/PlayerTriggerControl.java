@@ -121,9 +121,16 @@ public class PlayerTriggerControl extends TriggerControl {
                 value = trigger.getUserData("value", int.class);
                 break;
             case PLAYER_CREATURES_KILLED:
-                return false;
+                short killerPlayerId = trigger.getUserData("killerPlayerId", short.class);
+                Keeper killer = killerPlayerId == 0 ? null : getPlayer(killerPlayerId);
+                target = killerPlayerId == 0 ? getPlayer().getCreaturesLost()
+                        : killer == null ? 0 : killer.getCreatureKills(playerId);
+                value = trigger.getUserData("value", int.class);
+                break;
             case PLAYER_KILLS_CREATURES:
-                return false;
+                target = getPlayer().getCreatureKills(trigger.getUserData("victimPlayerId", short.class));
+                value = trigger.getUserData("value", int.class);
+                break;
 
             case PLAYER_ROOM_SLABS:
                 short roomId = trigger.getUserData("roomId", short.class);

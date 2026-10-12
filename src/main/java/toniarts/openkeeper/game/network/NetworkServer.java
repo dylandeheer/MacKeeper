@@ -175,6 +175,7 @@ public final class NetworkServer {
             Serializer.registerClass(CreatureTortured.class, new FieldSerializer());
             Serializer.registerClass(CreatureViewState.class, new FieldSerializer());
             Serializer.registerClass(Damage.class, new FieldSerializer());
+            Serializer.registerClass(toniarts.openkeeper.game.component.LastDamageSource.class, new FieldSerializer());
             Serializer.registerClass(Death.class, new FieldSerializer());
             Serializer.registerClass(Decay.class, new FieldSerializer());
             Serializer.registerClass(DoorComponent.class, new FieldSerializer());

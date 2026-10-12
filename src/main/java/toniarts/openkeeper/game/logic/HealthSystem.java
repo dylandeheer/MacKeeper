@@ -38,6 +38,7 @@ import toniarts.openkeeper.game.component.CreatureMood;
 import toniarts.openkeeper.game.component.CreatureRecuperating;
 import toniarts.openkeeper.game.component.CreatureTortured;
 import toniarts.openkeeper.game.component.Damage;
+import toniarts.openkeeper.game.component.LastDamageSource;
 import toniarts.openkeeper.game.component.Death;
 import toniarts.openkeeper.game.component.Health;
 import toniarts.openkeeper.game.component.Interaction;
@@ -190,6 +191,7 @@ public final class HealthSystem extends GameTimeCounter {
         // Death or destruction!!!!
         // No body, just vanish from the world
         if (!isLeaveDeadBody(entityId)) {
+            recordCreatureDeath(entityId);
             entityPositionLookup.getEntityController(entityId).remove();
             return;
         }
@@ -211,6 +213,7 @@ public final class HealthSystem extends GameTimeCounter {
             Owner owner = entityData.getComponent(entityId, Owner.class);
             Short creatureId = getRoomCreatureId(entityId);
             if (creatureId != null && !damageEntities.containsId(entityId) && canRiseAsSkeleton(owner, creatureId)) {
+                recordCreatureDeath(entityId);
                 creaturesController.turnCreatureIntoAnother(entityId, owner.controlId, creatureId);
                 return;
             }
@@ -286,6 +289,9 @@ public final class HealthSystem extends GameTimeCounter {
         if (entity != null) {
             Damage damage = entity.get(Damage.class);
             delta -= damage.damage;
+            if (damage.damage > 0) {
+                entityData.setComponent(entityId, new LastDamageSource(damage.sourcePlayerId));
+            }
 
             // Remove the damage
             entityData.removeComponent(entityId, Damage.class);
@@ -353,7 +359,22 @@ public final class HealthSystem extends GameTimeCounter {
         return delta;
     }
 
+    private void recordCreatureDeath(EntityId entityId) {
+        CreatureComponent creature = entityData.getComponent(entityId, CreatureComponent.class);
+        Owner owner = entityData.getComponent(entityId, Owner.class);
+        if (creature == null || owner == null || entityData.getComponent(entityId, Health.class) == null) return;
+        IPlayerController victim = playerControllersById.get(owner.ownerId);
+        if (victim != null) victim.getKeeper().recordCreatureLoss();
+        LastDamageSource source = entityData.getComponent(entityId, LastDamageSource.class);
+        IPlayerController killer = source == null || source.playerId == 0 ? null : playerControllersById.get(source.playerId);
+        if (killer != null) {
+            boolean hero = levelInfo.getLevelData().getCreature(creature.creatureId).getFlags().contains(Creature.CreatureFlag.IS_GOOD);
+            killer.getKeeper().recordCreatureKill(owner.ownerId, hero);
+        }
+    }
+
     private void processDeath(EntityId entityId) {
+        recordCreatureDeath(entityId);
         entityData.removeComponent(entityId, Health.class);
         entityData.removeComponent(entityId, CreatureAi.class);
         entityData.removeComponent(entityId, ChickenAi.class);

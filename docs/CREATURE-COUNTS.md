@@ -14,7 +14,7 @@ MacKeeper derives mood states from its existing independent anger counters and a
 
 ## Verification
 
-Five new asset-free regression tests cover level boundaries, above-threshold levels, all comparison operators, workers, species filters, other owners, missing components, mood thresholds, ownership transfer, removal and one-time child action traversal. The full suite passes **195 tests**.
+Five new asset-free regression tests cover level boundaries, above-threshold levels, all comparison operators, workers, species filters, other owners, missing components, mood thresholds, ownership transfer, removal and one-time child action traversal. The full suite passes **208 tests**.
 
 The owned-data audit parses all **66 maps**, resolves each count condition to its player root, and exercises all **five authored conditions** with production creature spawning, level-up and count logic:
 
@@ -34,4 +34,4 @@ With JDK 25 configured:
 scripts/verify-creature-counts.sh "/path/to/Dungeon Keeper II"
 ```
 
-The audit isolates these conditions from sibling mission prerequisites. It does not establish completed missions, audible speech, complete mood behavior, live multiplayer transport, or saved-state restoration. Kill statistics, breach events and other unfinished campaign dependencies remain separate work.
+The audit isolates these conditions from sibling mission prerequisites. It does not establish completed missions, audible speech, complete mood behavior, live multiplayer transport, or saved-state restoration. Kill statistics now have a separate implementation and audit in [CREATURE-KILLS.md](CREATURE-KILLS.md). Breach events and other unfinished campaign dependencies remain separate work.

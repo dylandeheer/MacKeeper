@@ -2454,11 +2454,17 @@ public final class KwdFile implements IKwdFile, IKwdMap {
                             break;
 
                         case PLAYER_CREATURES_KILLED:
+                            ((TriggerGeneric) trigger).setTargetValueComparison(reader.readByteAsEnum(TriggerGeneric.ComparisonType.class));
+                            reader.skipBytes(2);
+                            trigger.setUserData("killerPlayerId", reader.readUnsignedByte()); // 0 = All losses
+                            trigger.setUserData("value", reader.readUnsignedInteger());
+                            break;
+
                         case PLAYER_KILLS_CREATURES:
                             ((TriggerGeneric) trigger).setTargetValueComparison(reader.readByteAsEnum(TriggerGeneric.ComparisonType.class));
-                            trigger.setUserData("targetId", reader.readUnsignedByte()); // playerId
-                            trigger.setUserData("flag", reader.readUnsignedByte()); // 0x1 = Value, !0x1 = Player
-                            trigger.setUserData("playerId", reader.readUnsignedByte());
+                            reader.skipBytes(1);
+                            trigger.setUserData("victimPlayerId", reader.readUnsignedByte()); // 0 = Non-hero enemies
+                            reader.skipBytes(1);
                             trigger.setUserData("value", reader.readUnsignedInteger());
                             break;
 

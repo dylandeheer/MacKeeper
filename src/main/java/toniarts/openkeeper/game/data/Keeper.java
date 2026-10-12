@@ -61,6 +61,10 @@ public final class Keeper implements Comparable<Keeper>, IIndexable, Savable {
     private short id;
     private boolean destroyed = false;
     private short killedByPlayerId;
+    private long creaturesLost;
+    private long enemyCreaturesKilled;
+    private long heroesKilled;
+    private long[] creatureKillsByPlayer = new long[256];
     private Set<Short> allies = HashSet.newHashSet(4);
 
     public Keeper() {
@@ -144,6 +148,26 @@ public final class Keeper implements Comparable<Keeper>, IIndexable, Savable {
     }
 
     public short getKilledByPlayerId() { return killedByPlayerId; }
+
+    public long getCreaturesLost() { return creaturesLost; }
+
+    /** Native wildcard kill queries count non-hero enemies; filtered queries count every species. */
+    public long getCreatureKills(short victimPlayerId) {
+        return victimPlayerId == 0 ? enemyCreaturesKilled : creatureKillsByPlayer[victimPlayerId];
+    }
+
+    public long getHeroesKilled() { return heroesKilled; }
+
+    public void recordCreatureLoss() { creaturesLost++; }
+
+    public void recordCreatureKill(short victimPlayerId, boolean hero) {
+        if (victimPlayerId < 0 || victimPlayerId >= creatureKillsByPlayer.length) {
+            throw new IllegalArgumentException("Invalid victim player ID: " + victimPlayerId);
+        }
+        creatureKillsByPlayer[victimPlayerId]++;
+        if (hero) heroesKilled++;
+        else if (victimPlayerId != id) enemyCreaturesKilled++;
+    }
 
     public AIType getAiType() {
         return aiType;
@@ -304,6 +328,10 @@ public final class Keeper implements Comparable<Keeper>, IIndexable, Savable {
         out.write(destroyed, "destroyed", false);
         out.write(killedByPlayerId, "killedByPlayerId", (short) 0);
         out.write(toPrimitiveShortArray(allies), "allies", new short[0]);
+        out.write(creaturesLost, "creaturesLost", 0L);
+        out.write(enemyCreaturesKilled, "enemyCreaturesKilled", 0L);
+        out.write(heroesKilled, "heroesKilled", 0L);
+        out.write(creatureKillsByPlayer, "creatureKillsByPlayer", new long[256]);
     }
 
     @Override
@@ -332,6 +360,17 @@ public final class Keeper implements Comparable<Keeper>, IIndexable, Savable {
         destroyed = in.readBoolean("destroyed", destroyed);
         killedByPlayerId = destroyed ? in.readShort("killedByPlayerId", (short) 0) : 0;
         allies = new HashSet<>(toReferenceList(in.readShortArray("allies", new short[0])));
+        creaturesLost = in.readLong("creaturesLost", 0L);
+        enemyCreaturesKilled = in.readLong("enemyCreaturesKilled", 0L);
+        heroesKilled = in.readLong("heroesKilled", 0L);
+        creatureKillsByPlayer = in.readLongArray("creatureKillsByPlayer", new long[256]);
+        if (creaturesLost < 0 || enemyCreaturesKilled < 0 || heroesKilled < 0
+                || creatureKillsByPlayer == null || creatureKillsByPlayer.length != 256) {
+            throw new IOException("Invalid creature combat statistics");
+        }
+        for (long count : creatureKillsByPlayer) {
+            if (count < 0) throw new IOException("Invalid creature kill count");
+        }
     }
 
     private static short[] toPrimitiveShortArray(Collection<Short> list) {
