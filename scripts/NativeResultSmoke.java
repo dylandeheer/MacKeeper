@@ -25,7 +25,7 @@ class NativeResultSmoke {
   if(!successful)throw new AssertionError("Native result flow did not complete");
  }
  static class Probe extends AbstractAppState {
-  Main app;AppStateManager states;long began=System.nanoTime();float delay;int stage;double expectedTime;toniarts.openkeeper.game.state.session.PlayerService service;ScreenshotAppState capture;
+  Main app;AppStateManager states;long began=System.nanoTime();float delay;int stage;double expectedTime;toniarts.openkeeper.game.state.session.PlayerService service;ScreenshotAppState capture;GameLoopManager cameraLoop;com.jme3.math.Vector3f stationaryPosition;
   @Override public void initialize(AppStateManager states,Application application){super.initialize(states,application);this.states=states;app=(Main)application;capture=new ScreenshotAppState(Path.of("work").toAbsolutePath()+"/","result-flow-"+win+"-"+continuePlaying);capture.setIsNumbered(false);states.attach(capture);}
   @Override public void update(float tpf){try{
    if((System.nanoTime()-began)/1e9>180)throw new AssertionError("Timed out at stage "+stage);
@@ -34,12 +34,33 @@ class NativeResultSmoke {
     if((delay+=tpf)<4)return;
     var server=states.getState(GameServerState.class);var field=GameServerState.class.getDeclaredField("game");field.setAccessible(true);var loop=(GameLoopManager)field.get(server);
     service=(toniarts.openkeeper.game.state.session.PlayerService)states.getState(GameClientState.class).getGameClientService();
-    if(continuePlaying){
-     service.doTransition((short)201,app.getCamera().getLocation().clone(),(short)3);
-     if(!service.isInTransition())throw new AssertionError("Test transition never started");
-    }
-    if(continuePlaying){stage=5;delay=0;return;}
+    if(continuePlaying){cameraLoop=loop;loop.pause();stage=6;delay=0;return;}
     finishGame(loop);
+   }
+   if(stage==6&&player.isPaused()){
+    service.doTransition((short)250,app.getCamera().getLocation().clone(),(short)3);
+    stage=7;delay=0;
+   }
+   if(stage==7&&(delay+=tpf)>.25f){
+    if(service.isInTransition()||!player.isTransitionEnd())throw new AssertionError("Single-frame sweep did not complete");
+    System.out.println("FLOW single-frame EnginePath250 completed");
+    service.doTransition((short)67,app.getCamera().getLocation().clone(),(short)3);
+    stage=8;delay=0;
+   }
+   if(stage==8){
+    delay+=tpf;
+    if(delay>.25f&&stationaryPosition==null)stationaryPosition=app.getCamera().getLocation().clone();
+    if(delay>.3f&&delay<5&&(!service.isInTransition()||stationaryPosition.distance(app.getCamera().getLocation())>.001f))throw new AssertionError("Stationary path moved or ended early");
+    if(delay>6){
+     if(service.isInTransition()||!player.isTransitionEnd())throw new AssertionError("Stationary sweep did not complete");
+     System.out.println("FLOW stationary EnginePath67 held its position and completed");
+     cameraLoop.resume();stage=9;
+    }
+   }
+   if(stage==9&&!player.isPaused()){
+    service.doTransition((short)201,app.getCamera().getLocation().clone(),(short)3);
+    if(!service.isInTransition())throw new AssertionError("Test transition never started");
+    stage=5;delay=0;
    }
    if(stage==5&&(delay+=tpf)>.5f){
     if(!service.isInTransition())throw new AssertionError("Live camera transition did not remain active before result");

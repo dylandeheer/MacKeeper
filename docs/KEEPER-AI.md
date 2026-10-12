@@ -22,7 +22,7 @@ The controller currently constructs the first missing instance of each eligible 
 
 ## Evidence
 
-Seventeen synthetic economy tests cover campaign/lobby identity, human/heartless exclusion, discovered build order and prices, decision timing, excavation/claim sequencing, enemy/impenetrable restrictions, alternate sites around blockers, pending-plan revalidation, bounded prospecting, income outside construction bounds, perception eligibility/range, closed-door perception and routes to gold. The full suite contains 183 tests. Mocked decision tests are separate from production-world integration.
+Seventeen synthetic economy tests cover campaign/lobby identity, human/heartless exclusion, discovered build order and prices, decision timing, excavation/claim sequencing, enemy/impenetrable restrictions, alternate sites around blockers, pending-plan revalidation, bounded prospecting, income outside construction bounds, perception eligibility/range, closed-door perception and routes to gold. The full suite contains 190 tests. Mocked decision tests are separate from production-world integration.
 
 Run `scripts/verify-keeper-profiles.sh` with JDK 25 and a locally owned game-data path. All 66 shipped maps pass: 142 keeper slots include 23 authored AI keepers across 10 maps. This validates identity and profile references, not original AI equivalence.
 
