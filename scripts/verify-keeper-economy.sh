@@ -8,4 +8,6 @@ game_data_dir=$(cd "$1" && pwd)
 cd "$(dirname "$0")/.."
 : "${JAVA_HOME:?Set JAVA_HOME to a JDK 25 installation}"
 ./gradlew classes installDist --console=plain >&2
-"$JAVA_HOME/bin/java" -Xmx2g -cp 'build/classes/java/main:build/install/MacKeeper/lib/*' scripts/KeeperEconomySmoke.java "$game_data_dir"
+for seed in 0 1; do
+  "$JAVA_HOME/bin/java" -Xmx2g -cp 'build/classes/java/main:build/install/MacKeeper/lib/*' scripts/KeeperEconomySmoke.java "$game_data_dir" "$seed"
+done

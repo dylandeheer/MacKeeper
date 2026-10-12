@@ -153,7 +153,7 @@ public final class GameController implements IGameLogicUpdatable, IGameControlle
                 gameWorldController.getMapController(), gameWorldController.getCreaturesController(),
                 playerService));
         controllers.add(new toniarts.openkeeper.game.logic.keeper.KeeperEconomySystem(
-                gameWorldController, levelInfo.kwdFile, playerControllers.values()));
+                gameWorldController, levelInfo.kwdFile, playerControllers.values(), entityData));
         controllers.add(gameTimer);
         controllers.add(positionSystem);
 

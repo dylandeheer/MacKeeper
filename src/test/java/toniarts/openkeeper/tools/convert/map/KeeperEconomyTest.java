@@ -2,6 +2,9 @@
 package toniarts.openkeeper.tools.convert.map;
 
 import com.jme3.math.Vector2f;
+import com.jme3.math.Vector3f;
+import com.simsilica.es.EntityId;
+import toniarts.openkeeper.game.component.*;
 import java.util.*;
 import org.junit.jupiter.api.Test;
 import toniarts.openkeeper.game.controller.*;
@@ -111,6 +114,97 @@ class KeeperEconomyTest {
         f.system.processTick(1); assertEquals(List.of((short)2), f.built);
     }
 
+    @Test void prospectingUsesExposedEarthWithoutReadingHiddenGoldTargets() {
+        Fixture f = new Fixture(); f.keeper.setGold(0); f.keeper.getAvailableRooms().clear();
+        f.ai.setMineGoldUntilGoldHeldIsGreaterThan(1000);
+        f.gold[15][4]=10000;
+        f.system.processTick(1);
+        assertEquals(1,f.selected.size());
+        Point first=f.selected.iterator().next();
+        assertTrue((first.x==1 || first.x==9 || first.y==1 || first.y==13));
+        assertFalse(f.selected.contains(new Point(15,4)));
+        for(int i=0;i<20;i++)f.system.processTick(1);
+        assertEquals(4,f.selected.size());
+        f.terrain[first.x][first.y]=f.floor;f.owners[first.x][first.y]=4;f.selected.remove(first);
+        f.system.processTick(1);
+        assertEquals(4,f.selected.size());
+    }
+
+    @Test void constructionBoundsDoNotPreventMiningOutsideTheBuildRectangle() {
+        Fixture f = new Fixture(); f.keeper.setGold(0); f.keeper.getAvailableRooms().clear();
+        f.ai.setBuildAreaStartX(2);f.ai.setBuildAreaEndX(8);
+        f.ai.setBuildAreaStartY(2);f.ai.setBuildAreaEndY(12);
+        f.gold[9][4]=500;
+        f.system.processTick(1);
+        assertEquals(Set.of(new Point(9,4)),f.selected);
+    }
+
+    @Test void prospectingNeverTagsEnemyWallsOrImpenetrableTerrain() {
+        Fixture f = new Fixture();f.keeper.setGold(0);f.keeper.getAvailableRooms().clear();
+        for(int x=0;x<20;x++)for(int y=0;y<20;y++)if(f.owners[x][y]==2) {
+            if(x<4) f.owners[x][y]=5; else f.terrain[x][y]=f.rock;
+        }
+        for(int i=0;i<5;i++)f.system.processTick(1);
+        assertTrue(f.selected.isEmpty());
+    }
+
+    @Test void perceivedGoldGuidesWorkersThroughEarthOneFrontierStepAtATime() {
+        Fixture f = new Fixture(); f.preparePerceivedGold(10);
+        f.system.processTick(1);
+        assertEquals(Set.of(new Point(9,4)),f.selected);
+        f.terrain[9][4]=f.floor; f.owners[9][4]=4; f.selected.clear();
+        f.system.processTick(1);
+        assertEquals(Set.of(new Point(10,4)),f.selected);
+    }
+
+    @Test void perceptionRequiresRevealFlagAndStrictRange() {
+        Fixture noFlag=new Fixture(); noFlag.preparePerceivedGold(10);
+        noFlag.earth.getFlags().remove(Terrain.TerrainFlag.REVEAL_THROUGH_FOG_OF_WAR);
+        noFlag.system.processTick(1);
+        assertEquals(Set.of(new Point(4,1)),noFlag.selected);
+        Fixture outside=new Fixture(); outside.preparePerceivedGold(8);
+        outside.system.processTick(1);
+        assertEquals(Set.of(new Point(4,1)),outside.selected);
+    }
+
+    @Test void captiveForeignAndDeadCreaturesCannotRevealIncomeTargets() {
+        for(int state=0;state<4;state++) {
+            Fixture f=new Fixture(); EntityId watcher=f.preparePerceivedGold(10);
+            switch(state) {
+                case 0 -> f.data.setComponent(watcher,new Owner((short)5,(short)5));
+                case 1 -> f.data.setComponent(watcher,new Owner((short)4,(short)5));
+                case 2 -> f.data.setComponent(watcher,new Health(0,100));
+                case 3 -> f.data.setComponent(watcher,new CreatureImprisoned());
+            }
+            f.system.processTick(1);
+            assertEquals(Set.of(new Point(4,1)),f.selected);
+        }
+    }
+
+    @Test void creatureOnClosedDoorCannotRevealGoldUntilDoorOpens() {
+        Fixture f=new Fixture();f.preparePerceivedGold(10);
+        EntityId door=f.data.createEntity();
+        f.data.setComponents(door,new DoorComponent(),new DoorViewState((short)1,false,false,false),
+                new Position(0,new Vector3f(4,0,4)));
+        f.system.processTick(1);
+        assertEquals(Set.of(new Point(4,1)),f.selected);
+        f.selected.clear();
+        f.data.setComponent(door,new DoorViewState((short)1,false,false,true));
+        f.system.processTick(1);
+        assertEquals(Set.of(new Point(9,4)),f.selected);
+    }
+
+    @Test void incomeRoutingCannotPassThroughEnemyLandOrImpenetrableWalls() {
+        for(boolean enemy:List.of(true,false)) {
+            Fixture f=new Fixture();f.preparePerceivedGold(10);
+            for(int y=0;y<20;y++) {
+                if(enemy) f.owners[9][y]=5; else f.terrain[9][y]=f.rock;
+            }
+            f.system.processTick(1);
+            assertEquals(Set.of(new Point(4,1)),f.selected);
+        }
+    }
+
     private static final class Fixture {
         final Terrain floor=new Terrain(), earth=new Terrain(), rock=new Terrain(), roomTile=new Terrain();
         final Terrain[][] terrain=new Terrain[20][20];
@@ -119,6 +213,8 @@ class KeeperEconomyTest {
         final Set<Point> selected=new HashSet<>();
         final Set<Point> blocked=new HashSet<>();
         final AI ai=new AI();
+        final com.simsilica.es.base.DefaultEntityData data = new com.simsilica.es.base.DefaultEntityData();
+        final Creature scout = new Creature();
         final Keeper keeper;
         final Room first=room((short)1),second=room((short)2);
         final PlayerRoomControl rooms;
@@ -160,6 +256,7 @@ class KeeperEconomyTest {
                 default->throw new AssertionError(name);
             });
             IKwdFile level=proxy(IKwdFile.class,(name,args)->switch(name){
+                case "getCreature"->scout;
                 case "getRoomById"->((Number)args[0]).intValue()==1?first:second;
                 default->throw new AssertionError(name);
             });
@@ -181,7 +278,17 @@ class KeeperEconomyTest {
             IPlayerController player=proxy(IPlayerController.class,(name,args)->switch(name){
                 case "getKeeper"->keeper;case "getRoomControl"->rooms;default->throw new AssertionError(name);
             });
-            system=new KeeperEconomySystem(world,level,List.of(player));
+            system=new KeeperEconomySystem(world,level,List.of(player),this.data);
+        }
+        EntityId preparePerceivedGold(float range) {
+            keeper.setGold(0); keeper.getAvailableRooms().clear();
+            scout.getAttributes().setPerceptionRange(range);
+            earth.getFlags().add(Terrain.TerrainFlag.REVEAL_THROUGH_FOG_OF_WAR);
+            gold[12][4]=1000;
+            EntityId id=data.createEntity();
+            data.setComponents(id,new CreatureComponent(),new Owner((short)4,(short)4),
+                    new Position(0,new Vector3f(4,0,4)),new Health(100,100));
+            return id;
         }
         IMapTileController tile(Point p) {
             if(p.x<0||p.y<0||p.x>=20||p.y>=20)return null;

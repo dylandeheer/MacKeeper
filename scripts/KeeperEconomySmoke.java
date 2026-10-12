@@ -13,6 +13,9 @@ import toniarts.openkeeper.utils.Point;
 /** Runs production simulation systems sequentially; no rendering, network transport or background threads. */
 class KeeperEconomySmoke {
     public static void main(String[] args) throws Exception {
+        long seed=args.length>1?Long.parseLong(args[1]):0;
+        ((java.util.Random)toniarts.openkeeper.utils.Utils.getRandom()).setSeed(seed);
+        com.jme3.math.FastMath.rand.setSeed(seed);
         String base=Path.of(args[0]).toAbsolutePath()+"/";
         var kwd=KwdFile.load(base,Path.of(base,"Data/editor/maps/TrapTime.kwd"));
         var data=new DefaultEntityData();
@@ -50,17 +53,19 @@ class KeeperEconomySmoke {
             for(var loop:loops) for(var system:loop) system.start();
             double logicAccumulator=0;
             float logicStep=1f/kwd.getGameLevel().getTicksPerSec();
-            for(int frame=0;frame<360*60;frame++) {
+            for(int frame=0;frame<720*60;frame++) {
                 logicAccumulator+=1d/60;
                 while(logicAccumulator+1e-8>=logicStep) {
                     tick(loops.getFirst(),logicStep,frame);logicAccumulator-=logicStep;
                 }
                 for(int i=1;i<loops.size();i++) tick(loops.get(i),1f/60,frame);
             }
-            require(built.getOrDefault((short)4,0)>0,"AI player4 did not build within six simulated minutes");
+            for(short owner:List.of((short)4,(short)5)) {
+                require(built.getOrDefault(owner,0)>0,"AI player"+owner+" did not build within twelve simulated minutes, seed="+seed);
+                require(game.getPlayerController(owner).getKeeper().getGoldMined()>0,"AI player"+owner+" did not deposit mined gold");
+            }
             require(built.getOrDefault((short)3,0)==0,"Human player constructed without input");
-            require(game.getPlayerController((short)4).getKeeper().getGoldMined()>0,"AI player4 did not deposit mined gold");
-            System.out.println("PASS TrapTime: constructed="+built+"; real mining, excavation, claiming and paid construction; elapsedMs="+(System.nanoTime()-started)/1000000);
+            System.out.println("PASS TrapTime seed="+seed+": constructed="+built+"; real mining, excavation, claiming and paid construction; elapsedMs="+(System.nanoTime()-started)/1000000);
         } finally {
             for(var loop:loops) for(var system:loop) system.stop();
             data.close();

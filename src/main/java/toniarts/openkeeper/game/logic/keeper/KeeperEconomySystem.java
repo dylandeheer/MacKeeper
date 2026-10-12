@@ -2,6 +2,9 @@
 package toniarts.openkeeper.game.logic.keeper;
 
 import com.jme3.math.Vector2f;
+import com.simsilica.es.EntityData;
+import toniarts.openkeeper.game.component.*;
+import toniarts.openkeeper.utils.WorldUtils;
 import java.util.*;
 import toniarts.openkeeper.game.controller.*;
 import toniarts.openkeeper.game.data.Keeper;
@@ -15,20 +18,23 @@ public final class KeeperEconomySystem implements IGameLogicUpdatable {
     private final IGameWorldController world;
     private final IMapController map;
     private final IKwdFile level;
+    private final EntityData data;
     private final List<IPlayerController> players;
     private final Map<Short, State> states = new HashMap<>();
     private static final int[][] DIRECTIONS = {{0,-1},{-1,0},{1,0},{0,1}};
 
     private static final class State {
         double elapsed;
+        final Set<Point> knownGold = new HashSet<>();
         Plan plan;
         int unchanged;
         int progress = -1;
     }
     private record Plan(short room, int x, int y, int width, int height) { }
 
-    public KeeperEconomySystem(IGameWorldController world, IKwdFile level, Collection<IPlayerController> players) {
+    public KeeperEconomySystem(IGameWorldController world, IKwdFile level, Collection<IPlayerController> players, EntityData data) {
         this.world = world;
+        this.data = data;
         this.map = world.getMapController();
         this.level = level;
         this.players = players.stream().sorted(Comparator.comparingInt(p -> p.getKeeper().getId())).toList();
@@ -71,7 +77,10 @@ public final class KeeperEconomySystem implements IGameLogicUpdatable {
         // Income can proceed while workers prepare a room or wait for its price.
         long needed = profile.getMineGoldUntilGoldHeldIsGreaterThan();
         if (state.plan != null) needed = Math.max(needed, cost(state.plan));
-        if (keeper.getGold() <= needed) selectIncomeFrontier(owner, profile, connected);
+        if (keeper.getGold() <= needed) {
+            updateKnownGold(owner, state.knownGold);
+            selectIncomeFrontier(owner, connected, keeper.getDungeonHeartLocation(), state.knownGold);
+        }
 
         if (state.plan == null) {
             for (Room room : rooms) {
@@ -181,18 +190,95 @@ public final class KeeperEconomySystem implements IGameLogicUpdatable {
         return result;
     }
 
-    private void selectIncomeFrontier(short owner, AI profile, Set<Point> connected) {
-        List<Point> frontier = new ArrayList<>();
+    private void selectIncomeFrontier(short owner, Set<Point> connected, Point heart, Set<Point> knownGold) {
+        Set<Point> frontier = new HashSet<>();
         for (Point p : connected) for (int[] d : DIRECTIONS) {
             Point candidate = new Point(p.x+d[0],p.y+d[1]);
             var tile = map.getMapData().getTile(candidate);
-            if (tile == null || !insideBuildArea(candidate,profile) || !map.isTaggable(candidate)
-                    || (tile.getOwnerId()!=0 && tile.getOwnerId()!=Player.NEUTRAL_PLAYER_ID)) continue;
-            // Only exposed deposits: do not select remote gold through unexplored solid terrain.
-            if (tile.getGold()>0) frontier.add(candidate);
+            if (tile == null || !map.isTaggable(candidate)
+                    || (tile.getOwnerId()!=0 && tile.getOwnerId()!=Player.NEUTRAL_PLAYER_ID)
+                    || !map.getTerrain(tile).getFlags().contains(Terrain.TerrainFlag.SOLID)) continue;
+            frontier.add(candidate);
         }
-        frontier.stream().distinct().sorted(Comparator.comparingInt((Point p)->p.y).thenComparingInt(p->p.x))
-                .limit(4).forEach(p->select(p,owner));
+        Comparator<Point> order = Comparator.comparingLong((Point p)->Math.abs((long)p.x-heart.x)+Math.abs((long)p.y-heart.y))
+                .thenComparingInt(p->p.y).thenComparingInt(p->p.x);
+        List<Point> deposits = frontier.stream().filter(p->map.getMapData().getTile(p).getGold()>0)
+                .sorted(order).toList();
+        if (!deposits.isEmpty()) {
+            deposits.stream().limit(4).forEach(p->select(p,owner));
+            return;
+        }
+        Point approach = findGoldApproach(owner, connected, knownGold);
+        if (approach != null) { select(approach, owner); return; }
+        // With no perceived deposit, prospect one ordinary earth tile. This uses only the
+        // current frontier, not hidden gold locations. Workers must dig and claim each step.
+        // A build rectangle limits room placement, not the search for income.
+        if (frontier.stream().filter(p->map.isSelected(p,owner)).count() >= 4) return;
+        frontier.stream().filter(p->!map.isSelected(p,owner)
+                && !map.getTerrain(map.getMapData().getTile(p)).getFlags().contains(Terrain.TerrainFlag.IMPENETRABLE))
+                .min(order).ifPresent(p->select(p,owner));
+    }
+
+    private void updateKnownGold(short owner, Set<Point> known) {
+        // Match the fog controller: a creature on a closed door contributes no perception.
+        Set<Point> closedDoors = new HashSet<>();
+        for (var id : data.findEntities(null, Position.class, DoorComponent.class, DoorViewState.class)) {
+            if (!data.getComponent(id, DoorViewState.class).open) {
+                closedDoors.add(WorldUtils.vectorToPoint(data.getComponent(id, Position.class).position));
+            }
+        }
+        for (var id : data.findEntities(null, CreatureComponent.class, Owner.class, Position.class, Health.class)) {
+            Owner ownership = data.getComponent(id, Owner.class);
+            if (ownership.ownerId != owner || ownership.controlId != owner || data.getComponent(id, Health.class).health <= 0
+                    || data.getComponent(id, Death.class) != null || data.getComponent(id, CreatureImprisoned.class) != null
+                    || data.getComponent(id, CreatureTortured.class) != null || data.getComponent(id, InHand.class) != null) continue;
+            Creature raw = level.getCreature(data.getComponent(id, CreatureComponent.class).creatureId);
+            if (raw == null) continue;
+            float range = raw.getAttributes().getPerceptionRange();
+            if (!Float.isFinite(range) || range <= 0) continue;
+            Point center = WorldUtils.vectorToPoint(data.getComponent(id, Position.class).position);
+            if (closedDoors.contains(center)) continue;
+            int radius = (int)Math.min(Math.ceil(range), Math.max(map.getMapData().getWidth(), map.getMapData().getHeight()));
+            for (int y=Math.max(0,center.y-radius);y<=Math.min(map.getMapData().getHeight()-1,center.y+radius);y++) {
+                for (int x=Math.max(0,center.x-radius);x<=Math.min(map.getMapData().getWidth()-1,center.x+radius);x++) {
+                    long dx=(long)x-center.x, dy=(long)y-center.y;
+                    if (dx*dx+dy*dy >= (double)range*range) continue;
+                    var tile=map.getMapData().getTile(x,y);
+                    if (tile.getGold()>0 && map.getTerrain(tile).getFlags().contains(Terrain.TerrainFlag.REVEAL_THROUGH_FOG_OF_WAR)) known.add(new Point(x,y));
+                }
+            }
+        }
+        known.removeIf(p->map.getMapData().getTile(p)==null || map.getMapData().getTile(p).getGold()==0);
+    }
+
+    private Point findGoldApproach(short owner, Set<Point> connected, Set<Point> knownGold) {
+        if (knownGold.isEmpty()) return null;
+        Map<Point,Point> previous = new HashMap<>();
+        ArrayDeque<Point> queue = new ArrayDeque<>();
+        connected.stream().sorted(Comparator.comparingInt((Point p)->p.y).thenComparingInt(p->p.x))
+                .forEach(p->{ previous.put(p,null); queue.add(p); });
+        while (!queue.isEmpty()) {
+            Point p=queue.removeFirst();
+            if (knownGold.contains(p)) {
+                List<Point> path = new ArrayList<>();
+                for (Point step=p;previous.get(step)!=null;step=previous.get(step)) path.add(step);
+                Collections.reverse(path);
+                for(Point step:path) if(map.isTaggable(step)) return step;
+            }
+            for (int[] d:DIRECTIONS) {
+                Point next=new Point(p.x+d[0],p.y+d[1]);
+                if(previous.containsKey(next))continue;
+                var tile=map.getMapData().getTile(next);
+                if(tile==null || (tile.getOwnerId()!=owner && tile.getOwnerId()!=0 && tile.getOwnerId()!=Player.NEUTRAL_PLAYER_ID))continue;
+                var flags=map.getTerrain(tile).getFlags();
+                if(flags.contains(Terrain.TerrainFlag.WATER)||flags.contains(Terrain.TerrainFlag.LAVA))continue;
+                if(flags.contains(Terrain.TerrainFlag.SOLID)) {
+                    if(!map.isTaggable(next) || (flags.contains(Terrain.TerrainFlag.IMPENETRABLE)&&!knownGold.contains(next)))continue;
+                } else if(flags.contains(Terrain.TerrainFlag.ROOM) || !flags.contains(Terrain.TerrainFlag.OWNABLE))continue;
+                previous.put(next,p);queue.addLast(next);
+            }
+        }
+        return null;
     }
 
     private void select(Point p, short owner) {
