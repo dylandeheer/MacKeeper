@@ -39,6 +39,7 @@ public final class EndGameState extends AbstractAppState implements RawInputList
     private Main app;
     private AppStateManager stateManager;
     private final PlayerState playerState;
+    private boolean dismissed;
 
     public EndGameState(PlayerState playerState) {
         this.playerState = playerState;
@@ -97,15 +98,19 @@ public final class EndGameState extends AbstractAppState implements RawInputList
 
     @Override
     public void onKeyEvent(KeyInputEvent evt) {
-        if (evt.isPressed()) {
+        // Consume the release before restoring controls, including the global Escape pause binding.
+        if (!evt.isPressed() && !dismissed) {
             if (evt.getKeyCode() == KeyInput.KEY_SPACE) {
+                dismissed = true;
+                evt.setConsumed();
                 stateManager.detach(this);
                 playerState.quitToDebriefing();
             } else if (evt.getKeyCode() == KeyInput.KEY_ESCAPE || evt.getKeyCode() == KeyInput.KEY_LCONTROL) {
-                playerState.setWideScreen(false);
-                playerState.setGeneralText(2901);
-                cleanup();
+                dismissed = true;
+                evt.setConsumed();
+                stateManager.detach(this);
                 playerState.setEnabled(true);
+                playerState.setWideScreen(false);
             }
         }
     }

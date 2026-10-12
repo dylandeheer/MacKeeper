@@ -44,9 +44,9 @@ class PlayerDefeatSmoke {
 
     static void exercise(String base,String name)throws Exception {
         var kwd=KwdFile.load(base,Path.of(base,"Data/editor/maps",name));
-        var data=new DefaultEntityData(); List<String> callbacks=new ArrayList<>();
+        var data=new DefaultEntityData(); List<String> callbacks=new ArrayList<>(); List<Double> callbackTimes=new ArrayList<>();
         PlayerService service=proxy(PlayerService.class,(m,a)-> {
-            if(m.getName().equals("endGame"))callbacks.add(a[1]+":"+a[0]);
+            if(m.getName().equals("endGame")){callbacks.add(a[1]+":"+a[0]);callbackTimes.add((double)a[2]);}
             return m.getReturnType()==boolean.class?false:null;
         });
         var game=new GameController(kwd,null,data,kwd.getVariables(),service);
@@ -71,6 +71,7 @@ class PlayerDefeatSmoke {
                 require(Boolean.FALSE.equals(result.getData(GameResult.ResultType.LEVEL_WON)),"Loss replaced by win");
                 game.endGame((short)4,true); game.endGame((short)4,false);
                 require(callbacks.equals(List.of("3:false","4:true")),"Results are not independent per player");
+                require(callbackTimes.equals(List.of(0d,10d)),"Authoritative result times were not delivered");
                 require(Boolean.TRUE.equals(game.getGameResult((short)4).getData(GameResult.ResultType.LEVEL_WON)),"Other player result");
                 require(game.getGameResult((short)5)==null,"Invented unfinished result");
             }

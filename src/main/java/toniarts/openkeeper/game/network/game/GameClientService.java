@@ -335,9 +335,9 @@ public final class GameClientService extends AbstractClientService
         }
 
         @Override
-        public void onGameEnded(boolean win) {
+        public void onGameEnded(boolean win, double elapsedSeconds) {
             for (GameSessionListener l : listeners.getArray()) {
-                l.onGameEnded(win);
+                l.onGameEnded(win, elapsedSeconds);
             }
         }
 

@@ -427,10 +427,10 @@ public final class GameHostedService extends AbstractHostedConnectionService imp
     }
 
     @Override
-    public void endGame(boolean win, short playerId) {
+    public void endGame(boolean win, short playerId, double elapsedSeconds) {
         for (Map.Entry<ClientInfo, GameSessionImpl> gameSession : players.entrySet()) {
             if (gameSession.getKey().getKeeper().getId() == playerId) {
-                gameSession.getValue().onGameEnded(win);
+                gameSession.getValue().onGameEnded(win, elapsedSeconds);
                 break;
             }
         }
@@ -784,8 +784,8 @@ public final class GameHostedService extends AbstractHostedConnectionService imp
         }
 
         @Override
-        public void onGameEnded(boolean win) {
-            getCallback().onGameEnded(win);
+        public void onGameEnded(boolean win, double elapsedSeconds) {
+            getCallback().onGameEnded(win, elapsedSeconds);
         }
 
     }

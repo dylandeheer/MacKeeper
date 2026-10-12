@@ -189,7 +189,7 @@ public final class MapLoaderAppState extends AbstractAppState {
         }
 
         @Override
-        public void endGame(boolean win, short playerId) {
+        public void endGame(boolean win, short playerId, double elapsedSeconds) {
             throw new UnsupportedOperationException("Not supported yet.");
         }
     }

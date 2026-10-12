@@ -107,7 +107,8 @@ public final class MainMenuState extends AbstractAppState {
      * multiplayer.
      */
     private IKwdFile debriefingLevel;
-    private boolean debriefingIsCampaign;
+    private CampaignLevel debriefingCampaignLevel;
+    private GameResult debriefingResult;
 
     /**
      * The campaign level that was just won and for which the level cutscene (mentor speech + movie)
@@ -666,19 +667,16 @@ public final class MainMenuState extends AbstractAppState {
      * @param result the game result
      * @param level the level that was just played; may be {@code null} to fall back to
      * {@link #selectedLevel}
-     * @param campaign whether the played level was a campaign level
+     * @param campaignLevel the played campaign identity, or null for other modes
      */
-    public void doDebriefing(GameResult result, IKwdFile level, boolean campaign) {
+    public void doDebriefing(GameResult result, IKwdFile level, CampaignLevel campaignLevel) {
         debriefingLevel = level != null ? level : (selectedLevel != null ? selectedLevel.getKwdMap().load() : null);
-        debriefingIsCampaign = campaign || selectedLevel instanceof CampaignLevel;
+        debriefingCampaignLevel = campaignLevel;
+        debriefingResult = result;
         pendingDebriefing = result != null;
 
-        // FIXME: GameResult has no win/lose data yet (see showDebriefing()), so for now every
-        // completed campaign level is treated as won, same as the debriefing screen does
-        boolean levelWon = true;
-        pendingCutsceneLevel = (pendingDebriefing && debriefingIsCampaign && levelWon
-                && selectedLevel instanceof CampaignLevel lvl && lvl.getType() == CampaignLevel.LevelType.Level)
-                ? lvl : null;
+        pendingCutsceneLevel = (pendingDebriefing && result.isWon() && campaignLevel != null
+                && campaignLevel.getType() == CampaignLevel.LevelType.Level) ? campaignLevel : null;
 
         setEnabled(true);
 
@@ -715,15 +713,19 @@ public final class MainMenuState extends AbstractAppState {
      * @return {@code true} if it is a campaign level debriefing
      */
     public boolean isDebriefingCampaign() {
-        return debriefingIsCampaign;
+        return debriefingCampaignLevel != null;
     }
 
-    /**
-     * Clear the level used for the debriefing screen, called when leaving the debriefing
-     */
+    public GameResult getDebriefingResult() { return debriefingResult; }
+
+    public CampaignLevel getDebriefingCampaignLevel() { return debriefingCampaignLevel; }
+
+    /** Clear the retained result and level when leaving the debriefing. */
     void clearDebriefing() {
         debriefingLevel = null;
-        debriefingIsCampaign = false;
+        debriefingCampaignLevel = null;
+        debriefingResult = null;
+        pendingCutsceneLevel = null;
     }
 
     /**
@@ -841,7 +843,7 @@ public final class MainMenuState extends AbstractAppState {
         }
 
         @Override
-        public void endGame(boolean win, short playerId) {
+        public void endGame(boolean win, short playerId, double elapsedSeconds) {
             throw new UnsupportedOperationException("Not supported yet.");
         }
 

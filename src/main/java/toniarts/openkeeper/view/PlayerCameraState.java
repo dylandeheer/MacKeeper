@@ -69,6 +69,8 @@ public final class PlayerCameraState extends AbstractPauseAwareState implements 
     private final Player player;
 
     private final Set<Integer> keys = new HashSet<>();
+    private final Set<Cinematic> transitions = new HashSet<>();
+    private boolean closing;
 
     // Extra keys
     private static final float ZOOM_MOUSE = 0.08f;
@@ -113,6 +115,7 @@ public final class PlayerCameraState extends AbstractPauseAwareState implements 
     @Override
     public void initialize(final AppStateManager stateManager, final Application app) {
         super.initialize(stateManager, app);
+        closing = false;
         this.app = (Main) app;
         this.stateManager = this.app.getStateManager();
         inputManager = this.app.getInputManager();
@@ -219,38 +222,49 @@ public final class PlayerCameraState extends AbstractPauseAwareState implements 
     }
 
     public void doTransition(int sweepFileId, final Vector3f start, final CinematicEventListener listener) {
+        PlayerState transitionPlayer = stateManager.getState(PlayerState.class);
+        GameClientState transitionSession = stateManager.getState(GameClientState.class);
+        if (closing || transitionPlayer == null || transitionSession == null) return;
         String sweepFile = "EnginePath" + sweepFileId;
 
         // Do cinematic transition
         Cinematic c = new Cinematic(app, sweepFile, start);
+        transitions.add(c);
         c.addListener(new CinematicEventListener() {
             @Override
             public void onPlay(CinematicEvent cinematic) {
+                if (closing || stateManager.getState(PlayerState.class) != transitionPlayer) return;
                 PlayerCameraState.this.cameraStore();
-                stateManager.getState(PlayerState.class).setWideScreen(true);
+                transitionPlayer.setWideScreen(true);
                 inputManager.setCursorVisible(false);
+                if (listener != null) listener.onPlay(cinematic);
             }
 
             @Override
             public void onPause(CinematicEvent cinematic) {
+                if (!closing && transitions.contains(c) && listener != null) listener.onPause(cinematic);
             }
 
             @Override
             public void onStop(CinematicEvent cinematic) {
-                stateManager.getState(PlayerState.class).setTransitionEnd(true);
-                stateManager.getState(PlayerState.class).setWideScreen(false);
-                inputManager.setCursorVisible(true);
-                PlayerCameraState.this.cameraRestore();
+                if (!transitions.remove(c) || stateManager.getState(PlayerState.class) != transitionPlayer
+                        || stateManager.getState(GameClientState.class) != transitionSession) return;
+                transitionPlayer.setTransitionEnd(true);
+                if (!closing) {
+                    transitionPlayer.setWideScreen(false);
+                    inputManager.setCursorVisible(true);
+                    PlayerCameraState.this.cameraRestore();
+                }
+                // Terminal screens detach the camera while the session can still continue.
+                // Acknowledge cancellation once, but never signal a detached/replaced session.
+                if (listener != null) listener.onStop(cinematic);
             }
         });
-        if (listener != null) {
-            c.addListener(listener);
-        }
         // GuiEvent ce = new GuiEvent(app.getNifty(), PlayerState.CINEMATIC_SCREEN_ID);
         // c.addCinematicEvent(0, ce);
         // SoundEvent se = new SoundEvent(sweepFile);
         // c.addCinematicEvent(0, se);
-        stateManager.getState(PlayerState.class).setTransitionEnd(false);
+        transitionPlayer.setTransitionEnd(false);
         stateManager.attach(c);
         c.play();
     }
@@ -265,6 +279,9 @@ public final class PlayerCameraState extends AbstractPauseAwareState implements 
 
     @Override
     public void cleanup() {
+        closing = true;
+        for (Cinematic transition : java.util.List.copyOf(transitions)) transition.cancel();
+        transitions.clear();
 
         // Unregister controls
         unregisterInput();

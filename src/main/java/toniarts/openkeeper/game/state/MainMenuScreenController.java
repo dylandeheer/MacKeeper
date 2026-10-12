@@ -379,6 +379,7 @@ public final class MainMenuScreenController implements IMainMenuScreenController
         Map<String, Runnable> handlers = new HashMap<>();
         handlers.put("selectCampaignLevel", this::showSelectCampaignLevelScreen);
         handlers.put("briefing", this::showBriefing);
+        handlers.put(SCREEN_DEBRIEFING_ID, this::populateDebriefing);
         handlers.put("hiscores", this::generateHiscoreList);
         handlers.put("optionsGraphics", this::setGraphicsSettingsToGUI);
         handlers.put("optionsControl", this::setControlSettingsToGUI);
@@ -1336,6 +1337,17 @@ public final class MainMenuScreenController implements IMainMenuScreenController
     }
 
     public void showDebriefing() {
+        Screen current = nifty.getCurrentScreen();
+        if (current != null && current.isBound() && SCREEN_DEBRIEFING_ID.equals(current.getScreenId())) {
+            populateDebriefing();
+        } else {
+            goToScreen(SCREEN_DEBRIEFING_ID);
+        }
+    }
+
+    // Nifty controls are not bound until their screen starts. Earlier setText calls are lost.
+    private void populateDebriefing() {
+        if (state.getDebriefingLevel() == null || state.getDebriefingResult() == null) return;
         Screen deScreen = nifty.getScreen(SCREEN_DEBRIEFING_ID);
 
         Label levelTitle = deScreen.findNiftyControl("dLevelTitle", Label.class);
@@ -1363,7 +1375,7 @@ public final class MainMenuScreenController implements IMainMenuScreenController
         Label specialsFound = deScreen.findNiftyControl("specialsFound", Label.class);
 
         subObjectiveImage.hide();
-        if (campaign && state.selectedLevel instanceof CampaignLevel lvl && lvl.getType().equals(LevelType.Level)) {
+        if (campaign && state.getDebriefingCampaignLevel().getType().equals(LevelType.Level)) {
             objectiveImage = AssetUtils.getCanonicalAssetKey(String.format(OBJECTIVE_IMAGE_URL, gameLevel.getName(), 1));
             try {
                 NiftyImage img = nifty.createImage(objectiveImage, true);
@@ -1375,14 +1387,15 @@ public final class MainMenuScreenController implements IMainMenuScreenController
             }
         }
 
-        // FIXME: GameResult has no data yet and also get it from the client state directly
-        boolean levelWon = true; // result.getData(GameResult.ResultType.LEVEL_WON);
+        GameResult result = state.getDebriefingResult();
+        boolean levelWon = result != null && result.isWon();
         deScreen.findNiftyControl("levelWon", Label.class).setText(levelWon ? "${menu.21}" : "${menu.22}");
-        int timeTaken = 0; //Math.round(result.getData(GameResult.ResultType.TIME_TAKEN));
+        int timeTaken = result == null ? 0 : (int)Math.min(Integer.MAX_VALUE, Math.floor(result.getElapsedSeconds()));
         deScreen.findNiftyControl("timeTaken", Label.class).setText(Utils.timeToString(timeTaken));
 
         // Play debriefing narration
-        if (campaign && state.selectedLevel instanceof CampaignLevel lvl) {
+        if (campaign && state.getDebriefingCampaignLevel().getType() == LevelType.Level) {
+            CampaignLevel lvl = state.getDebriefingCampaignLevel();
             String speech = AssetUtils.getCanonicalAssetKey(String.format(levelWon ? DEBRIEFING_WIN_SPEECH_URL : DEBRIEFING_DEFEAT_SPEECH_URL, lvl.getLevel()));
             AudioNode audioNode = new AudioNode(state.assetManager,
                     AssetUtils.getCanonicalAssetKey(speech),
@@ -1394,6 +1407,5 @@ public final class MainMenuScreenController implements IMainMenuScreenController
             state.setLevelDebriefing(audioNode);
         }
 
-        goToScreen(SCREEN_DEBRIEFING_ID);
     }
 }

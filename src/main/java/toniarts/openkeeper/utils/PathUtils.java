@@ -172,7 +172,9 @@ public final class PathUtils {
      */
     public static String getCanonicalRelativePath(String rootPath, String path) {
         try {
-            return getRealFileName(rootPath, path).substring(rootPath.length());
+            Path root = Paths.get(rootPath).toRealPath();
+            Path file = Paths.get(getRealFileName(rootPath, path)).toRealPath();
+            return root.relativize(file).toString();
         } catch (IOException e) {
             logger.log(Level.WARNING, "Can not locate path " + path + " from " + rootPath + "!", e);
             return path;

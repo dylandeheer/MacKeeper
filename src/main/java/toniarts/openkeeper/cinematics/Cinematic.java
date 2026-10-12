@@ -56,6 +56,7 @@ public final class Cinematic extends com.jme3.cinematic.Cinematic {
     private final Vector3f start;
     private final Listener audioListener;
     private CameraNode camNode;
+    private boolean cancelled;
 
     /**
      * Creates a new cinematic ready for consumption
@@ -126,11 +127,13 @@ public final class Cinematic extends com.jme3.cinematic.Cinematic {
                     executed = true;
 
                     // We never reach the final point
-                    CameraSweepDataEntry entry = cameraSweepData.getEntries().get(cameraSweepData.getEntries().size() - 1);
-                    applyCameraSweepEntry(cam, start, entry, audioListener);
+                    if (!cancelled) {
+                        CameraSweepDataEntry entry = cameraSweepData.getEntries().get(cameraSweepData.getEntries().size() - 1);
+                        applyCameraSweepEntry(cam, start, entry, audioListener);
+                    }
 
                     // Detach
-                    scene.detachChild(camNode);
+                    if (camNode != null) scene.detachChild(camNode);
 
                     // Remove us, this will cause stack over flow loop without the executed flag
                     // Dirty but, working in a way
@@ -138,6 +141,12 @@ public final class Cinematic extends com.jme3.cinematic.Cinematic {
                 }
             }
         });
+    }
+
+    /** Cancel an owned transition during teardown without moving the next screen's camera. */
+    public void cancel() {
+        cancelled = true;
+        stop();
     }
 
     @Override

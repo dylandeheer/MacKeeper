@@ -55,7 +55,7 @@ public final class Settings {
 
     public enum SecretLevelStatus {
 
-        NOT_DISCOVED, DISCOVERED, IN_PROGRESS
+        NOT_DISCOVED, DISCOVERED, IN_PROGRESS, COMPLETED
     }
 
     /**
@@ -255,12 +255,18 @@ public final class Settings {
     public static final List<Integer> ANISOTROPHIES = new ArrayList<>(Arrays.asList(new Integer[]{0, 2, 4, 8, 16}));
     
     private final AppSettings settings;
+    private final Path settingsFile;
 
     static {
         INSTANCE = new Settings(new AppSettings(true));
     }
 
     private Settings(final AppSettings settings) {
+        this(settings, USER_SETTINGS_FILE);
+    }
+
+    Settings(final AppSettings settings, Path settingsFile) {
+        this.settingsFile = settingsFile;
 
         // Init the settings
         this.settings = settings;
@@ -268,12 +274,12 @@ public final class Settings {
         settings.setResizable(true);
         settings.setVSync(true);
 
-        if (Files.exists(USER_SETTINGS_FILE)) {
-            try (InputStream in = Files.newInputStream(USER_SETTINGS_FILE);
+        if (Files.exists(settingsFile)) {
+            try (InputStream in = Files.newInputStream(settingsFile);
                     BufferedInputStream bin = new BufferedInputStream(in)) {
                 settings.load(bin);
             } catch (IOException ex) {
-                logger.log(Logger.Level.WARNING, "Settings file failed to load from " + USER_SETTINGS_FILE + "!", ex);
+                logger.log(Logger.Level.WARNING, "Settings file failed to load from " + settingsFile + "!", ex);
             }
         }
         this.settings.setFrameRate(Math.max(MAX_FPS, settings.getFrequency()));
@@ -334,7 +340,7 @@ public final class Settings {
      * @throws java.io.IOException may fail to save
      */
     public void save() throws IOException {
-        toniarts.openkeeper.utils.AppPaths.writeAtomically(USER_SETTINGS_FILE, settings::save);
+        toniarts.openkeeper.utils.AppPaths.writeAtomically(settingsFile, settings::save);
     }
 
     /**
@@ -416,7 +422,11 @@ public final class Settings {
      * @return number of attempts to a level
      */
     public int getLevelAttempts(CampaignLevel level) {
-        return (int) getSetting(Setting.LEVEL_ATTEMPTS.toString() + level.getLevel(), Setting.LEVEL_ATTEMPTS.getDefaultValue());
+        // Old versions used untyped keys. Only regular campaign levels can safely
+        // inherit those counts; MPD/secret counters otherwise collide with them.
+        int legacy = level.getType() == Level ? ((Number)getSetting(
+                Setting.LEVEL_ATTEMPTS.toString() + level.getLevel() + level.getVariation(), 0)).intValue() : 0;
+        return ((Number)getSetting(attemptsKey(level), legacy)).intValue();
     }
 
     /**
@@ -428,9 +438,9 @@ public final class Settings {
     public LevelStatus getLevelStatus(CampaignLevel level) {
         switch (level.getType()) {
             case Level:
-                return LevelStatus.valueOf((String) getSetting(Setting.LEVEL_STATUS.toString() + level.getLevel() + level.getVariation(), Setting.LEVEL_STATUS.getDefaultValue()));
+                return LevelStatus.valueOf(String.valueOf(getSetting(Setting.LEVEL_STATUS.toString() + level.getLevel() + level.getVariation(), Setting.LEVEL_STATUS.getDefaultValue())));
             case MPD:
-                return LevelStatus.valueOf((String) getSetting(Setting.MPD_LEVEL_STATUS.toString() + level.getLevel() + level.getVariation(), Setting.MPD_LEVEL_STATUS.getDefaultValue()));
+                return LevelStatus.valueOf(String.valueOf(getSetting(Setting.MPD_LEVEL_STATUS.toString() + level.getLevel() + level.getVariation(), Setting.MPD_LEVEL_STATUS.getDefaultValue())));
         }
         return null;
     }
@@ -444,7 +454,7 @@ public final class Settings {
     public SecretLevelStatus getSecredLevelStatus(CampaignLevel level) {
         switch (level.getType()) {
             case Secret:
-                return SecretLevelStatus.valueOf((String) getSetting(Setting.SECRET_LEVEL_STATUS.toString() + level.getLevel(), Setting.SECRET_LEVEL_STATUS.getDefaultValue()));
+                return SecretLevelStatus.valueOf(String.valueOf(getSetting(Setting.SECRET_LEVEL_STATUS.toString() + level.getLevel(), Setting.SECRET_LEVEL_STATUS.getDefaultValue())));
         }
         return null;
     }
@@ -455,7 +465,7 @@ public final class Settings {
      * @param level the level
      */
     public void increaseLevelAttempts(CampaignLevel level) {
-        setSetting(Setting.LEVEL_ATTEMPTS.toString() + level.getLevel() + level.getVariation(), getLevelAttempts(level) + 1);
+        setSetting(attemptsKey(level), (int)Math.min(Integer.MAX_VALUE, (long)getLevelAttempts(level) + 1));
     }
 
     /**
@@ -470,7 +480,7 @@ public final class Settings {
                 setSetting(Setting.LEVEL_STATUS.toString() + level.getLevel() + level.getVariation(), status);
                 break;
             case MPD:
-                setSetting(Setting.MPD_LEVEL_STATUS.toString() + level.getLevel(), status);
+                setSetting(Setting.MPD_LEVEL_STATUS.toString() + level.getLevel() + level.getVariation(), status);
                 break;
         }
     }
@@ -564,12 +574,32 @@ public final class Settings {
         // Reset secret levels
         for (int i = 1; i < 6; i++) {
             CampaignLevel secretLevel = new CampaignLevel(Secret, i);
-            setSetting(Setting.SECRET_LEVEL_STATUS.toString() + secretLevel, SecretLevelStatus.NOT_DISCOVED);
+            setSecredLevelStatus(secretLevel, SecretLevelStatus.NOT_DISCOVED);
+            setSetting(attemptsKey(secretLevel), 0);
+        }
+    }
+
+    private static String attemptsKey(CampaignLevel level) {
+        return "CampaignAttempts." + level.getType() + "." + level.getLevel() + level.getVariation();
+    }
+
+    /** Record one terminal campaign result. The session guards duplicate callbacks. */
+    public void recordCampaignResult(CampaignLevel level, boolean won) {
+        increaseLevelAttempts(level);
+        if (!won) return;
+        if (level.getType() == Secret) {
+            setSecredLevelStatus(level, SecretLevelStatus.COMPLETED);
+        } else {
+            setLevelStatus(level, LevelStatus.COMPLETED);
+        }
+        if (level.getType() == Level) {
+            // Replaying an earlier level must not move campaign progress backwards.
+            setSetting(Setting.LEVEL_NUMBER, Math.max(getInteger(Setting.LEVEL_NUMBER), getNextPlayableLevel()));
         }
     }
 
     private void resetCampaignLevel(CampaignLevel level) {
         setLevelStatus(level, LevelStatus.NOT_COMPLETED);
-        setSetting(Setting.LEVEL_ATTEMPTS.toString() + level, Setting.LEVEL_ATTEMPTS.getDefaultValue());
+        setSetting(attemptsKey(level), 0);
     }
 }

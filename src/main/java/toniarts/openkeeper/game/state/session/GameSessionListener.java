@@ -89,7 +89,7 @@ public interface GameSessionListener extends MapListener, PlayerListener {
      * @param win if true, the client won the game, if not, lost
      */
     @Asynchronous
-    public void onGameEnded(boolean win);
+    public void onGameEnded(boolean win, double elapsedSeconds);
 
     /**
      * The client should play a speech

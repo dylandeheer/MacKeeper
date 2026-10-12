@@ -1067,8 +1067,9 @@ public abstract class MapViewController implements ILoader<IKwdFile> {
      */
     protected void removeRoomInstances(RoomInstance... instances) {
         for (RoomInstance instance : instances) {
-            roomsNode.detachChild(roomNodes.get(instance));
-            roomNodes.remove(instance);
+            Spatial roomNode = roomNodes.remove(instance);
+            // Room metadata can exist without a rendered node (for example under fog).
+            if (roomNode != null) roomsNode.detachChild(roomNode);
 
             roomActuals.remove(instance);
             for (Point p : instance.getCoordinates()) {

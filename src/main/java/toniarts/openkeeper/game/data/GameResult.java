@@ -52,6 +52,25 @@ public final class GameResult {
 
     }
 
+    public static GameResult completed(boolean win, double elapsedSeconds) {
+        if (!Double.isFinite(elapsedSeconds) || elapsedSeconds < 0) {
+            throw new IllegalArgumentException("Invalid elapsed game time");
+        }
+        GameResult result = new GameResult();
+        result.setData(ResultType.LEVEL_WON, win);
+        result.setData(ResultType.TIME_TAKEN, elapsedSeconds);
+        return result;
+    }
+
+    public boolean isWon() {
+        return Boolean.TRUE.equals(getData(ResultType.LEVEL_WON));
+    }
+
+    public double getElapsedSeconds() {
+        Number time = getData(ResultType.TIME_TAKEN);
+        return time == null ? 0 : time.doubleValue();
+    }
+
     public <T> T getData(ResultType key) {
         if (data == null) {
             return null;

@@ -65,6 +65,7 @@ public final class PlayerState extends AbstractAppState implements PlayerListene
     private final EntityData entityData;
     @Nullable
     private final CampaignLevel campaignLevel;
+    private GameResult gameResult;
 
     private boolean paused = false;
 
@@ -395,11 +396,10 @@ public final class PlayerState extends AbstractAppState implements PlayerListene
     }
 
     public void quitToDebriefing() {
-        // TODO copy results of game from GameState
-        GameResult result = new GameResult();
+        if (gameResult == null) { quitToMainMenu(); return; }
         stateManager.getState(GameClientState.class).detach();
         stateManager.detach(this);
-        stateManager.getState(MainMenuState.class).doDebriefing(result, kwdFile, campaignLevel != null);
+        stateManager.getState(MainMenuState.class).doDebriefing(gameResult, kwdFile, campaignLevel);
     }
 
     public void quitToOS() {
@@ -497,14 +497,14 @@ public final class PlayerState extends AbstractAppState implements PlayerListene
      *
      * @param win did we win or not
      */
-    protected void endGame(boolean win) {
+    protected void endGame(boolean win, double elapsedSeconds) {
+        if (gameResult != null) return;
+        gameResult = GameResult.completed(win, elapsedSeconds);
 
-        // Save campaign progress on win
-        if (win && campaignLevel != null) {
+        // The local profile owns campaign progress; server and remote opponents do not.
+        if (campaignLevel != null) {
             Settings settings = Main.getUserSettings();
-            settings.increaseLevelAttempts(campaignLevel);
-            settings.setLevelStatus(campaignLevel, Settings.LevelStatus.COMPLETED);
-            settings.setSetting(Settings.Setting.LEVEL_NUMBER, campaignLevel.getLevel() + 1);
+            settings.recordCampaignResult(campaignLevel, win);
             try {
                 settings.save();
             } catch (IOException ex) {

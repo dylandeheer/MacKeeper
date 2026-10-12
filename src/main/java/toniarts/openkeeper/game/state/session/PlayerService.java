@@ -144,6 +144,6 @@ public interface PlayerService {
      * @param win if true, the player won the game, if not, lost
      * @param playerId the player whose game ends
      */
-    public void endGame(boolean win, short playerId);
+    public void endGame(boolean win, short playerId, double elapsedSeconds);
 
 }
