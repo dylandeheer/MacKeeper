@@ -73,6 +73,9 @@ public final class GameEntityData extends DefaultEntityData {
     /** Allocated IDs include removed entities whose references can outlive them. */
     public boolean wasAllocated(EntityId id) { return id != null && id.getId() >= 0 && id.getId() < ids.next.get(); }
 
+    /** Existing entities include empty allocations; removed IDs are only tombstones. */
+    public boolean hasEntity(EntityId id) {return id != null && alive.contains(id);}
+
     @Override public EntityId createEntity() {
         EntityId id = super.createEntity();alive.add(id);return id;
     }

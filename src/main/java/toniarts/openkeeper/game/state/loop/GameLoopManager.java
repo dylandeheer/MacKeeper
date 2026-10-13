@@ -62,12 +62,14 @@ public final class GameLoopManager {
     private final DeathSystem deathSystem;
     private final SlapSystem slapSystem;
     private final HealthSystem healthSystem;
+    private final CreatureFallSystem fallSystem;
+    private final DungeonHeartConstruction heartConstruction;
     private final CreatureTorturingSystem tortureSystem;
 
     /** Implemented system sections; not yet the complete simulation state. */
     public record SystemState(PlayerCreatureSystem.State creatures, PlayerSpellbookSystem.State spellbooks, ChickenAiSystem.SavedState chickens,
             List<toniarts.openkeeper.game.data.CreatureControlState> creatureControllers, CreatureAiSystem.SavedState creatureAi, toniarts.openkeeper.game.data.PartyRegistryState parties, toniarts.openkeeper.game.task.TaskIdentityAllocator.State taskAllocation,
-            List<toniarts.openkeeper.game.save.TileTaskSnapshots.State> tileTasks, toniarts.openkeeper.game.save.RoomTaskSnapshots.Capture roomTasks, toniarts.openkeeper.game.save.EntityTaskSnapshots.Capture entityTasks, toniarts.openkeeper.game.save.TaskGraphSnapshots.State taskGraph, toniarts.openkeeper.game.save.TaskManagerSnapshots.State taskManager, toniarts.openkeeper.game.save.ManaSnapshots.State mana, toniarts.openkeeper.game.save.ExperienceSnapshots.State experience, toniarts.openkeeper.game.save.KeeperEconomySnapshots.State economy, toniarts.openkeeper.game.save.CreatureSpawnSnapshots.State recruitment, toniarts.openkeeper.game.save.ChickenSpawnSnapshots.State chickenSpawning, toniarts.openkeeper.game.save.LifetimeSnapshots.State lifetimes, toniarts.openkeeper.game.save.SlapSnapshots.State slaps, toniarts.openkeeper.game.save.HealthSnapshots.State health) {
+            List<toniarts.openkeeper.game.save.TileTaskSnapshots.State> tileTasks, toniarts.openkeeper.game.save.RoomTaskSnapshots.Capture roomTasks, toniarts.openkeeper.game.save.EntityTaskSnapshots.Capture entityTasks, toniarts.openkeeper.game.save.TaskGraphSnapshots.State taskGraph, toniarts.openkeeper.game.save.TaskManagerSnapshots.State taskManager, toniarts.openkeeper.game.save.ManaSnapshots.State mana, toniarts.openkeeper.game.save.ExperienceSnapshots.State experience, toniarts.openkeeper.game.save.KeeperEconomySnapshots.State economy, toniarts.openkeeper.game.save.CreatureSpawnSnapshots.State recruitment, toniarts.openkeeper.game.save.ChickenSpawnSnapshots.State chickenSpawning, toniarts.openkeeper.game.save.LifetimeSnapshots.State lifetimes, toniarts.openkeeper.game.save.SlapSnapshots.State slaps, toniarts.openkeeper.game.save.HealthSnapshots.State health, toniarts.openkeeper.game.save.AnimationSnapshots.State animation) {
         public SystemState {creatureControllers = List.copyOf(creatureControllers);tileTasks = List.copyOf(tileTasks);}
     }
 
@@ -126,10 +128,10 @@ public final class GameLoopManager {
 
         // Animation systems
         final GameLogicManager gameAnimationThread = new GameLogicManager(
-                new DungeonHeartConstruction(
+                heartConstruction = new DungeonHeartConstruction(
                         entityData,
                         gameController.getLevelVariable(Variable.MiscVariable.MiscType.TIME_BEFORE_DUNGEON_HEART_CONSTRUCTION_BEGINS)),
-                new CreatureFallSystem(entityData));
+                fallSystem = new CreatureFallSystem(entityData));
         loops.add(new GameLoop(gameAnimationThread, GameLoop.INTERVAL_FPS_60, "Animation", simulationGate));
 
         // Steering
@@ -173,7 +175,7 @@ public final class GameLoopManager {
             var managerState = tasks.captureState(references);
             return capture.apply(game, new SystemState(playerCreatureSystem.captureState(), playerSpellbookSystem.captureState(),
                     chickenAiSystem.captureState(), controllers, creatureAiSystem.captureState(), creatures.captureParties(),
-                    tasks.captureAllocationState(), tasks.captureTileTaskStates(), tasks.captureRoomTaskStates(references.nodes()), tasks.captureEntityTaskStates(references.nodes()), tasks.captureTaskGraph(references), managerState, manaSystem.captureState(), experienceSystem.captureState(), ((GameController) game).captureEconomyState(), creatureSpawnSystem.captureState(), chickenSpawnSystem.captureState(), new toniarts.openkeeper.game.save.LifetimeSnapshots.State(decaySystem.captureTime(), tortureSystem.captureTime(), deathSystem.captureState()), slapSystem.captureState(), healthSystem.captureState()));
+                    tasks.captureAllocationState(), tasks.captureTileTaskStates(), tasks.captureRoomTaskStates(references.nodes()), tasks.captureEntityTaskStates(references.nodes()), tasks.captureTaskGraph(references), managerState, manaSystem.captureState(), experienceSystem.captureState(), ((GameController) game).captureEconomyState(), creatureSpawnSystem.captureState(), chickenSpawnSystem.captureState(), new toniarts.openkeeper.game.save.LifetimeSnapshots.State(decaySystem.captureTime(), tortureSystem.captureTime(), deathSystem.captureState()), slapSystem.captureState(), healthSystem.captureState(), new toniarts.openkeeper.game.save.AnimationSnapshots.State(fallSystem.captureTime(), heartConstruction.captureState())));
         });
     }
 
