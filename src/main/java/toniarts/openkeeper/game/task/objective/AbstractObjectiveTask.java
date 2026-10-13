@@ -34,8 +34,8 @@ public abstract class AbstractObjectiveTask extends AbstractTileTask implements 
 
     private final Deque<ObjectiveTask> taskQueue = new ArrayDeque<>();
 
-    public AbstractObjectiveTask(final INavigationService navigationService, final IMapController mapController, Point p, short playerId) {
-        super(navigationService, mapController, p, playerId);
+    public AbstractObjectiveTask(toniarts.openkeeper.game.task.TaskIdentityAllocator taskIds, final INavigationService navigationService, final IMapController mapController, Point p, short playerId) {
+        super(taskIds, navigationService, mapController, p, playerId);
     }
 
     @Override

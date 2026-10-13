@@ -31,8 +31,8 @@ public abstract class AbstractCapacityCriticalRoomTask extends AbstractRoomTask 
 
     protected final TaskManager taskManager;
 
-    public AbstractCapacityCriticalRoomTask(final INavigationService navigationService, final IMapController mapController, Point p, short playerId, IRoomController room, TaskManager taskManager) {
-        super(navigationService, mapController, p, playerId, room);
+    public AbstractCapacityCriticalRoomTask(toniarts.openkeeper.game.task.TaskIdentityAllocator taskIds, final INavigationService navigationService, final IMapController mapController, Point p, short playerId, IRoomController room, TaskManager taskManager) {
+        super(taskIds, navigationService, mapController, p, playerId, room);
 
         this.taskManager = taskManager;
     }

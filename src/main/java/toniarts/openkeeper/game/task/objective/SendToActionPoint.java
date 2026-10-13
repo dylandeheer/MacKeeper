@@ -33,8 +33,8 @@ public final class SendToActionPoint extends GoToTask {
     protected final ActionPoint actionPoint;
     private boolean executed = false;
 
-    public SendToActionPoint(final INavigationService navigationService, final IMapController mapController, ActionPoint actionPoint, short playerId) {
-        super(navigationService, mapController, WorldUtils.vectorToPoint(actionPoint.getCenter()), playerId);
+    public SendToActionPoint(toniarts.openkeeper.game.task.TaskIdentityAllocator taskIds, final INavigationService navigationService, final IMapController mapController, ActionPoint actionPoint, short playerId) {
+        super(taskIds, navigationService, mapController, WorldUtils.vectorToPoint(actionPoint.getCenter()), playerId);
 
         this.actionPoint = actionPoint;
     }

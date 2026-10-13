@@ -47,9 +47,9 @@ public final class GoToEat extends AbstractTask {
     private final ICreatureController creature;
 
 
-    public GoToEat(final INavigationService navigationService, final IMapController mapController, final IEntityPositionLookup entityPositionLookup,
+    public GoToEat(toniarts.openkeeper.game.task.TaskIdentityAllocator taskIds, final INavigationService navigationService, final IMapController mapController, final IEntityPositionLookup entityPositionLookup,
             EntityId target, EntityData entityData, ICreatureController creature) {
-        super(navigationService, mapController);
+        super(taskIds, navigationService, mapController);
 
         this.entityPositionLookup = entityPositionLookup;
         this.target = target;

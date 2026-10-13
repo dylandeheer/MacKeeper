@@ -38,8 +38,8 @@ public final class FetchObjectTask extends AbstractTileTask {
     private final IObjectController gameObject;
     private final TaskManager taskManager;
 
-    public FetchObjectTask(final TaskManager taskManager, final INavigationService navigationService, final IMapController mapController, final IObjectController objectController, short playerId) {
-        super(navigationService, mapController, WorldUtils.vectorToPoint(objectController.getPosition()), playerId);
+    public FetchObjectTask(toniarts.openkeeper.game.task.TaskIdentityAllocator taskIds, final TaskManager taskManager, final INavigationService navigationService, final IMapController mapController, final IObjectController objectController, short playerId) {
+        super(taskIds, navigationService, mapController, WorldUtils.vectorToPoint(objectController.getPosition()), playerId);
 
         this.taskManager = taskManager;
         this.gameObject = objectController;

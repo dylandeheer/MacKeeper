@@ -33,8 +33,8 @@ public class GoToTask extends AbstractObjectiveTask {
 
     private boolean executed = false;
 
-    public GoToTask(final INavigationService navigationService, final IMapController mapController, Point p, short playerId) {
-        super(navigationService, mapController, p, playerId);
+    public GoToTask(toniarts.openkeeper.game.task.TaskIdentityAllocator taskIds, final INavigationService navigationService, final IMapController mapController, Point p, short playerId) {
+        super(taskIds, navigationService, mapController, p, playerId);
     }
 
     @Override

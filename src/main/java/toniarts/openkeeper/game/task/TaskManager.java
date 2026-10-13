@@ -121,6 +121,20 @@ public final class TaskManager implements ITaskManager, IGameLogicUpdatable {
     private final IEntityPositionLookup entityPositionLookup;
     private final Map<Variable.MiscVariable.MiscType, Variable.MiscVariable> gameSettings;
     private final EntityData entityData;
+    private final TaskIdentityAllocator taskIds = new TaskIdentityAllocator();
+
+    public TaskIdentityAllocator.State captureAllocationState() {return taskIds.captureState();}
+
+    /** Implemented tile nodes in manager roots, captured only under the simulation boundary.
+     * Objective subgraphs, detached retry nodes and other task kinds are not yet persisted here. */
+    public List<toniarts.openkeeper.game.save.TileTaskSnapshots.State> captureTileTaskStates() {
+        var roots = Collections.newSetFromMap(new java.util.IdentityHashMap<Task, Boolean>());
+        roots.addAll(tasksByIds.values());taskQueues.values().forEach(roots::addAll);
+        roomTasks.values().forEach(entries -> roots.addAll(entries.values()));
+        return roots.stream().filter(toniarts.openkeeper.game.save.TileTaskSnapshots::supports)
+                .sorted(Comparator.comparingLong(Task::getId))
+                .map(task -> toniarts.openkeeper.game.save.TileTaskSnapshots.capture((AbstractTileTask) task)).toList();
+    }
     private final EntitySet taskEntities;
     private final EntitySet unconsciousEntities;
     private final EntitySet corpseEntities;
@@ -266,11 +280,11 @@ public final class TaskManager implements ITaskManager, IGameLogicUpdatable {
                 if (entry.getKey() == owner.ownerId) {
 
                     // Rescue
-                    task = new RescueCreatureTask(this, navigationService, mapController, creaturesController.createController(entity.getId()), entry.getKey());
+                    task = new RescueCreatureTask(taskIds, this, navigationService, mapController, creaturesController.createController(entity.getId()), entry.getKey());
                 } else if (playerControllers.get(entry.getKey()).getKeeper().isEnemy(owner.ownerId)) {
 
                     // Capture
-                    task = new CaptureEnemyCreatureTask(navigationService, mapController, creaturesController.createController(entity.getId()), entry.getKey(), this);
+                    task = new CaptureEnemyCreatureTask(taskIds, navigationService, mapController, creaturesController.createController(entity.getId()), entry.getKey(), this);
                 }
 
                 if (task == null) {
@@ -510,19 +524,19 @@ public final class TaskManager implements ITaskManager, IGameLogicUpdatable {
 
         // Dig
         if (mapController.isSelected(mapTile, playerId)) {
-            addTask(playerId, new DigTileTask(navigationService, mapController, tile, playerId));
+            addTask(playerId, new DigTileTask(taskIds, navigationService, mapController, tile, playerId));
         } // Claim wall
         else if (mapController.isClaimableWall(mapTile, terrain, playerId)) {
-            addTask(playerId, new ClaimWallTileTask(navigationService, mapController, tile, playerId));
+            addTask(playerId, new ClaimWallTileTask(taskIds, navigationService, mapController, tile, playerId));
         } // Claim
         else if (mapController.isClaimableTile(mapTile, terrain, playerId)) {
-            addTask(playerId, new ClaimTileTask(navigationService, mapController, tile, playerId));
+            addTask(playerId, new ClaimTileTask(taskIds, navigationService, mapController, tile, playerId));
         } // Repair wall
         else if (mapController.isRepairableWall(mapTile, terrain, playerId)) {
-            addTask(playerId, new RepairWallTileTask(navigationService, mapController, tile, playerId));
+            addTask(playerId, new RepairWallTileTask(taskIds, navigationService, mapController, tile, playerId));
         } // Claim room
         else if (mapController.isClaimableRoom(mapTile, terrain, playerId)) {
-            addTask(playerId, new ClaimRoomTask(navigationService, mapController, tile, playerId));
+            addTask(playerId, new ClaimRoomTask(taskIds, navigationService, mapController, tile, playerId));
         }
     }
 
@@ -569,7 +583,7 @@ public final class TaskManager implements ITaskManager, IGameLogicUpdatable {
             for (Point target : room.getRoomInstance().getCoordinates()) {
                 if (!room.isTileAccessible(null, target)) continue;
                 if (!current.equals(target) && navigationService.findPath(current, target, creature) == null) continue;
-                Task task = new CollectPayTask(navigationService, mapController,
+                Task task = new CollectPayTask(taskIds, navigationService, mapController,
                         target, creature.getOwnerId(), room, gameWorldController, entityData);
                 if (!task.isValid(creature)) continue;
                 task.assign(creature, true);
@@ -681,22 +695,22 @@ public final class TaskManager implements ITaskManager, IGameLogicUpdatable {
     private AbstractTask getRoomTask(ObjectType objectType, Point target, EntityId targetEntity, ICreatureController creature, IRoomController room) {
         switch (objectType) {
             case GOLD -> {
-                return new CarryGoldToTreasuryTask(navigationService, mapController, target, creature.getOwnerId(), room, gameWorldController);
+                return new CarryGoldToTreasuryTask(taskIds, navigationService, mapController, target, creature.getOwnerId(), room, gameWorldController);
             }
             case LAIR -> {
-                return new ClaimLair(navigationService, mapController, target, creature.getOwnerId(), room, this);
+                return new ClaimLair(taskIds, navigationService, mapController, target, creature.getOwnerId(), room, this);
             }
             case RESEARCHER -> {
-                return new Research(navigationService, mapController, target, creature.getOwnerId(), room, this, playerControllers.get(creature.getOwnerId()).getResearchControl(), objectsController);
+                return new Research(taskIds, navigationService, mapController, target, creature.getOwnerId(), room, this, playerControllers.get(creature.getOwnerId()).getResearchControl(), objectsController);
             }
             case PRISONER -> {
-                return new CarryEnemyCreatureToPrison(navigationService, mapController, target, creature.getOwnerId(), room, this, creaturesController.createController(targetEntity));
+                return new CarryEnemyCreatureToPrison(taskIds, navigationService, mapController, target, creature.getOwnerId(), room, this, creaturesController.createController(targetEntity));
             }
             case SPECIAL, SPELL_BOOK -> {
-                return new CarryObjectToStorageTask(navigationService, mapController, target, creature.getOwnerId(), room, this, objectsController.createController(targetEntity));
+                return new CarryObjectToStorageTask(taskIds, navigationService, mapController, target, creature.getOwnerId(), room, this, objectsController.createController(targetEntity));
             }
             case TRAINEE -> {
-                return new Train(navigationService, mapController, target, creature.getOwnerId(), room, this, gameWorldController, gameSettings, playerControllers.get(creature.getOwnerId()));
+                return new Train(taskIds, navigationService, mapController, target, creature.getOwnerId(), room, this, gameWorldController, gameSettings, playerControllers.get(creature.getOwnerId()));
             }
             default -> {
                 logger.log(Level.DEBUG, "No task defined for " + objectType);
@@ -723,7 +737,7 @@ public final class TaskManager implements ITaskManager, IGameLogicUpdatable {
         AbstractObjectiveTask task = null;
         switch (objective) {
             case SEND_TO_ACTION_POINT: {
-                task = new SendToActionPoint(navigationService, mapController, levelInfo.getActionPoint(creature.getObjectiveTargetActionPointId()), creature.getOwnerId());
+                task = new SendToActionPoint(taskIds, navigationService, mapController, levelInfo.getActionPoint(creature.getObjectiveTargetActionPointId()), creature.getOwnerId());
                 break;
             }
             case KILL_PLAYER: {
@@ -733,7 +747,7 @@ public final class TaskManager implements ITaskManager, IGameLogicUpdatable {
                 if (targetPlayer == null || targetPlayer.isDestroyed() || targetPlayer.getDungeonHeartLocation() == null) {
                     return false;
                 }
-                task = new KillPlayer(navigationService, mapController, levelInfo, targetPlayerId, creature);
+                task = new KillPlayer(taskIds, navigationService, mapController, levelInfo, targetPlayerId, creature);
                 break;
             }
         }
@@ -748,7 +762,7 @@ public final class TaskManager implements ITaskManager, IGameLogicUpdatable {
     }
 
     private AbstractTask getObjectTask(IObjectController gameObject, short playerId) {
-        return new FetchObjectTask(this, navigationService, mapController, gameObject, playerId);
+        return new FetchObjectTask(taskIds, this, navigationService, mapController, gameObject, playerId);
     }
 
     @Override
@@ -776,7 +790,7 @@ public final class TaskManager implements ITaskManager, IGameLogicUpdatable {
 
     @Override
     public boolean assignSleepTask(ICreatureController creature) {
-        GoToSleep task = new GoToSleep(navigationService, mapController, creature);
+        GoToSleep task = new GoToSleep(taskIds, navigationService, mapController, creature);
         if (task.isReachable(creature)) {
             task.assign(creature, true);
             tasksByIds.put(task.getId(), task);
@@ -812,7 +826,7 @@ public final class TaskManager implements ITaskManager, IGameLogicUpdatable {
         for (EntityId food : foods) {
             Point target = entityPositionLookup.getEntityLocation(food).getLocation();
             if (target == creature.getCreatureCoordinates() || navigationService.findPath(creature.getCreatureCoordinates(), target, creature) != null) {
-                GoToEat task = new GoToEat(navigationService, mapController, entityPositionLookup, food, entityData, creature);
+                GoToEat task = new GoToEat(taskIds, navigationService, mapController, entityPositionLookup, food, entityData, creature);
                 task.assign(creature, true);
                 tasksByIds.put(task.getId(), task);
                 return true;

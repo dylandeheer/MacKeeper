@@ -20,9 +20,9 @@ public final class CollectPayTask extends AbstractRoomTask {
     private final EntityData data;
     private boolean executed;
 
-    public CollectPayTask(INavigationService navigation, IMapController map, Point target, short player,
+    public CollectPayTask(toniarts.openkeeper.game.task.TaskIdentityAllocator taskIds, INavigationService navigation, IMapController map, Point target, short player,
             IRoomController room, IGameWorldController world, EntityData data) {
-        super(navigation, map, target, player, room);
+        super(taskIds, navigation, map, target, player, room);
         this.world = world;
         this.data = data;
     }

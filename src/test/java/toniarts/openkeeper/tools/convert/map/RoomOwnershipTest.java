@@ -173,7 +173,7 @@ class RoomOwnershipTest {
         assertTrue(treasury.isFullCapacity());
         EntityId id=wageCreature(500,1);
         var creature=proxy(ICreatureController.class,(name,args)->switch(name){case "getEntityId"->id;case "getOwnerId"->OLD;default->throw new AssertionError(name);});
-        var task=new toniarts.openkeeper.game.task.creature.CollectPayTask(null,map,new Point(1,1),OLD,treasury,world,data);
+        var task=new toniarts.openkeeper.game.task.creature.CollectPayTask(new toniarts.openkeeper.game.task.TaskIdentityAllocator(), null,map,new Point(1,1),OLD,treasury,world,data);
         assertTrue(task.isValid(creature));
         map.changeRoomOwner(new Point(1,1),NEW);
         assertFalse(task.isValid(creature));
@@ -249,7 +249,7 @@ class RoomOwnershipTest {
             case "getOwnerId" -> OLD;
             default -> throw new AssertionError(name);
         });
-        var task = new toniarts.openkeeper.game.task.creature.CollectPayTask(
+        var task = new toniarts.openkeeper.game.task.creature.CollectPayTask(new toniarts.openkeeper.game.task.TaskIdentityAllocator(),
                 null, map, new Point(1,1), OLD, treasury, world, data);
         assertTrue(task.isValid(creature));
         assertEquals(500, world.collectWages(id, treasury));
@@ -290,7 +290,7 @@ class RoomOwnershipTest {
 
     @Test void abandonedPaydayTaskCanBeRemovedWithoutACreature() {
         MapController map = map(false);
-        var task = new toniarts.openkeeper.game.task.creature.CollectPayTask(
+        var task = new toniarts.openkeeper.game.task.creature.CollectPayTask(new toniarts.openkeeper.game.task.TaskIdentityAllocator(),
                 null, map, new Point(1,1), OLD, treasury, world, data);
         assertFalse(task.isValid(null));
         assertTrue(task.isRemovable());
@@ -502,7 +502,7 @@ class RoomOwnershipTest {
             default -> throw new AssertionError(method);
         });
         for (short target : new short[] {OLD, 99}) {
-            KillPlayer task = new KillPlayer(null, map, level, target, hero);
+            KillPlayer task = new KillPlayer(new toniarts.openkeeper.game.task.TaskIdentityAllocator(), null, map, level, target, hero);
             assertFalse(task.isValid(hero));
             assertTrue(task.getTaskQueue().isEmpty());
             assertNull(task.getTarget(hero));

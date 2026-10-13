@@ -39,8 +39,8 @@ public final class RescueCreatureTask extends AbstractTileTask {
     private final ICreatureController creature;
     private final TaskManager taskManager;
 
-    public RescueCreatureTask(final TaskManager taskManager, final INavigationService navigationService, final IMapController mapController, ICreatureController creature, short playerId) {
-        super(navigationService, mapController, WorldUtils.vectorToPoint(creature.getPosition()), playerId);
+    public RescueCreatureTask(toniarts.openkeeper.game.task.TaskIdentityAllocator taskIds, final TaskManager taskManager, final INavigationService navigationService, final IMapController mapController, ICreatureController creature, short playerId) {
+        super(taskIds, navigationService, mapController, WorldUtils.vectorToPoint(creature.getPosition()), playerId);
         this.creature = creature;
         this.taskManager = taskManager;
     }
@@ -79,7 +79,7 @@ public final class RescueCreatureTask extends AbstractTileTask {
         this.creature.setHaulable(creature);
 
         // Assign carry to lair
-        CarryCreatureToLairTask task = new CarryCreatureToLairTask(navigationService, mapController, this.creature, playerId);
+        CarryCreatureToLairTask task = new CarryCreatureToLairTask(taskIds, navigationService, mapController, this.creature, playerId);
         taskManager.addTask(playerId, task);
         task.assign(creature, true);
     }

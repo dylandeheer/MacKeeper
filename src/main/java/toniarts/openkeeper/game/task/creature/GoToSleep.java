@@ -34,8 +34,8 @@ public final class GoToSleep extends AbstractTileTask {
     private boolean executed = false;
     private final ICreatureController creature;
 
-    public GoToSleep(final INavigationService navigationService, final IMapController mapController, ICreatureController creature) {
-        super(navigationService, mapController, creature.getLairLocation(), creature.getOwnerId());
+    public GoToSleep(toniarts.openkeeper.game.task.TaskIdentityAllocator taskIds, final INavigationService navigationService, final IMapController mapController, ICreatureController creature) {
+        super(taskIds, navigationService, mapController, creature.getLairLocation(), creature.getOwnerId());
         this.creature = creature;
     }
 

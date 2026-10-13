@@ -39,8 +39,8 @@ public final class CaptureEnemyCreatureTask extends AbstractTileTask {
     private final ICreatureController creature;
     private final ITaskManager taskManager;
 
-    public CaptureEnemyCreatureTask(final INavigationService navigationService, final IMapController mapController, ICreatureController creature, short playerId, ITaskManager taskManager) {
-        super(navigationService, mapController, WorldUtils.vectorToPoint(creature.getPosition()), playerId);
+    public CaptureEnemyCreatureTask(toniarts.openkeeper.game.task.TaskIdentityAllocator taskIds, final INavigationService navigationService, final IMapController mapController, ICreatureController creature, short playerId, ITaskManager taskManager) {
+        super(taskIds, navigationService, mapController, WorldUtils.vectorToPoint(creature.getPosition()), playerId);
         this.creature = creature;
         this.taskManager = taskManager;
     }

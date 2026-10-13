@@ -57,8 +57,9 @@ public final class GameLoopManager {
 
     /** Implemented system sections; not yet the complete simulation state. */
     public record SystemState(PlayerCreatureSystem.State creatures, PlayerSpellbookSystem.State spellbooks, ChickenAiSystem.SavedState chickens,
-            List<toniarts.openkeeper.game.data.CreatureControlState> creatureControllers, CreatureAiSystem.SavedState creatureAi, toniarts.openkeeper.game.data.PartyRegistryState parties) {
-        public SystemState {creatureControllers = List.copyOf(creatureControllers);}
+            List<toniarts.openkeeper.game.data.CreatureControlState> creatureControllers, CreatureAiSystem.SavedState creatureAi, toniarts.openkeeper.game.data.PartyRegistryState parties, toniarts.openkeeper.game.task.TaskIdentityAllocator.State taskAllocation,
+            List<toniarts.openkeeper.game.save.TileTaskSnapshots.State> tileTasks) {
+        public SystemState {creatureControllers = List.copyOf(creatureControllers);tileTasks = List.copyOf(tileTasks);}
     }
 
     /**
@@ -156,7 +157,8 @@ public final class GameLoopManager {
     /** Capture implemented system sections together with controllers and ECS. */
     public <T> T captureSnapshotWithSystems(java.util.function.BiFunction<IGameController, SystemState, T> capture) {
         return captureSnapshot(game -> capture.apply(game, new SystemState(
-                playerCreatureSystem.captureState(), playerSpellbookSystem.captureState(), chickenAiSystem.captureState(), ((toniarts.openkeeper.game.controller.CreaturesController) game.getGameWorldController().getCreaturesController()).captureControllerStates(new toniarts.openkeeper.game.save.TaskNodeReferences.Capture()), creatureAiSystem.captureState(), ((toniarts.openkeeper.game.controller.CreaturesController) game.getGameWorldController().getCreaturesController()).captureParties())));
+                playerCreatureSystem.captureState(), playerSpellbookSystem.captureState(), chickenAiSystem.captureState(), ((toniarts.openkeeper.game.controller.CreaturesController) game.getGameWorldController().getCreaturesController()).captureControllerStates(new toniarts.openkeeper.game.save.TaskNodeReferences.Capture()), creatureAiSystem.captureState(), ((toniarts.openkeeper.game.controller.CreaturesController) game.getGameWorldController().getCreaturesController()).captureParties(),
+                ((toniarts.openkeeper.game.task.TaskManager) game.getTaskManager()).captureAllocationState(), ((toniarts.openkeeper.game.task.TaskManager) game.getTaskManager()).captureTileTaskStates())));
     }
 
     public void pause() {

@@ -42,9 +42,9 @@ public final class Research extends AbstractCapacityCriticalRoomTask {
     private final PlayerResearchControl researchControl;
     private final IObjectsController objectsController;
 
-    public Research(final INavigationService navigationService, final IMapController mapController, Point p, short playerId, IRoomController room,
+    public Research(toniarts.openkeeper.game.task.TaskIdentityAllocator taskIds, final INavigationService navigationService, final IMapController mapController, Point p, short playerId, IRoomController room,
             TaskManager taskManager, PlayerResearchControl researchControl, IObjectsController objectsController) {
-        super(navigationService, mapController, p, playerId, room, taskManager);
+        super(taskIds, navigationService, mapController, p, playerId, room, taskManager);
 
         this.researchControl = researchControl;
         this.objectsController = objectsController;

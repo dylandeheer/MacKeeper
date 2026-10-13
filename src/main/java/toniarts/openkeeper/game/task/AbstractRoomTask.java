@@ -33,8 +33,8 @@ public abstract class AbstractRoomTask extends AbstractTileTask {
 
     protected final IRoomController room;
 
-    public AbstractRoomTask(final INavigationService navigationService, final IMapController mapController, Point p, short playerId, IRoomController room) {
-        super(navigationService, mapController, p, playerId);
+    public AbstractRoomTask(toniarts.openkeeper.game.task.TaskIdentityAllocator taskIds, final INavigationService navigationService, final IMapController mapController, Point p, short playerId, IRoomController room) {
+        super(taskIds, navigationService, mapController, p, playerId);
 
         this.room = room;
     }

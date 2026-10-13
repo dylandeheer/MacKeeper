@@ -35,8 +35,8 @@ public final class CarryCreatureToLairTask extends AbstractTileTask {
     private final ICreatureController creature;
     private boolean executed = false;
 
-    public CarryCreatureToLairTask(final INavigationService navigationService, final IMapController mapController, ICreatureController creature, short playerId) {
-        super(navigationService, mapController, creature.getLairLocation(), playerId);
+    public CarryCreatureToLairTask(toniarts.openkeeper.game.task.TaskIdentityAllocator taskIds, final INavigationService navigationService, final IMapController mapController, ICreatureController creature, short playerId) {
+        super(taskIds, navigationService, mapController, creature.getLairLocation(), playerId);
         this.creature = creature;
     }
 

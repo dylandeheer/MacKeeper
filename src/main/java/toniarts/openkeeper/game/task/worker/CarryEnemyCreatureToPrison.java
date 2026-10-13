@@ -38,9 +38,9 @@ public final class CarryEnemyCreatureToPrison extends AbstractCapacityCriticalRo
     private final ICreatureController creature;
     private boolean executed = false;
 
-    public CarryEnemyCreatureToPrison(final INavigationService navigationService, final IMapController mapController, Point p, short playerId, IRoomController room,
+    public CarryEnemyCreatureToPrison(toniarts.openkeeper.game.task.TaskIdentityAllocator taskIds, final INavigationService navigationService, final IMapController mapController, Point p, short playerId, IRoomController room,
             TaskManager taskManager, ICreatureController creature) {
-        super(navigationService, mapController, p, playerId, room, taskManager);
+        super(taskIds, navigationService, mapController, p, playerId, room, taskManager);
         this.creature = creature;
     }
 

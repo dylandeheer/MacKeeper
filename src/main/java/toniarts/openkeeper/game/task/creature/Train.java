@@ -45,11 +45,11 @@ public final class Train extends AbstractCapacityCriticalRoomTask {
     private final int trainingRoomMaxExperienceLevel;
     private final int trainingCost;
 
-    public Train(final INavigationService navigationService, final IMapController mapController,
+    public Train(toniarts.openkeeper.game.task.TaskIdentityAllocator taskIds, final INavigationService navigationService, final IMapController mapController,
             Point p, short playerId, IRoomController room, TaskManager taskManager,
             IGameWorldController gameWorldController, Map<MiscType, MiscVariable> gameSettings,
             IPlayerController playerController) {
-        super(navigationService, mapController, p, playerId, room, taskManager);
+        super(taskIds, navigationService, mapController, p, playerId, room, taskManager);
 
         this.gameWorldController = gameWorldController;
         this.playerController = playerController;

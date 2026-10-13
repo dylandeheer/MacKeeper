@@ -40,9 +40,9 @@ public final class CarryObjectToStorageTask extends AbstractCapacityCriticalRoom
     private final IObjectController gameObject;
     private boolean executed = false;
 
-    public CarryObjectToStorageTask(final INavigationService navigationService, final IMapController mapController, Point p, short playerId, IRoomController room,
+    public CarryObjectToStorageTask(toniarts.openkeeper.game.task.TaskIdentityAllocator taskIds, final INavigationService navigationService, final IMapController mapController, Point p, short playerId, IRoomController room,
             TaskManager taskManager, IObjectController gameObject) {
-        super(navigationService, mapController, p, playerId, room, taskManager);
+        super(taskIds, navigationService, mapController, p, playerId, room, taskManager);
 
         this.gameObject = gameObject;
     }

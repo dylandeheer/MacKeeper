@@ -40,9 +40,9 @@ public final class CarryGoldToTreasuryTask extends AbstractRoomTask {
     private final IGameWorldController gameWorldController;
     private boolean executed = false;
 
-    public CarryGoldToTreasuryTask(final INavigationService navigationService, final IMapController mapController,
+    public CarryGoldToTreasuryTask(toniarts.openkeeper.game.task.TaskIdentityAllocator taskIds, final INavigationService navigationService, final IMapController mapController,
             Point p, short playerId, final IRoomController room, final IGameWorldController gameWorldController) {
-        super(navigationService, mapController, p, playerId, room);
+        super(taskIds, navigationService, mapController, p, playerId, room);
         this.gameWorldController = gameWorldController;
     }
 

@@ -43,8 +43,8 @@ public final class KillPlayer extends AbstractObjectiveTask {
     protected final ICreatureController creature;
     protected final ILevelInfo levelInfo;
 
-    public KillPlayer(final INavigationService navigationService, final IMapController mapController, final ILevelInfo levelInfo, short targetPlayerId, ICreatureController creature) {
-        super(navigationService, mapController, heartLocation(levelInfo, targetPlayerId), creature.getOwnerId());
+    public KillPlayer(toniarts.openkeeper.game.task.TaskIdentityAllocator taskIds, final INavigationService navigationService, final IMapController mapController, final ILevelInfo levelInfo, short targetPlayerId, ICreatureController creature) {
+        super(taskIds, navigationService, mapController, heartLocation(levelInfo, targetPlayerId), creature.getOwnerId());
 
         this.targetPlayerId = targetPlayerId;
         this.creature = creature;
@@ -118,14 +118,14 @@ public final class KillPlayer extends AbstractObjectiveTask {
 
                     // Add task to last accessible point
                     if (i != 1 && first && lastPoint != null) {
-                        addSubTask(new ObjectiveTaskDecorator(getId(), new GoToTask(navigationService, mapController, lastPoint.getLocation(), playerId)));
+                        addSubTask(new ObjectiveTaskDecorator(getId(), new GoToTask(taskIds, navigationService, mapController, lastPoint.getLocation(), playerId)));
                         first = false;
                     }
 
                     // See if we should dig
                     Terrain terrain = levelInfo.getLevelData().getTerrain(tile.getTerrainId());
                     if (terrain.getFlags().contains(Terrain.TerrainFlag.SOLID) && (creature.isWorker() || (creature.getParty() != null && creature.getParty().isWorkersAvailable())) && (terrain.getFlags().contains(Terrain.TerrainFlag.DWARF_CAN_DIG_THROUGH) || terrain.getFlags().contains(Terrain.TerrainFlag.ATTACKABLE))) {
-                        addSubTask(new ObjectiveTaskDecorator(getId(), new ObjectiveDigTileTask(navigationService, mapController, tile.getLocation(), playerId)) {
+                        addSubTask(new ObjectiveTaskDecorator(getId(), new ObjectiveDigTileTask(taskIds, navigationService, mapController, tile.getLocation(), playerId)) {
 
                             @Override
                             public boolean isWorkerPartyTask() {
@@ -133,7 +133,7 @@ public final class KillPlayer extends AbstractObjectiveTask {
                             }
 
                         });
-                        addSubTask(new ObjectiveTaskDecorator(getId(), new GoToTask(navigationService, mapController, tile.getLocation(), playerId)));
+                        addSubTask(new ObjectiveTaskDecorator(getId(), new GoToTask(taskIds, navigationService, mapController, tile.getLocation(), playerId)));
                     } else {
 
                         // Hmm, this is it, should we have like attack target type tasks? Or let the AI just figure out itself

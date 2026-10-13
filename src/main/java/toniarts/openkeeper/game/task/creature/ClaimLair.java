@@ -39,8 +39,8 @@ public final class ClaimLair extends AbstractCapacityCriticalRoomTask {
 
     private boolean executed = false;
 
-    public ClaimLair(final INavigationService navigationService, final IMapController mapController, Point p, short playerId, IRoomController room, TaskManager taskManager) {
-        super(navigationService, mapController, p, playerId, room, taskManager);
+    public ClaimLair(toniarts.openkeeper.game.task.TaskIdentityAllocator taskIds, final INavigationService navigationService, final IMapController mapController, Point p, short playerId, IRoomController room, TaskManager taskManager) {
+        super(taskIds, navigationService, mapController, p, playerId, room, taskManager);
     }
 
     @Override
