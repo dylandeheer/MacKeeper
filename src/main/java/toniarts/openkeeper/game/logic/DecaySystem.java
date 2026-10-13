@@ -16,18 +16,16 @@
  */
 package toniarts.openkeeper.game.logic;
 
-import com.jme3.util.SafeArrayList;
 import com.simsilica.es.Entity;
 import com.simsilica.es.EntityData;
 import com.simsilica.es.EntityId;
 import com.simsilica.es.EntitySet;
-import java.util.Collections;
-import java.util.Set;
 import toniarts.openkeeper.game.component.Decay;
 import toniarts.openkeeper.game.component.Health;
 import toniarts.openkeeper.game.component.Position;
 import toniarts.openkeeper.game.controller.entity.EntityController;
 import toniarts.openkeeper.utils.GameTimeCounter;
+import toniarts.openkeeper.game.save.LifetimeSnapshots;
 
 /**
  * Handles entity decaying
@@ -38,28 +36,21 @@ public final class DecaySystem extends GameTimeCounter {
 
     private final EntitySet decayEntities;
     private final EntityData entityData;
-    private final SafeArrayList<EntityId> entityIds;
 
     public DecaySystem(EntityData entityData) {
         this.entityData = entityData;
-        entityIds = new SafeArrayList<>(EntityId.class);
 
         decayEntities = entityData.getEntities(Decay.class, Position.class);
-        processAddedEntities(decayEntities);
     }
 
     @Override
     public void processTick(float tpf) {
         super.processTick(tpf);
 
-        if (decayEntities.applyChanges()) {
-            processDeletedEntities(decayEntities.getRemovedEntities());
-
-            processAddedEntities(decayEntities.getAddedEntities());
-        }
+        decayEntities.applyChanges();
 
         // Decay stuff
-        for (Entity entity : decayEntities) {
+        for (Entity entity : decayEntities.stream().sorted(java.util.Comparator.comparing(Entity::getId)).toList()) {
             Decay decay = entity.get(Decay.class);
             if (timeElapsed - decay.startTime >= decay.duration) {
                 // Decay
@@ -80,18 +71,10 @@ public final class DecaySystem extends GameTimeCounter {
         }
     }
 
-    private void processAddedEntities(Set<Entity> entities) {
-        for (Entity entity : entities) {
-            int index = Collections.binarySearch(entityIds, entity.getId());
-            entityIds.add(~index, entity.getId());
-        }
-    }
+    public LifetimeSnapshots.Clock captureTime() {return new LifetimeSnapshots.Clock(timeElapsed);}
 
-    private void processDeletedEntities(Set<Entity> entities) {
-        for (Entity entity : entities) {
-            int index = Collections.binarySearch(entityIds, entity.getId());
-            entityIds.remove(index);
-        }
+    public static DecaySystem restoreState(EntityData data,LifetimeSnapshots.Clock saved) {
+        var system=new DecaySystem(data);system.timeElapsed=saved.elapsed();return system;
     }
 
     @Override
@@ -102,7 +85,6 @@ public final class DecaySystem extends GameTimeCounter {
     @Override
     public void stop() {
         decayEntities.release();
-        entityIds.clear();
     }
 
 }
