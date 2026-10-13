@@ -58,7 +58,7 @@ public final class GameLoopManager {
     /** Implemented system sections; not yet the complete simulation state. */
     public record SystemState(PlayerCreatureSystem.State creatures, PlayerSpellbookSystem.State spellbooks, ChickenAiSystem.SavedState chickens,
             List<toniarts.openkeeper.game.data.CreatureControlState> creatureControllers, CreatureAiSystem.SavedState creatureAi, toniarts.openkeeper.game.data.PartyRegistryState parties, toniarts.openkeeper.game.task.TaskIdentityAllocator.State taskAllocation,
-            List<toniarts.openkeeper.game.save.TileTaskSnapshots.State> tileTasks, toniarts.openkeeper.game.save.RoomTaskSnapshots.Capture roomTasks, toniarts.openkeeper.game.save.EntityTaskSnapshots.Capture entityTasks, toniarts.openkeeper.game.save.TaskGraphSnapshots.State taskGraph) {
+            List<toniarts.openkeeper.game.save.TileTaskSnapshots.State> tileTasks, toniarts.openkeeper.game.save.RoomTaskSnapshots.Capture roomTasks, toniarts.openkeeper.game.save.EntityTaskSnapshots.Capture entityTasks, toniarts.openkeeper.game.save.TaskGraphSnapshots.State taskGraph, toniarts.openkeeper.game.save.TaskManagerSnapshots.State taskManager) {
         public SystemState {creatureControllers = List.copyOf(creatureControllers);tileTasks = List.copyOf(tileTasks);}
     }
 
@@ -161,9 +161,10 @@ public final class GameLoopManager {
             var creatures = (toniarts.openkeeper.game.controller.CreaturesController) game.getGameWorldController().getCreaturesController();
             var controllers = creatures.captureControllerStates(references);
             var tasks = (toniarts.openkeeper.game.task.TaskManager) game.getTaskManager();
+            var managerState = tasks.captureState(references);
             return capture.apply(game, new SystemState(playerCreatureSystem.captureState(), playerSpellbookSystem.captureState(),
                     chickenAiSystem.captureState(), controllers, creatureAiSystem.captureState(), creatures.captureParties(),
-                    tasks.captureAllocationState(), tasks.captureTileTaskStates(), tasks.captureRoomTaskStates(references.nodes()), tasks.captureEntityTaskStates(references.nodes()), tasks.captureTaskGraph(references)));
+                    tasks.captureAllocationState(), tasks.captureTileTaskStates(), tasks.captureRoomTaskStates(references.nodes()), tasks.captureEntityTaskStates(references.nodes()), tasks.captureTaskGraph(references), managerState));
         });
     }
 

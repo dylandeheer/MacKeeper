@@ -23,7 +23,7 @@ class OwnerSnapshotSmoke {
             List<toniarts.openkeeper.game.controller.map.FlashTileControl.State> flashes,
             toniarts.openkeeper.game.logic.PlayerCreatureSystem.State creatureIndex,
             toniarts.openkeeper.game.logic.PlayerSpellbookSystem.State spellbookIndex,
-            toniarts.openkeeper.game.logic.ChickenAiSystem.SavedState chickens, List<CreatureControlState> creatureControllers, toniarts.openkeeper.game.logic.CreatureAiSystem.SavedState creatureAi, PartyRegistryState parties, toniarts.openkeeper.game.task.TaskIdentityAllocator.State taskAllocation, List<TileTaskSnapshots.State> tileTasks, RoomTaskSnapshots.Capture roomTasks, EntityTaskSnapshots.Capture entityTasks, TaskGraphSnapshots.State taskGraph) { }
+            toniarts.openkeeper.game.logic.ChickenAiSystem.SavedState chickens, List<CreatureControlState> creatureControllers, toniarts.openkeeper.game.logic.CreatureAiSystem.SavedState creatureAi, PartyRegistryState parties, toniarts.openkeeper.game.task.TaskIdentityAllocator.State taskAllocation, List<TileTaskSnapshots.State> tileTasks, RoomTaskSnapshots.Capture roomTasks, EntityTaskSnapshots.Capture entityTasks, TaskGraphSnapshots.State taskGraph, TaskManagerSnapshots.State taskManager) { }
 
     public static void main(String[] args) throws Exception {
         String base = Path.of(args[0]).toAbsolutePath().normalize() + "/";
@@ -128,7 +128,7 @@ class OwnerSnapshotSmoke {
                                     new LevelSnapshots.State(LevelState.capture(game.getLevelInfo()), ((GameTimeController) game.getGameTimer()).captureState()), Map.copyOf(statistics),
                                     ((MapController) game.getGameWorldController().getMapController()).captureRoomStates(),
                                     game.getPlayerControllers().values().stream().map(player -> ((PlayerController) player).captureState()).toList(),
-                                    ((MapController) game.getGameWorldController().getMapController()).captureFlashControls(), systems.creatures(), systems.spellbooks(), systems.chickens(), systems.creatureControllers(), systems.creatureAi(), systems.parties(), systems.taskAllocation(), systems.tileTasks(), systems.roomTasks(), systems.entityTasks(), systems.taskGraph());
+                                    ((MapController) game.getGameWorldController().getMapController()).captureFlashControls(), systems.creatures(), systems.spellbooks(), systems.chickens(), systems.creatureControllers(), systems.creatureAi(), systems.parties(), systems.taskAllocation(), systems.tileTasks(), systems.roomTasks(), systems.entityTasks(), systems.taskGraph(), systems.taskManager());
                         } catch (IOException e) { throw new UncheckedIOException(e); }
                     });
                     var staged = GameEntityData.restore(EntitySnapshots.decode(EntitySnapshots.encode(capture.entities())));
@@ -156,6 +156,7 @@ class OwnerSnapshotSmoke {
                                     if (m.getName().equals("getMapController")) return mapRef[0];
                                     if (m.getName().equals("getObjectsController")) return objectRef[0];
                                     if (m.getName().equals("getShotsController")) return null;
+                                    if (m.getName().equals("addListener") || m.getName().equals("removeListener")) return null;
                                     throw new AssertionError("Unexpected staged world call: " + m.getName());
                                 });
                         var navigation = (toniarts.openkeeper.game.navigation.INavigationService) Proxy.newProxyInstance(
@@ -233,9 +234,14 @@ class OwnerSnapshotSmoke {
                             // Keep every weak-cache entry pinned until all task and party owners are reconstructed.
                             var controllers = creatures.restoreCreatureControllers(decodedControllers, graph.bindings());
                             graph.bindCreatures(creatures::getBoundController);
+                            var managerState = TaskManagerSnapshots.decode(TaskManagerSnapshots.encode(capture.taskManager()));
+                            tasks.bindRestoredState(managerState, graph, creatures::getBoundController,
+                                    id -> removedRooms.containsKey(id) ? removedRooms.get(id) : map.getRoomController(id));
+                            tasks.start();
                             var captureNodes = new TaskNodeReferences.Capture();
                             require(capture.creatureControllers().equals(creatures.captureControllerStates(captureNodes)), "Creature cache/FSM/retry state differs");
-                            require(graphState.equals(TaskGraphSnapshots.capture(captureNodes, graph.roots(), taskAllocator.captureState())), "Task graph identity/queue/progress differs");
+                            require(managerState.equals(tasks.captureState(captureNodes)), "Task manager roots/queues/reservations/queries/continuations differ");
+                            require(graphState.equals(tasks.captureTaskGraph(captureNodes)), "Task graph identity/queue/progress differs");
                             require(capture.taskAllocation().equals(taskAllocator.captureState()), "Restoring tasks consumed IDs");
                             observedCreatures += controllers.size();
                             for (var controller : controllers) {
@@ -309,7 +315,7 @@ class OwnerSnapshotSmoke {
         System.out.println("PASS objective task nodes=" + objectiveTaskCount + " decorators=" + decoratorCount);
         System.out.println("PASS party node round trips=" + observedParties + " spawned index entries=" + spawnedParties);
         System.out.println("PASS 12 live owner captures; keeper round trips=" + ownerCount + " carried entity round trips=" + pickedUp);
-        System.out.println("Keeper/hand/level/time/statistics/map/room/player/flash/creature-index/spellbook-index/object/chicken/creature-cache/AI-membership/party/unified-task-graph bindings only. Full task-manager activation, world restoration, resumed gameplay and complete save files remain unverified.");
+        System.out.println("Keeper/hand/level/time/statistics/map/room/player/flash/creature-index/spellbook-index/object/chicken/creature-cache/AI-membership/party/unified-task-graph/task-manager bindings and listener activation only. Whole-world restoration, resumed gameplay and complete save files remain unverified.");
     }
     static void require(boolean ok, String message) { if (!ok) throw new AssertionError(message); }
 }

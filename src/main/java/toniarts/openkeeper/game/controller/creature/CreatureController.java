@@ -106,7 +106,6 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.function.Consumer;
 
 /**
  * Controls an entity with {@link CreatureAi} component. Basically supports the
@@ -403,11 +402,11 @@ public final class CreatureController extends EntityController implements ICreat
     }
 
     @Override
-    public void findWork(Consumer<Boolean> workResult) {
+    public void findWork(WorkContinuation continuation) {
 
         // See if we have some available work
         if (isWorker()) {
-            taskManager.addToUnemployedWorkerQueue(this, workResult);
+            taskManager.addToUnemployedWorkerQueue(this, continuation);
             return;
         }
 
@@ -415,7 +414,7 @@ public final class CreatureController extends EntityController implements ICreat
         if (owner == Player.NEUTRAL_PLAYER_ID || owner == Player.GOOD_PLAYER_ID) {
 
             // Currently no creature specific jobs offered for neutral or good players
-            workResult.accept(false);
+            continuation.complete(this, false);
             return;
         }
 
@@ -432,11 +431,11 @@ public final class CreatureController extends EntityController implements ICreat
 
         // Choose
         if (!jobs.isEmpty()) {
-            workResult.accept(taskManager.assignTask(this, chooseOnWeight(jobs).getJobType()));
+            continuation.complete(this, taskManager.assignTask(this, chooseOnWeight(jobs).getJobType()));
             return;
         }
 
-        workResult.accept(false);
+        continuation.complete(this, false);
     }
 
     private static Creature.JobPreference chooseOnWeight(List<Creature.JobPreference> items) {

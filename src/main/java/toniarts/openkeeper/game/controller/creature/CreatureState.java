@@ -18,7 +18,6 @@ package toniarts.openkeeper.game.controller.creature;
 
 import com.badlogic.gdx.ai.fsm.State;
 import com.badlogic.gdx.ai.msg.Telegram;
-import java.util.function.Consumer;
 
 /**
  * State machine for creature AI. TODO: needs to be hierarchial so that this
@@ -40,66 +39,49 @@ public enum CreatureState implements State<ICreatureController> {
 
             // Idling is the last resort
             entity.unassingCurrentTask();
-            findStuffToDo(entity, (foundWork) -> {
-                if (!foundWork) {
-                    entity.navigateToRandomPoint();
-                }
-            });
+            findStuffToDo(entity, WorkContinuation.IDLE_ENTER);
         }
 
-        private static void findStuffToDo(ICreatureController entity, Consumer<Boolean> workResult) {
+        private static void findStuffToDo(ICreatureController entity, WorkContinuation continuation) {
 
             // See if we should just follow
             if (entity.getParty() != null && !entity.getParty().isPartyLeader(entity)) {
                 entity.setFollowTarget(entity.getParty().getPartyLeader().getEntityId());
                 entity.getStateMachine().changeState(CreatureState.FOLLOW);
-                workResult.accept(true);
                 return;
             }
 
             // See if we have an objective
             if (entity.hasObjective() && entity.followObjective()) {
                 entity.getStateMachine().changeState(CreatureState.WORK);
-                workResult.accept(true);
                 return;
             }
 
             if (entity.collectPay()) {
                 entity.getStateMachine().changeState(CreatureState.WORK);
-                workResult.accept(true);
                 return;
             }
 
             // See lair need
             if (entity.needsLair() && !entity.hasLair() && entity.findLair()) {
                 entity.getStateMachine().changeState(CreatureState.WORK);
-                workResult.accept(true);
                 return; // Found work
             }
 
             // See basic needs
             if (entity.hasLair() && entity.isNeedForSleep() && entity.goToSleep()) {
                 entity.getStateMachine().changeState(CreatureState.WORK);
-                workResult.accept(true);
                 return; // Found work
             }
 
             // See hunger
             if (entity.isHungry() && entity.goToEat()) {
                 entity.getStateMachine().changeState(CreatureState.WORK);
-                workResult.accept(true);
                 return; // Found work
             }
 
             // Find work
-            entity.findWork((foundWork) -> {
-                if (foundWork || (entity.isWorker() && entity.isTooMuchGold() && entity.dropGoldToTreasury())) {
-                    entity.getStateMachine().changeState(CreatureState.WORK);
-                    workResult.accept(true); // Found work
-                } else {
-                    workResult.accept(false);
-                }
-            });
+            entity.findWork(continuation);
         }
 
         @Override
@@ -112,11 +94,7 @@ public enum CreatureState implements State<ICreatureController> {
 
             if (entity.isTimeToReEvaluate()) {
                 entity.resetReEvaluationTimer();
-                findStuffToDo(entity, (foundWork) -> {
-                    if (!foundWork && entity.isStopped()) {
-                        entity.navigateToRandomPoint();
-                    }
-                });
+                findStuffToDo(entity, WorkContinuation.IDLE_UPDATE);
             }
         }
 

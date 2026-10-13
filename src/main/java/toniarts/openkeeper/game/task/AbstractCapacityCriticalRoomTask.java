@@ -43,6 +43,8 @@ public abstract class AbstractCapacityCriticalRoomTask extends AbstractRoomTask 
         this.taskManager = java.util.Objects.requireNonNull(manager);
     }
 
+    public final TaskManager getTaskManager() {return taskManager;}
+
     @Override
     public void unassign(ICreatureController creature) {
         super.unassign(creature);

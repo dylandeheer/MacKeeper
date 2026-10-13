@@ -106,11 +106,13 @@ public final class TaskGraphSnapshots {
     }
     /** Owns strong references while cyclic creature edges and assignees are still being reconstructed. */
     public static final class Restored {
-        private final State state;private final List<Task> nodes;private final TaskNodeReferences.Bindings bindings;private boolean bound;
-        private Restored(State state,List<Task> nodes) {
-            this.state=state;this.nodes=List.copyOf(nodes);var indexed=new HashMap<Long,Task>();
+        private final State state;private final TaskManager manager;private final List<Task> nodes;private final TaskNodeReferences.Bindings bindings;private boolean bound;
+        private Restored(State state,List<Task> nodes,TaskManager manager) {
+            this.manager=manager;this.state=state;this.nodes=List.copyOf(nodes);var indexed=new HashMap<Long,Task>();
             for(int i=0;i<nodes.size();i++)indexed.put((long)i,nodes.get(i));bindings=new TaskNodeReferences.Bindings(indexed);
         }
+        public void requireOwner(TaskManager owner){if(manager!=owner)throw new IllegalArgumentException("Task graph belongs to a different manager");}
+        public void requireBound(){if(!bound)throw new IllegalStateException("Task graph creatures are not bound");}
         public TaskNodeReferences.Bindings bindings(){return bindings;}
         public List<Task> nodes(){return nodes;}
         public List<Task> roots(){return state.roots().stream().map(bindings::resolve).toList();}
@@ -142,7 +144,7 @@ public final class TaskGraphSnapshots {
             if(node.payload() instanceof Decorator p)((ObjectiveTaskDecorator)task).bindRestoredTask(tasks.get((int)p.wrapped().nodeId()));
             if(task instanceof ObjectiveTask objective)for(var ref:node.queue())objective.getTaskQueue().add((ObjectiveTask)tasks.get((int)ref.nodeId()));
         }
-        return new Restored(state,tasks);
+        return new Restored(state,tasks,c.manager());
     }
     public static byte[] encode(State state)throws IOException {
         var bytes=new ByteArrayOutputStream();

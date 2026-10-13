@@ -17,7 +17,7 @@
 package toniarts.openkeeper.game.task;
 
 import com.simsilica.es.EntityId;
-import java.util.function.Consumer;
+import toniarts.openkeeper.game.controller.creature.WorkContinuation;
 import toniarts.openkeeper.game.controller.creature.ICreatureController;
 import toniarts.openkeeper.game.controller.room.AbstractRoomController;
 import toniarts.openkeeper.tools.convert.map.Creature;
@@ -107,9 +107,9 @@ public interface ITaskManager {
      * queue
      *
      * @param creature the unemployed creature
-     * @param workResult result callback
+     * @param continuation behavior to resume after the work search
      */
-    void addToUnemployedWorkerQueue(ICreatureController creature, Consumer<Boolean> workResult);
+    void addToUnemployedWorkerQueue(ICreatureController creature, WorkContinuation continuation);
 
     /**
      * Processes the unemployed workers
