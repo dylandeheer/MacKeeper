@@ -181,6 +181,9 @@ class NativeSessionRestoreSmoke {
    verifyWorldView();
    saved=states.getState(GameServerState.class).captureLocalSession(client);saved.validateDefinition(definition);
    Path path=Path.of("work/native-session-restore.mkls");LocalSessionArchives.write(path,saved);saved=LocalSessionArchives.read(path);
+   var resolved=saved.resolveDefinition(Path.of(Main.getDkIIFolder()));
+   check(resolved!=definition&&resolved.getMapSource().equals(definition.getMapSource()),"Saved map was not resolved as a fresh installed definition");
+   definition=resolved;System.out.println("RESTORE saved map resolved and fingerprinted from current installation");
    expectedServer=SimulationArchives.encode(saved.server());
    profile=Files.readAllBytes(toniarts.openkeeper.utils.AppPaths.dataDirectory().resolve("settings.properties"));
    try {LocalGameSession.restoreLocalGame(saved,definition,states,app);throw new AssertionError("Active session replacement was accepted");}

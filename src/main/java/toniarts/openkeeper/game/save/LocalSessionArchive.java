@@ -72,6 +72,18 @@ public record LocalSessionArchive(boolean campaign, SimulationArchive server, Cl
             }
         }
     }
+    /** Resolve and verify the saved map against the current installation before touching a live session. */
+    public IKwdFile resolveDefinition(java.nio.file.Path installedRoot) throws java.io.IOException {
+        var root = installedRoot.toRealPath();
+        var map = server.definition().source().resolve(root);
+        try {
+            IKwdFile definition = toniarts.openkeeper.tools.convert.map.KwdFile.load(root.toString(), map);
+            validateDefinition(definition);
+            return definition;
+        } catch (RuntimeException failure) {
+            throw new java.io.IOException("Cannot bind saved game to installed map data", failure);
+        }
+    }
     /** Detached definition binding; renderer asset validation still precedes publication of a loaded client. */
     public void validateDefinition(IKwdFile definition) {
         if (!server.definition().equals(SimulationArchive.Definition.capture(definition)))
