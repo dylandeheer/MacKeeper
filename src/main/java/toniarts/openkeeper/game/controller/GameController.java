@@ -82,7 +82,7 @@ public final class GameController implements IGameLogicUpdatable, IGameControlle
     private INavigationService navigationService;
     private PositionSystem positionSystem;
 
-    private final Map<Short, GameResult> gameResults = new HashMap<>();
+    private GameResultController gameResults;
     private TaskManager taskManager;
 
     /**
@@ -122,6 +122,7 @@ public final class GameController implements IGameLogicUpdatable, IGameControlle
         setupPlayers();
 
         gameTimer = new GameTimeController();
+        gameResults = new GameResultController(gameTimer, playerService, levelInfo.players.keySet());
         // The world
         gameWorldController = new GameWorldController(this, levelInfo, entityData, gameSettings, playerControllers, gameTimer);
 
@@ -331,15 +332,12 @@ public final class GameController implements IGameLogicUpdatable, IGameControlle
     }
 
     @Override
-    public synchronized void endGame(short playerId, boolean win) {
-        if (gameResults.containsKey(playerId)) return;
+    public void endGame(short playerId, boolean win) {
+        gameResults.endGame(playerId, win);
+    }
 
-        // Determine what happens to the game & players
-        GameResult gameResult = GameResult.completed(win, gameTimer.getGameTime());
-        gameResults.put(playerId, gameResult);
-
-        // Enable the end game state on the player (client)
-        playerService.endGame(win, playerId, gameResult.getElapsedSeconds());
+    public toniarts.openkeeper.game.save.ResultSnapshots.State captureResults() {
+        return gameResults.captureState();
     }
 
     @Override
@@ -404,8 +402,8 @@ public final class GameController implements IGameLogicUpdatable, IGameControlle
     }
 
     @Override
-    public synchronized GameResult getGameResult(short playerId) {
-        return gameResults.get(playerId);
+    public GameResult getGameResult(short playerId) {
+        return gameResults.getResult(playerId);
     }
 
     @Override

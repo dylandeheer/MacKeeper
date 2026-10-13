@@ -23,11 +23,11 @@ class OwnerSnapshotSmoke {
             List<toniarts.openkeeper.game.controller.map.FlashTileControl.State> flashes,
             toniarts.openkeeper.game.logic.PlayerCreatureSystem.State creatureIndex,
             toniarts.openkeeper.game.logic.PlayerSpellbookSystem.State spellbookIndex,
-            toniarts.openkeeper.game.logic.ChickenAiSystem.SavedState chickens, List<CreatureControlState> creatureControllers, toniarts.openkeeper.game.logic.CreatureAiSystem.SavedState creatureAi, PartyRegistryState parties, toniarts.openkeeper.game.task.TaskIdentityAllocator.State taskAllocation, List<TileTaskSnapshots.State> tileTasks, RoomTaskSnapshots.Capture roomTasks, EntityTaskSnapshots.Capture entityTasks, TaskGraphSnapshots.State taskGraph, TaskManagerSnapshots.State taskManager, ManaSnapshots.State mana, ExperienceSnapshots.State experience, KeeperEconomySnapshots.State economy, CreatureSpawnSnapshots.State recruitment, ChickenSpawnSnapshots.State chickenSpawning, LifetimeSnapshots.State lifetimes, SlapSnapshots.State slaps, HealthSnapshots.State health, AnimationSnapshots.State animation, LifetimeSnapshots.Clock creatureView, MovementSnapshots.State movement, Map<String,List<TriggerSnapshots.State>> triggerTrees, Map<TriggerRegistrySnapshots.Kind,TriggerRegistrySnapshots.State> triggerRegistries, toniarts.openkeeper.game.random.SimulationRandom.State random) { }
+            toniarts.openkeeper.game.logic.ChickenAiSystem.SavedState chickens, List<CreatureControlState> creatureControllers, toniarts.openkeeper.game.logic.CreatureAiSystem.SavedState creatureAi, PartyRegistryState parties, toniarts.openkeeper.game.task.TaskIdentityAllocator.State taskAllocation, List<TileTaskSnapshots.State> tileTasks, RoomTaskSnapshots.Capture roomTasks, EntityTaskSnapshots.Capture entityTasks, TaskGraphSnapshots.State taskGraph, TaskManagerSnapshots.State taskManager, ManaSnapshots.State mana, ExperienceSnapshots.State experience, KeeperEconomySnapshots.State economy, CreatureSpawnSnapshots.State recruitment, ChickenSpawnSnapshots.State chickenSpawning, LifetimeSnapshots.State lifetimes, SlapSnapshots.State slaps, HealthSnapshots.State health, AnimationSnapshots.State animation, LifetimeSnapshots.Clock creatureView, MovementSnapshots.State movement, Map<String,List<TriggerSnapshots.State>> triggerTrees, Map<TriggerRegistrySnapshots.Kind,TriggerRegistrySnapshots.State> triggerRegistries, toniarts.openkeeper.game.random.SimulationRandom.State random, ResultSnapshots.State results) { }
 
     public static void main(String[] args) throws Exception {
         String base = Path.of(args[0]).toAbsolutePath().normalize() + "/";
-        int ownerCount = 0, pickedUp = 0, observedBooks = 0, observedChickens = 0, observedCreatures = 0, observedParties = 0, spawnedParties = 0, tileTaskCount = 0, roomTaskCount = 0, entityTaskCount = 0, objectiveTaskCount = 0, decoratorCount = 0, movingBodies = 0, triggerTrees = 0, triggerNodes = 0, triggerOwners = 0;
+        int ownerCount = 0, pickedUp = 0, observedBooks = 0, observedChickens = 0, observedCreatures = 0, observedParties = 0, spawnedParties = 0, tileTaskCount = 0, roomTaskCount = 0, entityTaskCount = 0, objectiveTaskCount = 0, decoratorCount = 0, movingBodies = 0, triggerTrees = 0, triggerNodes = 0, triggerOwners = 0, terminalResults = 0;
         for (String name : List.of("level1", "level17", "TrapTime", "level10")) {
             var kwd = KwdFile.load(base, Path.of(base, "Data/editor/maps/" + name + ".kwd"));
             var data = new GameEntityData();
@@ -127,6 +127,11 @@ class OwnerSnapshotSmoke {
                     }
                 }
                 for (int round = 0; round < 3; round++) {
+                    // Controlled terminal callbacks verify persistence, not mission completion.
+                    if (round > 0) {
+                        boolean win = round == 1;
+                        manager.runPlayerCommand(() -> manager.getGameController().endGame((short)3, win));
+                    }
                     var capture = manager.captureSnapshotWithSystems((game, systems) -> {
                         try {
                             List<GameTimer.State> timers = new ArrayList<>();
@@ -139,7 +144,7 @@ class OwnerSnapshotSmoke {
                                     new LevelSnapshots.State(LevelState.capture(game.getLevelInfo()), ((GameTimeController) game.getGameTimer()).captureState()), Map.copyOf(statistics),
                                     ((MapController) game.getGameWorldController().getMapController()).captureRoomStates(),
                                     game.getPlayerControllers().values().stream().map(player -> ((PlayerController) player).captureState()).toList(),
-                                    ((MapController) game.getGameWorldController().getMapController()).captureFlashControls(), systems.creatures(), systems.spellbooks(), systems.chickens(), systems.creatureControllers(), systems.creatureAi(), systems.parties(), systems.taskAllocation(), systems.tileTasks(), systems.roomTasks(), systems.entityTasks(), systems.taskGraph(), systems.taskManager(), systems.mana(), systems.experience(), systems.economy(), systems.recruitment(), systems.chickenSpawning(), systems.lifetimes(), systems.slaps(), systems.health(), systems.animation(), systems.creatureView(), systems.movement(), ((GameController) game).captureTriggerTrees(), ((GameController) game).captureTriggerRegistries(), game.getRandom().captureState());
+                                    ((MapController) game.getGameWorldController().getMapController()).captureFlashControls(), systems.creatures(), systems.spellbooks(), systems.chickens(), systems.creatureControllers(), systems.creatureAi(), systems.parties(), systems.taskAllocation(), systems.tileTasks(), systems.roomTasks(), systems.entityTasks(), systems.taskGraph(), systems.taskManager(), systems.mana(), systems.experience(), systems.economy(), systems.recruitment(), systems.chickenSpawning(), systems.lifetimes(), systems.slaps(), systems.health(), systems.animation(), systems.creatureView(), systems.movement(), ((GameController) game).captureTriggerTrees(), ((GameController) game).captureTriggerRegistries(), game.getRandom().captureState(), ((GameController) game).captureResults());
                         } catch (IOException e) { throw new UncheckedIOException(e); }
                     });
                     var staged = GameEntityData.restore(EntitySnapshots.decode(EntitySnapshots.encode(capture.entities())));
@@ -154,6 +159,18 @@ class OwnerSnapshotSmoke {
                         var levelState = LevelSnapshots.decode(LevelSnapshots.encode(capture.level()));
                         var level = GameController.restoreLevelInfo(kwd, levelState.level(), keepers.values());
                         require(levelState.level().equals(LevelState.capture(level)), "Level values differ");
+                        var outcomes = ResultSnapshots.decode(ResultSnapshots.encode(capture.results()));
+                        var noResultDelivery = (toniarts.openkeeper.game.state.session.PlayerService) Proxy.newProxyInstance(
+                                toniarts.openkeeper.game.state.session.PlayerService.class.getClassLoader(),
+                                new Class<?>[]{toniarts.openkeeper.game.state.session.PlayerService.class},
+                                (p, m, a) -> {throw new AssertionError("Restoring result replayed " + m.getName());});
+                        var resultController = GameResultController.restoreState(outcomes, new GameTimeController(levelState.clock()),
+                                noResultDelivery, keepers.keySet());
+                        require(outcomes.equals(resultController.captureState()), "Terminal results differ");
+                        for (short player : outcomes.results().keySet()) {
+                            resultController.endGame(player, !resultController.getResult(player).isWon());terminalResults++;
+                        }
+                        require(outcomes.equals(resultController.captureState()), "Terminal result changed after duplicate action");
                         for (var state : capture.statistics().values()) {
                             var statistics = PlayerStatsControl.restoreState(PlayerStatsSnapshots.decode(PlayerStatsSnapshots.encode(state)), id -> kwd.getCreature((short) id));
                             require(state.equals(statistics.captureState()), "Interaction history differs");
@@ -450,6 +467,8 @@ class OwnerSnapshotSmoke {
                 }
             } finally { manager.stop();data.close(); }
         }
+        System.out.println("PASS terminal result round trips=" + terminalResults + " (controlled outcomes, no replayed delivery)");
+        require(terminalResults >= 8, "Missing nonempty terminal result bindings");
         require(pickedUp > 0, "No actual pickup exercised");
         require(observedBooks > 0, "No real library research book observed");
         System.out.println("PASS observed library book round trips=" + observedBooks);
@@ -474,7 +493,7 @@ class OwnerSnapshotSmoke {
         require(movingBodies > 0, "No active steering bodies exercised");
         System.out.println("PASS movement body round trips=" + movingBodies);
         System.out.println("PASS 12 live owner captures; keeper round trips=" + ownerCount + " carried entity round trips=" + pickedUp);
-        System.out.println("Keeper/hand/level/time/statistics/map/room/player/flash/creature-index/spellbook-index/object/chicken/creature-cache/AI-membership/party/unified-task-graph/task-manager/mana/experience/economy/recruitment/chicken-spawning/lifetimes/slaps/health/animation/view/mood/doors/loose-objects/hauling/bridge/movement/trigger-tree/trigger-registry bindings and listener activation only. Whole-world restoration, resumed gameplay and complete save files remain unverified.");
+        System.out.println("Keeper/hand/level/time/statistics/map/room/player/flash/creature-index/spellbook-index/object/chicken/creature-cache/AI-membership/party/unified-task-graph/task-manager/mana/experience/economy/recruitment/chicken-spawning/lifetimes/slaps/health/animation/view/mood/doors/loose-objects/hauling/bridge/movement/trigger-tree/trigger-registry/random/results bindings and listener activation only. Whole-world restoration, resumed gameplay and complete save files remain unverified.");
     }
     static void require(boolean ok, String message) { if (!ok) throw new AssertionError(message); }
 }

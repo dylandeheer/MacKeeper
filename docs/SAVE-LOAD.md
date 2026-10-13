@@ -280,6 +280,14 @@ Five new regressions cover fixed algorithm vectors, repeated mixed numeric draws
 
 This establishes explicit RNG state and isolated continuation checks. It does not make the existing three independently scheduled loops deterministic, restore terminal/session state or provide complete save files. The new random sequence differs from historical global-generator seeds and does not claim the original executable's RNG algorithm.
 
+## Implemented terminal outcomes
+
+`GameResultController` is now the authoritative result owner used by `GameController`. The first outcome is recorded before client delivery, preserving duplicate suppression when delivery re-enters, fails or races another completion. A staged restored controller retains each player's original outcome and fractional simulation time without delivering callbacks or repeating campaign accounting. Binding validates participating players and rejects outcomes later than the saved game clock.
+
+The bounded `MKGR` version 1 section stores at most 256 player results in 256 KiB. Outcome/time are required; optional statistics retain explicit primitive numeric types, including wide integers and present null values. Immutable capture copies prevent later statistics from changing a saved snapshot. The decoder rejects duplicate players/fields, unknown keys/types, invalid booleans, non-finite values, missing terminal fields, truncation and trailing data.
+
+Five new regressions cover repeated independent restores, multiplayer outcomes, typed statistics, failed/reentrant delivery, simultaneous terminal actions and malformed sections/bindings. All 439 tests pass. Twelve owned-map captures include eight controlled nonempty result round trips without repeated delivery. The injected outcomes exercise result persistence; they do not establish mission completion. Full server/client reconstruction and presentation of an already-ended saved session remain unfinished.
+
 ## Authoritative state inventory
 
 The source inventory includes these owners. Entity-store, keeper, hand, level/time, interaction-history and map/room/player-controller capture/codecs/staged restore are implemented; map timers and the creature-count/spellbook system caches are also covered; object-factory binding skips new-game loading; chicken FSM/controller caches and pending animation-query events are covered; payday cycle binding is present. Remaining owners and complete-world binding still need explicit capture, validation and restore code. Derived indexes may be rebuilt only if doing so preserves the resumed behavior and cannot repeat initialization side effects.
@@ -296,6 +304,7 @@ The source inventory includes these owners. Entity-store, keeper, hand, level/ti
 | Creature/chicken controllers | Current and previous FSM states, state time, motionless duration, next payday check, failed-path retry state, party leadership/membership/objective and spawned-party identity. Entering a state during restore must not repeat its effects. |
 | `KeeperEconomySystem` | Plans, discovered gold/frontiers, current construction decision and decision deadlines, in addition to authored AI settings. |
 | Logic and animation systems | Payday cycle, periodic update accumulators, creature/chicken/entrance cooldowns, hunger/mood/mana cadence, decay/fall progress and dungeon-heart construction pieces/stage. |
+| `PositionSystem` | Last-observed tile and obstacle membership, pending position-query changes and within-tick sensed-entity caches. Rebuilding solely from current components can advance observations before the ordinary logic phase. Full restore remains open. |
 | `MovementSystem` | Explicit dynamics, active immutable plan, cached target and observed/dirty query state are captured and bound; isolated future ticks match after repeated loads. Whole-session scheduling remains open. |
 | Trigger controllers and trees | Level, player, party, creature, object, door and action-point roots; consumed actions, repeat counts, traversal cursor/last-child state, payday observations and initial cycle. Recreating trees from the map replays one-shot actions. |
 | Random generators | Simulation-owned reproducible state. A world-owned SplitMix64 stream and explicit `MKRG` section now cover simulation choices; presentation calls use separate defaults. Complete-world scheduling still needs deterministic restoration. |
