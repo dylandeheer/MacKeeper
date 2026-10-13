@@ -12,6 +12,9 @@ import toniarts.openkeeper.game.save.HudPanelSnapshots;
 import toniarts.openkeeper.game.save.InteractionSnapshots;
 import toniarts.openkeeper.game.save.FogSnapshots;
 import toniarts.openkeeper.game.save.CreatureCardSnapshots;
+import toniarts.openkeeper.game.save.HandViewSnapshots;
+import toniarts.openkeeper.view.HandViewState;
+import toniarts.openkeeper.view.KeeperHandState;
 import toniarts.openkeeper.view.creature.CreatureCardsState;
 import toniarts.openkeeper.view.creature.CreatureCardRoster;
 import toniarts.openkeeper.gui.nifty.WorkerAmountControl;
@@ -85,6 +88,51 @@ class NativePresentationSmoke {
         }
         private static java.lang.reflect.Field interactionField(String name) throws Exception {
             var field = PlayerInteractionState.class.getDeclaredField(name);field.setAccessible(true);return field;
+        }
+        private void restoreHandView(PlayerState player) throws Exception {
+            var interaction = states.getState(PlayerInteractionState.class);var hand = states.getState(KeeperHandState.class);
+            var original = interaction.captureHandView();
+            if (!original.items().isEmpty()) throw new AssertionError("Expected initially empty keeper hand");
+            var candidates = player.getScreen().captureCreatureCards().creatures().stream()
+                    .filter(c -> c.selectable() && c.type()==player.getKwdFile().getImp().getCreatureId()).limit(2).toList();
+            if (candidates.size()!=2) throw new AssertionError("Need two actual workers for hand restore");
+            for (var candidate : candidates) client.getGameClientService().pickUp(candidate.id());
+            hand.update(0);hand.setVisible(true);
+            var saved = interaction.captureHandView();
+            if (saved.items().size()!=2 || !hand.getItem().getEntityId().equals(candidates.getLast().id())) throw new AssertionError("Actual pickups did not retain LIFO hand view");
+            var serverBefore = loop.captureSnapshot(game -> game.getPlayerController(saved.playerId()).getHandControl().captureState());
+            Path file = Files.createTempFile(Path.of("work"),"hand-view-",".bin");
+            try {
+                for (int i=0;i<3;i++) {
+                    Files.write(file,HandViewSnapshots.encode(saved));var decoded = HandViewSnapshots.decode(Files.readAllBytes(file));
+                    hand.setVisible(false);
+                    loop.captureSnapshot(game -> {interaction.restoreHandView(decoded);return null;});
+                    if (!saved.equals(interaction.captureHandView()) || !hand.getItem().getEntityId().equals(saved.items().getFirst().entityId())
+                            || !serverBefore.equals(loop.captureSnapshot(game -> game.getPlayerController(saved.playerId()).getHandControl().captureState())))
+                        throw new AssertionError("Hand view restore changed drop order or server-held objects");
+                }
+            } finally {Files.delete(file);}
+            var wrongPlayer = new HandViewState((short)4,saved.capacity(),saved.enabled(),saved.visible(),saved.items());
+            try {interaction.restoreHandView(wrongPlayer);throw new AssertionError("Wrong-player hand view accepted");} catch (IllegalArgumentException expected) {}
+            if (!saved.equals(interaction.captureHandView())) throw new AssertionError("Invalid hand binding changed view");
+            try (var worker = Executors.newSingleThreadExecutor()) {
+                worker.submit(() -> {
+                    try {interaction.captureHandView();throw new AssertionError("Off-render hand capture accepted");} catch (IllegalStateException expected) {}
+                }).get(5,TimeUnit.SECONDS);
+            }
+            var tile = client.getPlayer().getDungeonHeartLocation();
+            for (var item : saved.items()) client.getGameClientService().drop(item.entityId(),tile,new com.jme3.math.Vector2f(tile.x,tile.y),null);
+            var serverEmpty = loop.captureSnapshot(game -> game.getPlayerController(saved.playerId()).getHandControl().captureState());
+            if (!serverEmpty.bottomToTop().isEmpty()) throw new AssertionError("Actual drop did not empty server hand");
+            // The displayed snapshot can lag the ECS. Restore must retain it until the normal query update.
+            interaction.restoreHandView(saved);
+            if (!saved.equals(interaction.captureHandView())) throw new AssertionError("Hand restore consumed pending removals");
+            hand.update(0);
+            if (!interaction.captureHandView().items().isEmpty() || hand.getItem()!=null
+                    || !serverEmpty.equals(loop.captureSnapshot(game -> game.getPlayerController(saved.playerId()).getHandControl().captureState())))
+                throw new AssertionError("Hand query did not reconcile pending removals quietly");
+            interaction.restoreHandView(original);
+            System.out.println("HAND PASS two real worker pickups, 3 hand-view disk restores with exact observed order and unchanged server hand, real drops and deferred removal reconciliation; invalid owner rejected");
         }
         private void restoreCreatureCards(PlayerState player) throws Exception {
             var controller = player.getScreen();var hud = app.getNifty().getScreen("hud");
@@ -324,7 +372,7 @@ class NativePresentationSmoke {
                 if (stage == 3 && (delay += tpf) > 7) {
                     if (session.isInTransition() || !player.isTransitionEnd()) throw new AssertionError("Restored cinematic did not acknowledge completion");
                     if (!player.isPaused()) throw new AssertionError("Pending event delivery changed pause state");
-                    restoreMessages();restoreHudPanels(player);restoreInteraction();restoreFog();restoreCreatureCards(player);stage = 4;delay = 0;
+                    restoreMessages();restoreHudPanels(player);restoreInteraction();restoreFog();restoreCreatureCards(player);restoreHandView(player);stage = 4;delay = 0;
                 }
                 if (stage == 4 && (delay += tpf) > 2) {
                     if (!pausedMessages.equals(states.getState(SystemMessageState.class).captureState())) throw new AssertionError("Paused messages aged");
@@ -349,7 +397,7 @@ class NativePresentationSmoke {
                 if (stage == 6 && states.getState(PlayerInteractionState.class).isEnabled()
                         && !interactionField("refreshAfterRestore").getBoolean(states.getState(PlayerInteractionState.class))) {
                     verifyInteractionResume();
-                    System.out.println("PRESENTATION PASS pending events, active camera, messages, HUD panels, interaction, fog and creature-card owners, cinematic acknowledgement and pause/resume");
+                    System.out.println("PRESENTATION PASS pending events, active camera, messages, HUD panels, interaction, fog, creature-card and hand-view owners, cinematic acknowledgement and pause/resume");
                     successful = true;app.stop();stage = 7;
                 }
             } catch (Throwable failure) {failure.printStackTrace();app.stop();stage = 7;}

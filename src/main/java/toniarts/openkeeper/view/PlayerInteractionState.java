@@ -268,6 +268,14 @@ public abstract class PlayerInteractionState extends AbstractPauseAwareState {
         onInteractionStateChange(interactionState);
     }
 
+    public HandViewState captureHandView() {
+        requireOwner();return keeperHandState.captureState();
+    }
+
+    public void restoreHandView(HandViewState saved) {
+        requireOwner();keeperHandState.restoreState(saved);resetInputBoundary();
+    }
+
     public InteractionSelection captureSelection() {
         requireOwner();
         return new InteractionSelection(player.getPlayerId(), isEnabled(), interactionState.getType(), interactionState.getItemId());

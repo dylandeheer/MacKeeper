@@ -35,18 +35,12 @@ import com.jme3.scene.Spatial.CullHint;
 import com.jme3.texture.Texture;
 import com.jme3.texture.Texture2D;
 import com.jme3.ui.Picture;
-import com.simsilica.es.Entity;
-import com.simsilica.es.EntityContainer;
 import com.simsilica.es.EntityData;
-import com.simsilica.es.filter.FieldFilter;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collections;
 import java.util.List;
-import java.util.Objects;
 import toniarts.openkeeper.Main;
-import toniarts.openkeeper.game.component.InHand;
 import toniarts.openkeeper.game.component.ObjectViewState;
 import static toniarts.openkeeper.tools.convert.AssetsConverter.TEXTURES_FOLDER;
 import toniarts.openkeeper.tools.convert.map.ArtResource;
@@ -96,7 +90,9 @@ public abstract class KeeperHandState extends AbstractAppState {
     private final Node cursor;
     private final Node rootNode;
     private final Node handRootNode;
-    private final InHandLoaderCreatureModelContainer inHandLoader;
+    private HandViewQueue handQueue;
+    private Thread renderThread;
+    private boolean visible;
     private Camera handCamera;
     private ViewPort handViewPort;
 
@@ -123,8 +119,7 @@ public abstract class KeeperHandState extends AbstractAppState {
         handRootNode.attachChild(queueNode);
         rootNode.attachChild(cursor);
 
-        // Create the model "listener"
-        inHandLoader = new InHandLoaderCreatureModelContainer(entityData);
+
     }
 
     @Override
@@ -135,19 +130,21 @@ public abstract class KeeperHandState extends AbstractAppState {
         this.assetManager = this.app.getAssetManager();
         this.stateManager = this.app.getStateManager();
         this.inputManager = this.app.getInputManager();
+        renderThread = Thread.currentThread();
 
         this.app.getGuiNode().attachChild(rootNode);
         initializeHandViewPort();
 
-        // Start loading stuff (maybe we should do this earlier...)
-        inHandLoader.start();
+        handQueue = new HandViewQueue(entityData, playerId, maxQueueSize);
+        var initial = handQueue.current();publish(prepare(initial), initial);
+        setVisible(visible);
     }
 
     @Override
     public void update(float tpf) {
-        if (inHandLoader.update()) {
-            updateHand();
-            updateCursor();
+        var proposed = handQueue.current();
+        if (!proposed.equals(handQueue.observed())) {
+            publish(prepare(proposed), proposed);updateCursor();
         }
 
         updateHandCamera();
@@ -157,8 +154,9 @@ public abstract class KeeperHandState extends AbstractAppState {
 
     @Override
     public void cleanup() {
-        inHandLoader.stop();
-        queue.clear();
+        if (handQueue != null) handQueue.close();
+        release(queue);queue.clear();currentItem = null;
+        queueNode.detachAllChildren();cursor.detachAllChildren();
         app.getGuiNode().detachChild(rootNode);
         if (handViewPort != null) {
             handViewPort.detachScene(handRootNode);
@@ -178,22 +176,30 @@ public abstract class KeeperHandState extends AbstractAppState {
         return currentItem;
     }
 
-    private KeeperHandItem addToHand(IEntityViewControl item, int index) {
-        KeeperHandItem handItem = new KeeperHandItem();
-        handItem.index = index;
-        handItem.item = item;
-        handItem.picture = getIcon(item.getInHandIcon());
-        queue.add(handItem);
-
-        return handItem;
+    public HandViewState captureState() {
+        requireOwner();return new HandViewState(playerId,maxQueueSize,isEnabled(),visible,handQueue.observed());
     }
 
-    private void removeFromHand(KeeperHandItem item) {
-        queue.remove(item);
+    /** Restore observations without consuming query changes, picking up, dropping or changing tools. */
+    public void restoreState(HandViewState saved) {
+        requireOwner();
+        if (saved.playerId()!=playerId || saved.capacity()!=maxQueueSize)
+            throw new IllegalArgumentException("Hand view belongs to another player/capacity");
+        saved.validateDefinitions(kwdFile);
+        var prepared = prepare(saved.items());
+        publish(prepared,saved.items());
+        setPosition(inputManager.getCursorPosition().x,inputManager.getCursorPosition().y);
+        setEnabled(saved.enabled());setVisible(saved.visible());
+    }
+
+    private void requireOwner() {
+        if (!isInitialized() || renderThread != Thread.currentThread()
+                || stateManager.getState(KeeperHandState.class) != this || handQueue == null)
+            throw new IllegalStateException("Hand view requires the active render-thread owner");
     }
 
     public boolean isFull() {
-        return queue.size() == maxQueueSize;
+        return queue.size() >= maxQueueSize;
     }
 
     public boolean isEmpty() {
@@ -201,6 +207,7 @@ public abstract class KeeperHandState extends AbstractAppState {
     }
 
     public void setVisible(boolean visible) {
+        this.visible = visible;
         rootNode.setCullHint(visible ? CullHint.Never : CullHint.Always);
         handRootNode.setCullHint(visible ? CullHint.Never : CullHint.Always);
         if (handViewPort != null) {
@@ -269,132 +276,57 @@ public abstract class KeeperHandState extends AbstractAppState {
         return picture;
     }
 
-    private void updateHand() {
-
-        // While it is fairly certain that we always have an intact situation on the client...
-        // wise not to bet on it, as really the amount of data is so insignifigant that any optimization doesn't give much
-        queueNode.detachAllChildren();
-        cursor.detachAllChildren();
-        currentItem = null;
-
-        Collections.sort(queue);
-
-        // Set the current item (the next out)
-        if (!queue.isEmpty()) {
-            currentItem = queue.get(0).item;
-        } else {
-            return;
-        }
-
-        // Add the icons
-        for (int i = 0; i < Math.min(CURSOR_ITEMS_INLINE * CURSOR_ITEMS_LINES + 1, queue.size()); i++) {
-            Spatial child;
-            if (i == CURSOR_ITEMS_INLINE * CURSOR_ITEMS_LINES) {
-                child = getIcon(MORE_CREATURES);
-            } else {
-                child = queue.get(i).picture;
+    /** Prepare detached controls, subscriptions, textures and held graphics before replacing the live view. */
+    private PreparedHand prepare(List<HandViewState.Item> values) {
+        var items = new ArrayList<KeeperHandItem>();var icons = new Node("Hand icons");Node current = null;
+        try {
+            for (var value : values) items.add(createItem(value));
+            for (int i=0;i<Math.min(CURSOR_ITEMS_INLINE*CURSOR_ITEMS_LINES+1,items.size());i++) {
+                Spatial child = i==CURSOR_ITEMS_INLINE*CURSOR_ITEMS_LINES ? getIcon(MORE_CREATURES) : items.get(i).picture;
+                int y=Math.min(i/CURSOR_ITEMS_INLINE,CURSOR_ITEMS_LINES-1),x=i-y*CURSOR_ITEMS_INLINE;
+                child.setLocalTranslation(CURSOR_ITEM_SIZE*x,-CURSOR_ITEM_SIZE*y,0);icons.attachChild(child);
             }
-            int y = i / CURSOR_ITEMS_INLINE;
-            if (y == CURSOR_ITEMS_LINES) {
-                y = CURSOR_ITEMS_LINES - 1;
+            if (!items.isEmpty()) {
+                var control=items.getFirst().item;
+                if (control.getInHandMesh()!=null) {
+                    current=new Node("CurrentItem");current.addControl(control);
+                    current.setLocalRotation(Matrix3f.ZERO);
+                    AnimationLoader.playAnimation(current,control.getInHandMesh(),assetManager);
+                }
             }
-            int x = i - y * CURSOR_ITEMS_INLINE;
-            child.setLocalTranslation(CURSOR_ITEM_SIZE * x, -CURSOR_ITEM_SIZE * y, 0);
-            cursor.attachChild(child);
-        }
+            return new PreparedHand(items,icons,current);
+        } catch (RuntimeException failure) {release(items);throw failure;}
+    }
 
-        // Set the actual current object graphics
-        if (currentItem.getInHandMesh() != null) {
+    private KeeperHandItem createItem(HandViewState.Item value) {
+        IEntityViewControl control = switch(value.type()) {
+            case CREATURE -> new CreatureViewControl(value.entityId(),entityData,kwdFile.getCreature(value.definitionId()),
+                    Creature.AnimationType.IN_HAND,assetManager,null);
+            case OBJECT -> new ObjectViewControl(value.entityId(),entityData,kwdFile.getObject(value.definitionId()),new ObjectViewState(),assetManager,null);
+            default -> throw new IllegalArgumentException("Unsupported held view type");
+        };
+        try {return new KeeperHandItem(control,getIcon(control.getInHandIcon()));}
+        catch (RuntimeException failure) {control.cleanup();throw failure;}
+    }
 
-            // Attach to GUI queueNode and play the animation
-            Node itemNode = new Node("CurrentItem");
-            currentItem.setSpatial(null);
-            itemNode.addControl(currentItem);
-            itemNode.setLocalTranslation(0, 0, 0);
-            itemNode.setLocalRotation(Matrix3f.ZERO);
-            queueNode.attachChild(itemNode);
-            AnimationLoader.playAnimation(itemNode, currentItem.getInHandMesh(), assetManager);
+    private void publish(PreparedHand prepared,List<HandViewState.Item> values) {
+        handQueue.publish(values);
+        release(queue);queue.clear();queue.addAll(prepared.items);
+        queueNode.detachAllChildren();cursor.detachAllChildren();cursor.attachChild(prepared.icons);
+        if (prepared.current!=null) queueNode.attachChild(prepared.current);
+        currentItem=queue.isEmpty() ? null : queue.getFirst().item;
+    }
+
+    private static void release(List<KeeperHandItem> items) {
+        for (var item : items) {
+            Spatial spatial=item.item.getSpatial();
+            if (spatial!=null) spatial.removeControl(item.item);
+            item.item.cleanup();
         }
     }
 
     protected abstract void updateCursor();
 
-    private final class InHandLoaderCreatureModelContainer extends EntityContainer<KeeperHandItem> {
-
-        public InHandLoaderCreatureModelContainer(EntityData entityData) {
-            super(entityData, new FieldFilter(InHand.class, "playerId", playerId), InHand.class);
-        }
-
-        @Override
-        protected KeeperHandItem addObject(Entity e) {
-            IEntityViewControl viewControl;
-            InHand inHand = entityData.getComponent(e.getId(), InHand.class);
-            switch (inHand.type) {
-                case CREATURE: {
-                    viewControl = new CreatureViewControl(e.getId(), entityData, kwdFile.getCreature(inHand.id), Creature.AnimationType.IN_HAND, assetManager, null);
-                    break;
-                }
-                case OBJECT: {
-                    viewControl = new ObjectViewControl(e.getId(), entityData, kwdFile.getObject(inHand.id), new ObjectViewState(), assetManager, null);
-                    break;
-                }
-                default:
-                    throw new UnsupportedOperationException("Type " + inHand.type + " can't be picked up yet!");
-            }
-
-            return addToHand(viewControl, inHand.index);
-        }
-
-        @Override
-        protected void updateObject(KeeperHandItem object, Entity e) {
-
-            // Only support index changes (these should not happen)
-            InHand inHand = entityData.getComponent(e.getId(), InHand.class);
-            object.index = inHand.index;
-        }
-
-        @Override
-        protected void removeObject(KeeperHandItem object, Entity e) {
-            removeFromHand(object);
-        }
-
-    }
-
-    private static final class KeeperHandItem implements Comparable<KeeperHandItem> {
-
-        private int index;
-        private IEntityViewControl item;
-        private Picture picture;
-
-        @Override
-        public int compareTo(KeeperHandItem o) {
-            return Integer.compare(index, o.index);
-        }
-
-        @Override
-        public int hashCode() {
-            int hash = 7;
-            hash = 79 * hash + Objects.hashCode(this.item);
-            return hash;
-        }
-
-        @Override
-        public boolean equals(Object obj) {
-            if (this == obj) {
-                return true;
-            }
-            if (obj == null) {
-                return false;
-            }
-            if (getClass() != obj.getClass()) {
-                return false;
-            }
-            final KeeperHandItem other = (KeeperHandItem) obj;
-            if (!Objects.equals(this.item, other.item)) {
-                return false;
-            }
-            return true;
-        }
-
-    }
+    private record KeeperHandItem(IEntityViewControl item,Picture picture) {}
+    private record PreparedHand(List<KeeperHandItem> items,Node icons,Node current) {}
 }
