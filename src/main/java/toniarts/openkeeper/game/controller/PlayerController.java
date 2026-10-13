@@ -55,6 +55,7 @@ public final class PlayerController implements IPlayerController {
     private final PlayerDoorControl doorControl;
     private final PlayerTrapControl trapControl;
     private final PlayerResearchControl researchControl;
+    private final toniarts.openkeeper.game.controller.player.PlayerManufacturingControl manufacturingControl;
 
     public PlayerController(IKwdFile kwdFile, Keeper keeper, Creature imp, EntityData entityData, Map<Variable.MiscVariable.MiscType, Variable.MiscVariable> gameSettings) {
         this(kwdFile, keeper, imp, entityData, gameSettings, null, null);
@@ -65,6 +66,7 @@ public final class PlayerController implements IPlayerController {
             toniarts.openkeeper.game.data.PlayerControlState state,
             java.util.function.Function<com.simsilica.es.EntityId, toniarts.openkeeper.game.controller.room.IRoomController> rooms) {
         this.keeper = keeper;
+        manufacturingControl = new toniarts.openkeeper.game.controller.player.PlayerManufacturingControl(keeper.getId(), kwdFile, entityData);
 
         // Create the actual controllers
         goldControl = new PlayerGoldControl(keeper);
@@ -116,6 +118,11 @@ public final class PlayerController implements IPlayerController {
         Creature imp = state.impType() == null ? null : definition.getCreature(state.impType());
         if (state.impType() != null && imp == null) throw new IllegalArgumentException("Unknown worker type");
         return new PlayerController(definition, keeper, imp, data, Map.of(), state, rooms);
+    }
+
+    @Override
+    public toniarts.openkeeper.game.controller.player.PlayerManufacturingControl getManufacturingControl() {
+        return manufacturingControl;
     }
 
     @Override

@@ -134,6 +134,7 @@ public final class GameController implements IGameLogicUpdatable, IGameControlle
         gameTimer = new GameTimeController(saved.level().clock());
         gameResults = GameResultController.restoreState(saved.results(), gameTimer, service, levelInfo.players.keySet());
         LevelObjectives.validate(data, levelInfo.players.keySet());
+        toniarts.openkeeper.game.controller.player.PlayerManufacturingControl.validateOwners(data, levelInfo.players.keySet());
         try {
             gameWorldController = GameWorldController.restoreBindings(this, levelInfo, data, playerControllers, gameTimer, saved);
             var map = gameWorldController.getMapController();var objects = gameWorldController.getObjectsController();

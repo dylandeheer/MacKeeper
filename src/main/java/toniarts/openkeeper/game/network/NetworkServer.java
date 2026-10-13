@@ -187,6 +187,7 @@ public final class NetworkServer {
             Serializer.registerClass(HauledBy.class, new FieldSerializer());
             Serializer.registerClass(Health.class, new FieldSerializer());
             Serializer.registerClass(InHand.class, new FieldSerializer());
+            Serializer.registerClass(toniarts.openkeeper.game.component.ManufacturingOrder.class, new FieldSerializer());
             Serializer.registerClass(Interaction.class, new FieldSerializer());
             Serializer.registerClass(Mana.class, new FieldSerializer());
             Serializer.registerClass(MapTile.class, new FieldSerializer());

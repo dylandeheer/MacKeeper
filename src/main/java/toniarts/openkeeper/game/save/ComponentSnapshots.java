@@ -160,6 +160,14 @@ public final class ComponentSnapshots {
     // Explicit schema registrations follow. Changing any field's wire meaning
     // or order requires a version change and, when supported, a migration.
     static {
+        schema("manufacturing-order", 1, ManufacturingOrder.class, ManufacturingOrder::new)
+                .field("playerId", SHORT, c -> c.playerId, (c, v) -> c.playerId = v)
+                .field("trap", BOOLEAN, c -> c.trap, (c, v) -> c.trap = v)
+                .field("typeId", SHORT, c -> c.typeId, (c, v) -> c.typeId = v)
+                .field("requiredWork", INT, c -> c.requiredWork, (c, v) -> c.requiredWork = v)
+                .field("completedWork", INT, c -> c.completedWork, (c, v) -> c.completedWork = v)
+                .field("location", nullable(POINT), c -> c.location, (c, v) -> c.location = v)
+                .register();
         schema("attack-target", 1, AttackTarget.class, AttackTarget::new)
                 .field("entityId", nullable(ENTITY_ID), c -> c.entityId, (c, v) -> c.entityId = v)
                 .register();

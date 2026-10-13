@@ -632,3 +632,10 @@ All rendered native smoke probes mute the OpenAL listener while keeping source p
 ## Objective target registry
 
 Campaign targets persist as `LevelObjective` components with six stable slots and validated keeper/creature references. Labels, fog availability and camera destinations rebuild from asynchronous client observations. The panel's scroll offset is transient and returns to the top with a fresh HUD. A muted native Level12 check preserves the registry and labels through fresh local archive loading, then verifies first-match removal and return to the paused menu. See [OBJECTIVE-TARGETS.md](OBJECTIVE-TARGETS.md) for dispatch, parity and acceptance limits.
+
+
+## Manufacturing queue foundation
+
+Pending orders persist as version-1 `ManufacturingOrder` components. Their entity allocation order supplies a stable per-keeper FIFO; progress belongs only to the first order. Rebinding validates the complete owner roster, queue capacity, installed defense/crate definitions, required work and progress without adding orders or advancing production. Archives predating orders bind to an empty queue without migration writes. The component registration advances network protocol to 10.
+
+The 603-test suite and owned Level3 server audit preserve partially completed orders and identical queue continuation through full archive write/read/restore, followed by a second archive. Physical crate production, room storage, creature manufacturing tasks, delivery and their persistence remain to be connected; this evidence covers the queue foundation only. See [DEFENSES.md](DEFENSES.md).

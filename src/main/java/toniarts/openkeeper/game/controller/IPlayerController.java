@@ -60,6 +60,8 @@ public interface IPlayerController {
 
     PlayerResearchControl getResearchControl();
 
+    toniarts.openkeeper.game.controller.player.PlayerManufacturingControl getManufacturingControl();
+
     void removeListener(PlayerListener listener);
 
 }
