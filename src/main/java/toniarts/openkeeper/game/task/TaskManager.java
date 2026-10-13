@@ -143,6 +143,13 @@ public final class TaskManager implements ITaskManager, IGameLogicUpdatable {
         return toniarts.openkeeper.game.save.RoomTaskSnapshots.captureRoots(roots);
     }
 
+    public toniarts.openkeeper.game.save.EntityTaskSnapshots.Capture captureEntityTaskStates(Collection<Task> detachedNodes) {
+        var roots = new ArrayList<Task>(detachedNodes);
+        roots.addAll(tasksByIds.values());taskQueues.values().forEach(roots::addAll);
+        roomTasks.values().forEach(entries -> roots.addAll(entries.values()));
+        return toniarts.openkeeper.game.save.EntityTaskSnapshots.captureRoots(roots);
+    }
+
     private final EntitySet taskEntities;
     private final EntitySet unconsciousEntities;
     private final EntitySet corpseEntities;

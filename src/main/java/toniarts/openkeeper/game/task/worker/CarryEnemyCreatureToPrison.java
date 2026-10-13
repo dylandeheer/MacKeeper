@@ -33,16 +33,27 @@ import toniarts.openkeeper.utils.WorldUtils;
  *
  * @author Toni Helenius <helenius.toni@gmail.com>
  */
-public final class CarryEnemyCreatureToPrison extends AbstractCapacityCriticalRoomTask {
+public final class CarryEnemyCreatureToPrison extends AbstractCapacityCriticalRoomTask implements toniarts.openkeeper.game.task.CreatureTargetTask {
 
-    private final ICreatureController creature;
+    private final toniarts.openkeeper.game.task.TaskTarget<ICreatureController> creature;
     private boolean executed = false;
 
     public CarryEnemyCreatureToPrison(toniarts.openkeeper.game.task.TaskIdentityAllocator taskIds, final INavigationService navigationService, final IMapController mapController, Point p, short playerId, IRoomController room,
             TaskManager taskManager, ICreatureController creature) {
         super(taskIds, navigationService, mapController, p, playerId, room, taskManager);
-        this.creature = creature;
+        this.creature = toniarts.openkeeper.game.task.TaskTarget.bound(creature);
     }
+
+    public CarryEnemyCreatureToPrison(toniarts.openkeeper.game.task.TaskIdentityAllocator ids, toniarts.openkeeper.game.data.TaskBaseState saved,
+            INavigationService navigation, IMapController map, toniarts.openkeeper.utils.Point point, short player,
+            com.simsilica.es.EntityId targetCreature, IRoomController room, TaskManager manager, boolean executed) {
+        super(ids, saved, navigation, map, point, player, room, manager);
+        creature = toniarts.openkeeper.game.task.TaskTarget.pending(targetCreature);
+        this.executed = executed;
+    }
+
+    @Override public toniarts.openkeeper.game.task.TaskTarget<ICreatureController> creatureTarget() {return creature;}
+    public boolean hasExecuted() {return executed;}
 
     @Override
     public Vector2f getTarget(ICreatureController creature) {
@@ -64,11 +75,12 @@ public final class CarryEnemyCreatureToPrison extends AbstractCapacityCriticalRo
 
     @Override
     public void executeTask(ICreatureController creature, float executionDuration) {
-        this.creature.imprison(playerId, room.getEntityId());
+        this.creature.get();
+        this.creature.get().imprison(playerId, room.getEntityId());
         executed = true;
 
         // Set the dragged state
-        this.creature.setHaulable(null);
+        this.creature.get().setHaulable(null);
     }
 
     @Override
@@ -78,10 +90,11 @@ public final class CarryEnemyCreatureToPrison extends AbstractCapacityCriticalRo
 
     @Override
     public void unassign(ICreatureController creature) {
+        this.creature.get();
         super.unassign(creature);
 
         // Set the dragged state
-        this.creature.setHaulable(null);
+        this.creature.get().setHaulable(null);
     }
 
     @Override

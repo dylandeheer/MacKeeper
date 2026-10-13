@@ -29,19 +29,30 @@ import toniarts.openkeeper.utils.WorldUtils;
  *
  * @author Toni Helenius <helenius.toni@gmail.com>
  */
-public final class GoToSleep extends AbstractTileTask {
+public final class GoToSleep extends AbstractTileTask implements toniarts.openkeeper.game.task.CreatureTargetTask {
 
     private boolean executed = false;
-    private final ICreatureController creature;
+    private final toniarts.openkeeper.game.task.TaskTarget<ICreatureController> creature;
 
     public GoToSleep(toniarts.openkeeper.game.task.TaskIdentityAllocator taskIds, final INavigationService navigationService, final IMapController mapController, ICreatureController creature) {
         super(taskIds, navigationService, mapController, creature.getLairLocation(), creature.getOwnerId());
-        this.creature = creature;
+        this.creature = toniarts.openkeeper.game.task.TaskTarget.bound(creature);
     }
+
+    public GoToSleep(toniarts.openkeeper.game.task.TaskIdentityAllocator ids, toniarts.openkeeper.game.data.TaskBaseState saved,
+            INavigationService navigation, IMapController map, toniarts.openkeeper.utils.Point point, short player,
+            com.simsilica.es.EntityId targetCreature, boolean executed) {
+        super(ids, saved, navigation, map, point, player);
+        creature = toniarts.openkeeper.game.task.TaskTarget.pending(targetCreature);
+        this.executed = executed;
+    }
+
+    @Override public toniarts.openkeeper.game.task.TaskTarget<ICreatureController> creatureTarget() {return creature;}
+    public boolean hasExecuted() {return executed;}
 
     @Override
     public boolean isValid(ICreatureController creature) {
-        return !executed && this.creature.hasLair();
+        return !executed && this.creature.get().hasLair();
     }
 
     @Override
@@ -51,6 +62,7 @@ public final class GoToSleep extends AbstractTileTask {
 
     @Override
     public void executeTask(ICreatureController creature, float executionDuration) {
+        this.creature.get();
         creature.sleep();
 
         // This is a one timer

@@ -47,6 +47,17 @@ public final class CarryObjectToStorageTask extends AbstractCapacityCriticalRoom
         this.gameObject = gameObject;
     }
 
+    public CarryObjectToStorageTask(toniarts.openkeeper.game.task.TaskIdentityAllocator ids, toniarts.openkeeper.game.data.TaskBaseState saved,
+            INavigationService navigation, IMapController map, toniarts.openkeeper.utils.Point point, short player,
+            IObjectController object, IRoomController room, TaskManager manager, boolean executed) {
+        super(ids, saved, navigation, map, point, player, room, manager);
+        gameObject = java.util.Objects.requireNonNull(object);
+        this.executed = executed;
+    }
+
+    public IObjectController getObjectController() {return gameObject;}
+    public boolean hasExecuted() {return executed;}
+
     @Override
     public Vector2f getTarget(ICreatureController creature) {
         return WorldUtils.pointToVector2f(getTaskLocation()); // FIXME 0.5f not needed?

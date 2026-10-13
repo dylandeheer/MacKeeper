@@ -44,6 +44,19 @@ public final class ObjectController extends EntityController implements IObjectC
         this.object = object;
     }
 
+    public toniarts.openkeeper.game.data.ObjectControlState captureState() {
+        return new toniarts.openkeeper.game.data.ObjectControlState(entityId, object.getObjectId());
+    }
+
+    /** Bind an existing cached definition, including an allocated but removed entity. */
+    public static ObjectController restoreState(toniarts.openkeeper.game.data.ObjectControlState state,
+            toniarts.openkeeper.game.save.GameEntityData data, toniarts.openkeeper.tools.convert.map.IKwdFile definition,
+            IObjectsController objects, IMapController map) {
+        var object = definition.getObject(state.definition());
+        if (!data.wasAllocated(state.entityId()) || object == null) throw new IllegalArgumentException("Missing object definition/allocation");
+        return new ObjectController(state.entityId(), data, object, objects, map);
+    }
+
     @Override
     public int getPickUpPriority() {
         return object.getPickUpPriority();

@@ -45,6 +45,16 @@ public final class FetchObjectTask extends AbstractTileTask {
         this.gameObject = objectController;
     }
 
+    public FetchObjectTask(toniarts.openkeeper.game.task.TaskIdentityAllocator ids, toniarts.openkeeper.game.data.TaskBaseState saved,
+            INavigationService navigation, IMapController map, toniarts.openkeeper.utils.Point point, short player,
+            IObjectController object, TaskManager manager) {
+        super(ids, saved, navigation, map, point, player);
+        gameObject = java.util.Objects.requireNonNull(object);
+        taskManager = manager;
+    }
+
+    public IObjectController getObjectController() {return gameObject;}
+
     @Override
     public Vector2f getTarget(ICreatureController creature) {
         return WorldUtils.pointToVector2f(getTaskLocation()); // FIXME 0.5f not needed?

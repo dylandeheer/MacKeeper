@@ -42,6 +42,9 @@ public abstract class AbstractTileTask extends AbstractTask {
         super(taskIds, saved, navigation, map);this.location = location;this.playerId = playerId;
     }
 
+    /** Cached tile target, even when a subclass reports a moving entity location. */
+    public final Point captureTileLocation() {return location;}
+
     public short getPlayerId() {return playerId;}
 
     @Override

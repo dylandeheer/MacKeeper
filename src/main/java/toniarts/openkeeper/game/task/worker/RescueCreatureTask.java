@@ -34,16 +34,26 @@ import toniarts.openkeeper.utils.WorldUtils;
  *
  * @author Toni Helenius <helenius.toni@gmail.com>
  */
-public final class RescueCreatureTask extends AbstractTileTask {
+public final class RescueCreatureTask extends AbstractTileTask implements toniarts.openkeeper.game.task.CreatureTargetTask {
 
-    private final ICreatureController creature;
+    private final toniarts.openkeeper.game.task.TaskTarget<ICreatureController> creature;
     private final TaskManager taskManager;
 
     public RescueCreatureTask(toniarts.openkeeper.game.task.TaskIdentityAllocator taskIds, final TaskManager taskManager, final INavigationService navigationService, final IMapController mapController, ICreatureController creature, short playerId) {
         super(taskIds, navigationService, mapController, WorldUtils.vectorToPoint(creature.getPosition()), playerId);
-        this.creature = creature;
+        this.creature = toniarts.openkeeper.game.task.TaskTarget.bound(creature);
         this.taskManager = taskManager;
     }
+
+    public RescueCreatureTask(toniarts.openkeeper.game.task.TaskIdentityAllocator ids, toniarts.openkeeper.game.data.TaskBaseState saved,
+            INavigationService navigation, IMapController map, toniarts.openkeeper.utils.Point point, short player,
+            com.simsilica.es.EntityId targetCreature, TaskManager manager) {
+        super(ids, saved, navigation, map, point, player);
+        creature = toniarts.openkeeper.game.task.TaskTarget.pending(targetCreature);
+        taskManager = manager;
+    }
+
+    @Override public toniarts.openkeeper.game.task.TaskTarget<ICreatureController> creatureTarget() {return creature;}
 
     @Override
     public Vector2f getTarget(ICreatureController creature) {
@@ -52,21 +62,21 @@ public final class RescueCreatureTask extends AbstractTileTask {
 
     @Override
     public Point getTaskLocation() {
-        Vector3f pos = creature.getPosition();
+        Vector3f pos = creature.get().getPosition();
         if (pos != null) {
-            return WorldUtils.vectorToPoint(creature.getPosition());
+            return WorldUtils.vectorToPoint(creature.get().getPosition());
         }
         return null;
     }
 
     @Override
     public boolean isValid(ICreatureController creature) {
-        return this.creature.isUnconscious() && this.creature.hasLair() && !this.creature.isDragged() && !this.creature.isRecuperating();
+        return this.creature.get().isUnconscious() && this.creature.get().hasLair() && !this.creature.get().isDragged() && !this.creature.get().isRecuperating();
     }
 
     @Override
     public boolean isRemovable() {
-        return !this.creature.isUnconscious();
+        return !this.creature.get().isUnconscious();
     }
 
     @Override
@@ -76,10 +86,11 @@ public final class RescueCreatureTask extends AbstractTileTask {
 
     @Override
     public void executeTask(ICreatureController creature, float executionDuration) {
-        this.creature.setHaulable(creature);
+        this.creature.get();
+        this.creature.get().setHaulable(creature);
 
         // Assign carry to lair
-        CarryCreatureToLairTask task = new CarryCreatureToLairTask(taskIds, navigationService, mapController, this.creature, playerId);
+        CarryCreatureToLairTask task = new CarryCreatureToLairTask(taskIds, navigationService, mapController, this.creature.get(), playerId);
         taskManager.addTask(playerId, task);
         task.assign(creature, true);
     }
@@ -91,13 +102,13 @@ public final class RescueCreatureTask extends AbstractTileTask {
 
     @Override
     public EntityId getTaskTarget() {
-        return creature.getEntityId();
+        return creature.id();
     }
 
     @Override
     public int hashCode() {
         int hash = 5;
-        hash = 83 * hash + Objects.hashCode(this.creature);
+        hash = 83 * hash + Objects.hashCode(this.creature.get());
         return hash;
     }
 
@@ -113,7 +124,7 @@ public final class RescueCreatureTask extends AbstractTileTask {
             return false;
         }
         final RescueCreatureTask other = (RescueCreatureTask) obj;
-        if (!Objects.equals(this.creature, other.creature)) {
+        if (!Objects.equals(this.creature.get(), other.creature.get())) {
             return false;
         }
         return true;

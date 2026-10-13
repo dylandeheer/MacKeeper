@@ -23,11 +23,11 @@ class OwnerSnapshotSmoke {
             List<toniarts.openkeeper.game.controller.map.FlashTileControl.State> flashes,
             toniarts.openkeeper.game.logic.PlayerCreatureSystem.State creatureIndex,
             toniarts.openkeeper.game.logic.PlayerSpellbookSystem.State spellbookIndex,
-            toniarts.openkeeper.game.logic.ChickenAiSystem.SavedState chickens, List<CreatureControlState> creatureControllers, toniarts.openkeeper.game.logic.CreatureAiSystem.SavedState creatureAi, PartyRegistryState parties, toniarts.openkeeper.game.task.TaskIdentityAllocator.State taskAllocation, List<TileTaskSnapshots.State> tileTasks, RoomTaskSnapshots.Capture roomTasks) { }
+            toniarts.openkeeper.game.logic.ChickenAiSystem.SavedState chickens, List<CreatureControlState> creatureControllers, toniarts.openkeeper.game.logic.CreatureAiSystem.SavedState creatureAi, PartyRegistryState parties, toniarts.openkeeper.game.task.TaskIdentityAllocator.State taskAllocation, List<TileTaskSnapshots.State> tileTasks, RoomTaskSnapshots.Capture roomTasks, EntityTaskSnapshots.Capture entityTasks) { }
 
     public static void main(String[] args) throws Exception {
         String base = Path.of(args[0]).toAbsolutePath().normalize() + "/";
-        int ownerCount = 0, pickedUp = 0, observedBooks = 0, observedChickens = 0, observedCreatures = 0, observedParties = 0, spawnedParties = 0, tileTaskCount = 0, roomTaskCount = 0;
+        int ownerCount = 0, pickedUp = 0, observedBooks = 0, observedChickens = 0, observedCreatures = 0, observedParties = 0, spawnedParties = 0, tileTaskCount = 0, roomTaskCount = 0, entityTaskCount = 0;
         for (String name : List.of("level1", "level17", "TrapTime", "level10")) {
             var kwd = KwdFile.load(base, Path.of(base, "Data/editor/maps/" + name + ".kwd"));
             var data = new GameEntityData();
@@ -81,6 +81,10 @@ class OwnerSnapshotSmoke {
                     game.getGameWorldController().getObjectsController().spawnFreerangeChicken((short) 3,
                             toniarts.openkeeper.utils.WorldUtils.pointToVector3f(heart), game.getGameTimer().getGameTime());
                     ((MapController) game.getGameWorldController().getMapController()).flashTiles(List.of(new toniarts.openkeeper.utils.Point(0, 0)), (short) 3, 2);
+                    // Seed a loose book through the ordinary object factory so its
+                    // normal entity-query event creates a real fetch task.
+                    var looseSpell = kwd.getKeeperSpells().getFirst();
+                    game.getGameWorldController().getObjectsController().addRoomSpellBook((short)3, heart.x, heart.y, new PlayerSpell(looseSpell.getId()));
                     controller.getRoomControl().setPortalsOpen(false);
                     controller.getKeeper().setMaxMana(controller.getKeeper().getMaxMana() + 123);
                     for (EntityId id : new TreeSet<>(data.findEntities(null, CreatureComponent.class, Owner.class))) {
@@ -89,6 +93,18 @@ class OwnerSnapshotSmoke {
                         if (!controller.getHandControl().isEmpty()) break;
                     }
                 });
+                manager.runPlayerCommand(() -> {
+                    // A controlled unconscious fixture drives the production rescue/capture query.
+                    var game = manager.getGameController();
+                    for (var id : new TreeSet<>(data.findEntities(null, CreatureComponent.class, Owner.class, Health.class, Position.class))) {
+                        if (data.getComponent(id, Owner.class).ownerId != 3 || data.getComponent(id, InHand.class) != null || data.getComponent(id, Death.class) != null) continue;
+                        data.setComponent(id, new Unconscious(game.getGameTimer().getGameTime()));break;
+                    }
+                });
+                long taskDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+                while (manager.captureSnapshotWithSystems((game, systems) -> systems.entityTasks().tasks().isEmpty())) {
+                    require(System.nanoTime() < taskDeadline, "Seeded entity tasks were not observed");Thread.sleep(20);
+                }
                 long chickenDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
                 while (manager.captureSnapshotWithSystems((game, systems) -> systems.chickens().controllers().isEmpty())) {
                     require(System.nanoTime() < chickenDeadline, "Probe egg was not observed");Thread.sleep(20);
@@ -112,7 +128,7 @@ class OwnerSnapshotSmoke {
                                     new LevelSnapshots.State(LevelState.capture(game.getLevelInfo()), ((GameTimeController) game.getGameTimer()).captureState()), Map.copyOf(statistics),
                                     ((MapController) game.getGameWorldController().getMapController()).captureRoomStates(),
                                     game.getPlayerControllers().values().stream().map(player -> ((PlayerController) player).captureState()).toList(),
-                                    ((MapController) game.getGameWorldController().getMapController()).captureFlashControls(), systems.creatures(), systems.spellbooks(), systems.chickens(), systems.creatureControllers(), systems.creatureAi(), systems.parties(), systems.taskAllocation(), systems.tileTasks(), systems.roomTasks());
+                                    ((MapController) game.getGameWorldController().getMapController()).captureFlashControls(), systems.creatures(), systems.spellbooks(), systems.chickens(), systems.creatureControllers(), systems.creatureAi(), systems.parties(), systems.taskAllocation(), systems.tileTasks(), systems.roomTasks(), systems.entityTasks());
                         } catch (IOException e) { throw new UncheckedIOException(e); }
                     });
                     var staged = GameEntityData.restore(EntitySnapshots.decode(EntitySnapshots.encode(capture.entities())));
@@ -244,7 +260,12 @@ class OwnerSnapshotSmoke {
                             require(state.equals(TileTaskSnapshots.capture(task)), "Tile task identity/progress differs");tileTaskCount++;
                         }
                         var removedRooms = new HashMap<EntityId, toniarts.openkeeper.game.controller.room.IRoomController>();
-                        for (var state : RoomSnapshots.decode(RoomSnapshots.encode(capture.roomTasks().removedRooms()))) {
+                        var removedStates = new TreeMap<EntityId, RoomState>();
+                        for (var group : List.of(capture.roomTasks().removedRooms(), capture.entityTasks().removedRooms())) for (var state : group) {
+                            var prior = removedStates.putIfAbsent(state.entityId(), state);
+                            require(prior == null || prior.equals(state), "Removed room sections disagree");
+                        }
+                        for (var state : RoomSnapshots.decode(RoomSnapshots.encode(List.copyOf(removedStates.values())))) {
                             require(map.getRoomController(state.entityId()) == null, "Removed room is still in map index");
                             removedRooms.put(state.entityId(), RoomControllerFactory.restoreRemovedRoom(staged, kwd, state, objects, kwd.getVariables(), new GameTimeController(capture.clock())));
                         }
@@ -258,6 +279,15 @@ class OwnerSnapshotSmoke {
                                         world, staged, id -> stagedPlayers.stream().filter(player -> player.getKeeper().getId() == id).findFirst().orElse(null), objects);
                                 task.bindRestoredAssignees(creatures::getBoundController);
                                 require(state.equals(RoomTaskSnapshots.capture(task)), "Room task identity/progress/completion differs");roomTaskCount++;
+                            }
+                            for (var state : capture.entityTasks().tasks()) {
+                                var decoded = EntityTaskSnapshots.decode(EntityTaskSnapshots.encode(state));
+                                var task = EntityTaskSnapshots.restore(decoded, taskAllocator, navigation, map,
+                                        id -> removedRooms.containsKey(id) ? removedRooms.get(id) : map.getRoomController(id), roomTaskManager,
+                                        null, staged, kwd, objects);
+                                if (task instanceof toniarts.openkeeper.game.task.CreatureTargetTask target) target.creatureTarget().bind(creatures::getBoundController);
+                                task.bindRestoredAssignees(creatures::getBoundController);
+                                require(state.equals(EntityTaskSnapshots.capture(task)), "Entity task target/progress/completion differs");entityTaskCount++;
                             }
                         } finally {roomTaskManager.stop();}
                         require(capture.taskAllocation().equals(taskAllocator.captureState()), "Restoring tasks consumed IDs");
@@ -305,9 +335,11 @@ class OwnerSnapshotSmoke {
         System.out.println("PASS tile task node round trips=" + tileTaskCount);
         require(roomTaskCount > 0, "No live room tasks exercised");
         System.out.println("PASS room task node round trips=" + roomTaskCount);
+        require(entityTaskCount > 0, "No live entity tasks exercised");
+        System.out.println("PASS entity task node round trips=" + entityTaskCount);
         System.out.println("PASS party node round trips=" + observedParties + " spawned index entries=" + spawnedParties);
         System.out.println("PASS 12 live owner captures; keeper round trips=" + ownerCount + " carried entity round trips=" + pickedUp);
-        System.out.println("Keeper/hand/level/time/statistics/map/room/player/flash/creature-index/spellbook-index/object/chicken/creature-cache/AI-membership/party/tile-task/room-task bindings only. Full world restoration, resumed gameplay and complete save files remain unverified.");
+        System.out.println("Keeper/hand/level/time/statistics/map/room/player/flash/creature-index/spellbook-index/object/chicken/creature-cache/AI-membership/party/tile-task/room-task/entity-task bindings only. Full world restoration, resumed gameplay and complete save files remain unverified.");
     }
     static void require(boolean ok, String message) { if (!ok) throw new AssertionError(message); }
 }
