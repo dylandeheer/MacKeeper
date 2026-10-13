@@ -29,3 +29,5 @@ This evidence concerns one headless simulation workload. It does not establish r
 The simulation generator now uses explicitly saved SplitMix64 state, isolated from visual randomness. Historical timings above used the previous global generators and are not directly comparable with the new seed-zero sequence. Re-measure both versions on an equivalent workload before claiming an additional speedup.
 
 A fresh run using the world-owned generator completed the same 120 simulated seconds in 29.6 seconds, ending with 10,000 keeper gold, seven creatures and four imps. This is a new workload baseline, not a measured improvement over the historical random sequence.
+
+After spatial persistence introduced stable entity ordering, the same seeded workload completed in 30.6 seconds with the same reported gold/creature/imp totals. The prior run was 29.6 seconds. These single runs are a sanity check, not evidence of a statistically established slowdown or speedup; full state equivalence and rendered performance remain separate checks.

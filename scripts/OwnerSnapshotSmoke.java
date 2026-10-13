@@ -23,11 +23,11 @@ class OwnerSnapshotSmoke {
             List<toniarts.openkeeper.game.controller.map.FlashTileControl.State> flashes,
             toniarts.openkeeper.game.logic.PlayerCreatureSystem.State creatureIndex,
             toniarts.openkeeper.game.logic.PlayerSpellbookSystem.State spellbookIndex,
-            toniarts.openkeeper.game.logic.ChickenAiSystem.SavedState chickens, List<CreatureControlState> creatureControllers, toniarts.openkeeper.game.logic.CreatureAiSystem.SavedState creatureAi, PartyRegistryState parties, toniarts.openkeeper.game.task.TaskIdentityAllocator.State taskAllocation, List<TileTaskSnapshots.State> tileTasks, RoomTaskSnapshots.Capture roomTasks, EntityTaskSnapshots.Capture entityTasks, TaskGraphSnapshots.State taskGraph, TaskManagerSnapshots.State taskManager, ManaSnapshots.State mana, ExperienceSnapshots.State experience, KeeperEconomySnapshots.State economy, CreatureSpawnSnapshots.State recruitment, ChickenSpawnSnapshots.State chickenSpawning, LifetimeSnapshots.State lifetimes, SlapSnapshots.State slaps, HealthSnapshots.State health, AnimationSnapshots.State animation, LifetimeSnapshots.Clock creatureView, MovementSnapshots.State movement, Map<String,List<TriggerSnapshots.State>> triggerTrees, Map<TriggerRegistrySnapshots.Kind,TriggerRegistrySnapshots.State> triggerRegistries, toniarts.openkeeper.game.random.SimulationRandom.State random, ResultSnapshots.State results) { }
+            toniarts.openkeeper.game.logic.ChickenAiSystem.SavedState chickens, List<CreatureControlState> creatureControllers, toniarts.openkeeper.game.logic.CreatureAiSystem.SavedState creatureAi, PartyRegistryState parties, toniarts.openkeeper.game.task.TaskIdentityAllocator.State taskAllocation, List<TileTaskSnapshots.State> tileTasks, RoomTaskSnapshots.Capture roomTasks, EntityTaskSnapshots.Capture entityTasks, TaskGraphSnapshots.State taskGraph, TaskManagerSnapshots.State taskManager, ManaSnapshots.State mana, ExperienceSnapshots.State experience, KeeperEconomySnapshots.State economy, CreatureSpawnSnapshots.State recruitment, ChickenSpawnSnapshots.State chickenSpawning, LifetimeSnapshots.State lifetimes, SlapSnapshots.State slaps, HealthSnapshots.State health, AnimationSnapshots.State animation, LifetimeSnapshots.Clock creatureView, MovementSnapshots.State movement, Map<String,List<TriggerSnapshots.State>> triggerTrees, Map<TriggerRegistrySnapshots.Kind,TriggerRegistrySnapshots.State> triggerRegistries, toniarts.openkeeper.game.random.SimulationRandom.State random, ResultSnapshots.State results, PositionSnapshots.State positions) { }
 
     public static void main(String[] args) throws Exception {
         String base = Path.of(args[0]).toAbsolutePath().normalize() + "/";
-        int ownerCount = 0, pickedUp = 0, observedBooks = 0, observedChickens = 0, observedCreatures = 0, observedParties = 0, spawnedParties = 0, tileTaskCount = 0, roomTaskCount = 0, entityTaskCount = 0, objectiveTaskCount = 0, decoratorCount = 0, movingBodies = 0, triggerTrees = 0, triggerNodes = 0, triggerOwners = 0, terminalResults = 0;
+        int ownerCount = 0, pickedUp = 0, observedBooks = 0, observedChickens = 0, observedCreatures = 0, observedParties = 0, spawnedParties = 0, tileTaskCount = 0, roomTaskCount = 0, entityTaskCount = 0, objectiveTaskCount = 0, decoratorCount = 0, movingBodies = 0, triggerTrees = 0, triggerNodes = 0, triggerOwners = 0, terminalResults = 0, spatialEntities = 0, spatialSensors = 0;
         for (String name : List.of("level1", "level17", "TrapTime", "level10")) {
             var kwd = KwdFile.load(base, Path.of(base, "Data/editor/maps/" + name + ".kwd"));
             var data = new GameEntityData();
@@ -144,7 +144,7 @@ class OwnerSnapshotSmoke {
                                     new LevelSnapshots.State(LevelState.capture(game.getLevelInfo()), ((GameTimeController) game.getGameTimer()).captureState()), Map.copyOf(statistics),
                                     ((MapController) game.getGameWorldController().getMapController()).captureRoomStates(),
                                     game.getPlayerControllers().values().stream().map(player -> ((PlayerController) player).captureState()).toList(),
-                                    ((MapController) game.getGameWorldController().getMapController()).captureFlashControls(), systems.creatures(), systems.spellbooks(), systems.chickens(), systems.creatureControllers(), systems.creatureAi(), systems.parties(), systems.taskAllocation(), systems.tileTasks(), systems.roomTasks(), systems.entityTasks(), systems.taskGraph(), systems.taskManager(), systems.mana(), systems.experience(), systems.economy(), systems.recruitment(), systems.chickenSpawning(), systems.lifetimes(), systems.slaps(), systems.health(), systems.animation(), systems.creatureView(), systems.movement(), ((GameController) game).captureTriggerTrees(), ((GameController) game).captureTriggerRegistries(), game.getRandom().captureState(), ((GameController) game).captureResults());
+                                    ((MapController) game.getGameWorldController().getMapController()).captureFlashControls(), systems.creatures(), systems.spellbooks(), systems.chickens(), systems.creatureControllers(), systems.creatureAi(), systems.parties(), systems.taskAllocation(), systems.tileTasks(), systems.roomTasks(), systems.entityTasks(), systems.taskGraph(), systems.taskManager(), systems.mana(), systems.experience(), systems.economy(), systems.recruitment(), systems.chickenSpawning(), systems.lifetimes(), systems.slaps(), systems.health(), systems.animation(), systems.creatureView(), systems.movement(), ((GameController) game).captureTriggerTrees(), ((GameController) game).captureTriggerRegistries(), game.getRandom().captureState(), ((GameController) game).captureResults(), systems.positions());
                         } catch (IOException e) { throw new UncheckedIOException(e); }
                     });
                     var staged = GameEntityData.restore(EntitySnapshots.decode(EntitySnapshots.encode(capture.entities())));
@@ -261,6 +261,23 @@ class OwnerSnapshotSmoke {
                         finally {chickenSystem.stop();}
                         // Build the actual executable task objects first, then close creature/target cycles.
                         var creatures = CreaturesController.restoreBindings(kwd, staged, kwd.getVariables(), new GameTimeController(capture.clock()), gameRef, map, level, random);
+                        var spatialState = PositionSnapshots.decode(PositionSnapshots.encode(capture.positions()));
+                        var spatialDoors = DoorsController.restoreBindings(kwd, staged, kwd.getVariables(), map, gameRef, level, objects);
+                        var spatial = toniarts.openkeeper.game.logic.PositionSystem.restoreState(map, staged, creatures, spatialDoors, objects, spatialState);
+                        try {
+                            require(spatialState.equals(spatial.captureState()), "Spatial observations/sensory cache differ");
+                            for (var entry : spatialState.observed().entrySet()) {
+                                var tile = spatial.getEntityLocation(entry.getKey());
+                                require(tile.getX() == entry.getValue().x() && tile.getY() == entry.getValue().y(), "Cached location changed");
+                            }
+                            for (var entry : spatialState.sensed().entrySet()) {
+                                if (staged.getComponent(entry.getKey(), Senses.class) != null)
+                                    require(entry.getValue().equals(new ArrayList<>(spatial.getSensedEntities(entry.getKey()))), "Cached sensing changed");
+                            }
+                            require(spatialState.equals(spatial.captureState()), "Cached reads advanced spatial observations");
+                            require(Arrays.equals(beforeHands, EntitySnapshots.encode(staged.capture())), "Spatial binding changed entities");
+                            spatialEntities += spatialState.observed().size();spatialSensors += spatialState.sensed().size();
+                        } finally {spatial.stop();}
                         var experienceState = ExperienceSnapshots.decode(ExperienceSnapshots.encode(capture.experience()));
                         var experienceSystem = toniarts.openkeeper.game.logic.CreatureExperienceSystem.restoreState(staged, kwd, creatures, experienceState);
                         try {require(experienceState.equals(experienceSystem.captureState()), "Experience timers/query memberships differ");}
@@ -469,6 +486,8 @@ class OwnerSnapshotSmoke {
         }
         System.out.println("PASS terminal result round trips=" + terminalResults + " (controlled outcomes, no replayed delivery)");
         require(terminalResults >= 8, "Missing nonempty terminal result bindings");
+        require(spatialEntities > 0 && spatialSensors > 0, "Missing observed spatial/sensory state");
+        System.out.println("PASS spatial observations=" + spatialEntities + " cached sensors=" + spatialSensors);
         require(pickedUp > 0, "No actual pickup exercised");
         require(observedBooks > 0, "No real library research book observed");
         System.out.println("PASS observed library book round trips=" + observedBooks);
@@ -493,7 +512,7 @@ class OwnerSnapshotSmoke {
         require(movingBodies > 0, "No active steering bodies exercised");
         System.out.println("PASS movement body round trips=" + movingBodies);
         System.out.println("PASS 12 live owner captures; keeper round trips=" + ownerCount + " carried entity round trips=" + pickedUp);
-        System.out.println("Keeper/hand/level/time/statistics/map/room/player/flash/creature-index/spellbook-index/object/chicken/creature-cache/AI-membership/party/unified-task-graph/task-manager/mana/experience/economy/recruitment/chicken-spawning/lifetimes/slaps/health/animation/view/mood/doors/loose-objects/hauling/bridge/movement/trigger-tree/trigger-registry/random/results bindings and listener activation only. Whole-world restoration, resumed gameplay and complete save files remain unverified.");
+        System.out.println("Keeper/hand/level/time/statistics/map/room/player/flash/creature-index/spellbook-index/object/chicken/creature-cache/AI-membership/party/unified-task-graph/task-manager/mana/experience/economy/recruitment/chicken-spawning/lifetimes/slaps/health/animation/view/mood/doors/loose-objects/hauling/bridge/movement/trigger-tree/trigger-registry/random/results/spatial bindings and listener activation only. Whole-world restoration, resumed gameplay and complete save files remain unverified.");
     }
     static void require(boolean ok, String message) { if (!ok) throw new AssertionError(message); }
 }
