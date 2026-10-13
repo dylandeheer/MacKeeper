@@ -14,6 +14,7 @@ import java.util.function.Supplier;
 public final class SimulationGate {
     private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock(true);
     private long suspendedNanos;
+    private long captureStarted;
 
     public void mutate(Runnable action) {
         Objects.requireNonNull(action);
@@ -32,6 +33,7 @@ public final class SimulationGate {
         }
         lock.writeLock().lock();
         long started = System.nanoTime();
+        captureStarted = started;
         try {
             return capture.get();
         } finally {
@@ -49,6 +51,12 @@ public final class SimulationGate {
 
     void leaveUpdate() {
         lock.readLock().unlock();
+    }
+
+    /** One common logical timestamp for every loop captured inside the exclusive callback. */
+    long snapshotTime() {
+        if (!lock.isWriteLockedByCurrentThread()) throw new IllegalStateException("Loop phase capture requires the snapshot boundary");
+        return captureStarted - suspendedNanos;
     }
 
     /** Read while holding an update lock; callers subtract this from wall time. */

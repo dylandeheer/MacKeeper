@@ -148,6 +148,7 @@ public final class GameLoopManager {
     /** Stage an independent server world; the service factory must bind exactly the supplied store. */
     public static GameLoopManager restore(IKwdFile definition, toniarts.openkeeper.game.save.SimulationState saved,
             Function<toniarts.openkeeper.game.save.GameEntityData, GameSessionServerService> serviceFactory) throws java.io.IOException {
+        saved.validateLoopRates(definition.getGameLevel().getTicksPerSec());
         var data = toniarts.openkeeper.game.save.GameEntityData.restore(saved.entities());
         try {
             var service = java.util.Objects.requireNonNull(serviceFactory.apply(data));
@@ -193,9 +194,9 @@ public final class GameLoopManager {
             heartConstruction = track(staged, DungeonHeartConstruction.restoreState(data, state.animation().heart()));
             fallSystem = track(staged, CreatureFallSystem.restoreState(data, state.animation().fall()));
             movementSystem = track(staged, MovementSystem.restoreState(data, state.movement()));
-            loops.add(new GameLoop(logic, 1_000_000_000 / definition.getGameLevel().getTicksPerSec(), "Logic", simulationGate));
-            loops.add(new GameLoop(new GameLogicManager(heartConstruction, fallSystem), GameLoop.INTERVAL_FPS_60, "Animation", simulationGate));
-            loops.add(new GameLoop(new GameLogicManager(movementSystem), GameLoop.INTERVAL_FPS_60, "Steering", simulationGate));
+            loops.add(new GameLoop(logic, saved.loops().get(0), "Logic", simulationGate));
+            loops.add(new GameLoop(new GameLogicManager(heartConstruction, fallSystem), saved.loops().get(1), "Animation", simulationGate));
+            loops.add(new GameLoop(new GameLogicManager(movementSystem), saved.loops().get(2), "Steering", simulationGate));
             game.finishRestoreBindings();
         } catch (RuntimeException | Error failure) {
             for (var system : staged.reversed()) {
@@ -236,6 +237,11 @@ public final class GameLoopManager {
     /** Capture the last-observed creature index under the same boundary as its player controls and ECS. */
     public <T> T captureSnapshot(java.util.function.BiFunction<IGameController, PlayerCreatureSystem.State, T> capture) {
         return captureSnapshot(game -> capture.apply(game, playerCreatureSystem.captureState()));
+    }
+
+    /** Call only from the exclusive snapshot callback; all phases use its common timestamp. */
+    public List<toniarts.openkeeper.utils.GameLoopClock.State> captureLoopPhases() {
+        return loops.stream().map(GameLoop::capturePhase).toList();
     }
 
     /** Capture implemented system sections together with controllers and ECS. */

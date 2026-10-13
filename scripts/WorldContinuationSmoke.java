@@ -48,7 +48,7 @@ class WorldContinuationSmoke {
                 } finally {restored.close();}
             }
         }
-        System.out.println("Server simulation continuation only; native loop phase, client/session restore, complete files and mission completion remain unverified.");
+        System.out.println("Sequential server continuation only; native scheduling, client/session restore and mission completion are outside this probe.");
     }
     static SimulationArchive diskRoundTrip(toniarts.openkeeper.tools.convert.map.IKwdFile definition,SimulationState state)throws Exception {
         var archive=new SimulationArchive(SimulationArchive.Definition.capture(definition),state);
@@ -74,7 +74,7 @@ class WorldContinuationSmoke {
             throw new AssertionError("Accepted service from active world");
         }catch(IllegalArgumentException expected){}
         if(!staged[0].capture().entities().isEmpty())throw new AssertionError("Rejected store was not closed");
-        var broken=new SimulationState(state.entities(),state.keepers(),state.players(),List.of(),state.flashes(),state.level(),state.systems(),state.triggers(),state.random(),state.results());
+        var broken=new SimulationState(state.entities(),state.keepers(),state.players(),List.of(),state.flashes(),state.level(),state.systems(),state.triggers(),state.random(),state.results(),state.loops());
         try {
             GameLoopManager.restore(kwd,broken,data->{staged[0]=data;return service(data);});
             throw new AssertionError("Accepted absent rooms");
@@ -134,13 +134,13 @@ class WorldContinuationSmoke {
             var loops=GameLoopManager.class.getDeclaredField("loops");loops.setAccessible(true);
             var owner=GameLoop.class.getDeclaredField("gameLoopManager");owner.setAccessible(true);
             var systems=GameLogicManager.class.getDeclaredField("updatables");systems.setAccessible(true);
-            var ready=GameLoop.class.getDeclaredField("initialized");ready.setAccessible(true);
+            var initialize=GameLoop.class.getDeclaredMethod("initializeSystems");initialize.setAccessible(true);
             try {
                 for(Object loop:(List<?>)loops.get(manager)) {
                     var members=(IGameLogicUpdatable[])systems.get(owner.get(loop));groups.add(members);
-                    for(var system:members)system.start();
-                    // Equivalent readiness for this explicitly single-threaded probe; never starts a Runner.
-                    ready.setBoolean(loop,true);
+                    // Freeze the real clock before startup. This probe supplies ticks directly;
+                    // native scheduling is tested separately, never inferred from sequential equality.
+                    ((GameLoop)loop).pause();initialize.invoke(loop);
                 }
             } catch(Exception|Error failure){close();throw failure;}
         }
@@ -154,6 +154,7 @@ class WorldContinuationSmoke {
         public void close(){manager.stop();manager.getEntityData().close();}
     }
     static void equal(SimulationState a,SimulationState b,String stage)throws Exception {
+        if(!a.loops().equals(b.loops()))throw new AssertionError(stage+" loop phases differ");
         var expected=sections(a);var actual=sections(b);
         if(!expected.keySet().equals(actual.keySet()))throw new AssertionError(stage+" section inventory differs: "+expected.keySet()+" vs "+actual.keySet());
         for(var key:expected.keySet())if(!Arrays.equals(expected.get(key),actual.get(key))) {

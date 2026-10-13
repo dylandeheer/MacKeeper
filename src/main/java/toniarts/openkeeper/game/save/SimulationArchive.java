@@ -37,6 +37,7 @@ public record SimulationArchive(Definition definition, SimulationState simulatio
     }
     public SimulationArchive {
         Objects.requireNonNull(definition);Objects.requireNonNull(simulation);
+        simulation.validateLoopRates(definition.ticksPerSecond());
         if (!simulation.triggers().keySet().equals(EnumSet.allOf(TriggerRegistrySnapshots.Kind.class)))
             throw new IllegalArgumentException("Missing trigger registry");
         simulation.triggers().forEach((kind, state) -> {

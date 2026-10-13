@@ -55,6 +55,29 @@ class SimulationArchivesTest {
         assertThrows(IOException.class,()->SimulationArchives.decode(version));
     }
 
+    @Test void corruptPhasesAndRatesFailBeforeStagingAndOldArchiveVersionIsRejected() throws Exception {
+        var archive=fixture();var bytes=SimulationArchives.encode(archive);
+        int section=find(bytes,ResultSnapshots.encode(archive.simulation().results()));
+        assertTrue(section>0);int phases=section+ResultSnapshots.encode(archive.simulation().results()).length;
+        for (int i=0;i<3;i++) {
+            for (int field=0;field<3;field++) {
+                var bad=bytes.clone();ByteBuffer.wrap(bad).putLong(phases+i*25+field*8,Long.MAX_VALUE);resign(bad);
+                assertThrows(IOException.class,()->SimulationArchives.decode(bad));
+            }
+            var bad=bytes.clone();bad[phases+i*25+24]=2;resign(bad);
+            assertThrows(IOException.class,()->SimulationArchives.decode(bad));
+        }
+        var old=bytes.clone();ByteBuffer.wrap(old).putInt(4,1);resign(old);
+        assertThrows(IOException.class,()->SimulationArchives.decode(old));
+        var level=new GameLevel();var ticks=GameLevel.class.getDeclaredField("ticksPerSec");ticks.setAccessible(true);ticks.setInt(level,10);
+        var map=(IKwdFile)Proxy.newProxyInstance(IKwdFile.class.getClassLoader(),new Class[]{IKwdFile.class},(p,m,a)->switch(m.getName()){
+            case "getGameLevel"->level;default->throw new AssertionError(m.getName());
+        });
+        assertThrows(IllegalArgumentException.class,()->GameLoopManager.restore(map,archive.simulation(),data->{fail("Wrong rates reached staging");return null;}));
+        assertThrows(IllegalArgumentException.class,()->new SimulationArchive(
+                new SimulationArchive.Definition(archive.definition().source(),10,List.of()),archive.simulation()));
+    }
+
     @Test void failedAndInterruptedWritesPreservePreviousFileAndRemoveTemporaryFile() throws Exception {
         var target=directory.resolve("save.mksa");var previous=SimulationArchives.encode(fixture());Files.write(target,previous);
         for(boolean interrupt:new boolean[]{false,true}) {
@@ -85,10 +108,12 @@ class SimulationArchivesTest {
         var map=(IKwdFile)Proxy.newProxyInstance(IKwdFile.class.getClassLoader(),new Class[]{IKwdFile.class},(p,m,a)->switch(m.getName()){
             case "getMapSource"->source;case "getGameLevel"->level;case "getVariables"->Map.of();default->throw new AssertionError(m.getName());
         });
-        var differentTicks=new SimulationArchive(new SimulationArchive.Definition(source,10,List.of()),archive.simulation());
+        ticks.setInt(level,10);
+        assertThrows(IOException.class,()->archive.restore(map,data->{fail("Incompatible tick rate reached staging");return null;}));
+        ticks.setInt(level,20);
         var differentSettings=new SimulationArchive(new SimulationArchive.Definition(source,20,List.of(
                 new SimulationArchive.Setting(Variable.MiscVariable.MiscType.GAME_TICKS,7,0,0))),archive.simulation());
-        for(var changed:List.of(differentTicks,differentSettings))
+        for(var changed:List.of(differentSettings))
             assertThrows(IOException.class,()->changed.restore(map,data->{fail("Incompatible definition reached staging");return null;}));
         var expected=new IllegalArgumentException("staging reached");
         assertSame(expected,assertThrows(IllegalArgumentException.class,()->archive.restore(map,data->{throw expected;})));
@@ -121,7 +146,10 @@ class SimulationArchivesTest {
         var triggers=new EnumMap<TriggerRegistrySnapshots.Kind,TriggerRegistrySnapshots.State>(TriggerRegistrySnapshots.Kind.class);
         for(var kind:TriggerRegistrySnapshots.Kind.values())triggers.put(kind,new TriggerRegistrySnapshots.State(kind,List.of(),List.of()));
         var level=new LevelSnapshots.State(new LevelState(Collections.nCopies(128,7),Collections.nCopies(16,new GameTimer.State(3.5f,true)),42,null,0),new GameTimeController.State(250,12.5));
-        var simulation=new SimulationState(new GameEntityData.Snapshot(2,List.of()),List.of(),List.of(),List.of(),List.of(),level,systems,triggers,new SimulationRandom.State(731),new ResultSnapshots.State(Map.of()));
+        var simulation=new SimulationState(new GameEntityData.Snapshot(2,List.of()),List.of(),List.of(),List.of(),List.of(),level,systems,triggers,new SimulationRandom.State(731),new ResultSnapshots.State(Map.of()), List.of(
+                new toniarts.openkeeper.utils.GameLoopClock.State(50_000_000,12_345,23_456,true),
+                new toniarts.openkeeper.utils.GameLoopClock.State(16_666_667,6,42,true),
+                new toniarts.openkeeper.utils.GameLoopClock.State(16_666_667,7,43,false)));
         String path="data/editor/maps/unit.kwd";
         return new SimulationArchive(new SimulationArchive.Definition(new MapSource(path,List.of(new MapSource.File(path,3,"a".repeat(64)))),20,List.of()),simulation);
     }
