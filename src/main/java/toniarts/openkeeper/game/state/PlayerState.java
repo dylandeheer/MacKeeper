@@ -47,6 +47,8 @@ import java.util.List;
 import javax.annotation.Nullable;
 import toniarts.openkeeper.game.data.CampaignLevel;
 import toniarts.openkeeper.game.data.Settings;
+import toniarts.openkeeper.game.state.session.PlayerProgressState;
+import java.util.UUID;
 
 /**
  * The player state! GUI, camera, etc. Player interactions
@@ -66,6 +68,8 @@ public final class PlayerState extends AbstractAppState implements PlayerListene
     @Nullable
     private final CampaignLevel campaignLevel;
     private GameResult gameResult;
+    private final UUID attemptId;
+    private Thread renderThread;
 
     private boolean paused = false;
 
@@ -79,7 +83,18 @@ public final class PlayerState extends AbstractAppState implements PlayerListene
     private PlayerScreenController screen;
 
     public PlayerState(int playerId, IKwdFile kwdFile, EntityData entityData, boolean enabled, Main app, @Nullable CampaignLevel campaignLevel) {
+        this(playerId, kwdFile, entityData, enabled, app, campaignLevel,
+                PlayerProgressState.fresh((short) playerId, campaignLevel));
+    }
+
+    /** Stage progress before constructing views; the session assembler restores screen/input owners separately. */
+    public PlayerState(int playerId, IKwdFile kwdFile, EntityData entityData, boolean enabled, Main app,
+            @Nullable CampaignLevel campaignLevel, PlayerProgressState progress) {
+        if (playerId < 0 || playerId > 255) throw new IllegalArgumentException("Invalid local player");
+        progress.validateBinding((short) playerId, campaignLevel);
         this.playerId = (short) playerId;
+        this.attemptId = progress.attemptId();
+        this.gameResult = progress.result() == null ? null : GameResult.restoreState(progress.result());
         this.kwdFile = kwdFile;
         this.entityData = entityData;
         this.app = app;
@@ -96,8 +111,18 @@ public final class PlayerState extends AbstractAppState implements PlayerListene
     public void initialize(final AppStateManager stateManager, final Application app) {
         super.initialize(stateManager, app);
 
+        renderThread = Thread.currentThread();
         assetManager = this.app.getAssetManager();
         this.stateManager = stateManager;
+    }
+
+    /** Capture only observes local result delivery; it neither reads server results nor writes the profile. */
+    public PlayerProgressState captureProgressState() {
+        if (!isInitialized() || Thread.currentThread() != renderThread
+                || stateManager.getState(PlayerState.class) != this)
+            throw new IllegalStateException("Player progress belongs to the active render-thread owner");
+        return new PlayerProgressState(playerId, attemptId, PlayerProgressState.Campaign.of(campaignLevel),
+                gameResult == null ? null : gameResult.captureState());
     }
 
     @Override
@@ -504,7 +529,7 @@ public final class PlayerState extends AbstractAppState implements PlayerListene
         // The local profile owns campaign progress; server and remote opponents do not.
         if (campaignLevel != null) {
             Settings settings = Main.getUserSettings();
-            settings.recordCampaignResult(campaignLevel, win);
+            settings.recordCampaignResult(campaignLevel, attemptId, win);
             try {
                 settings.save();
             } catch (IOException ex) {

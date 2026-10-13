@@ -91,4 +91,46 @@ class CampaignProgressTest {
         s.getAppSettings().remove("CampaignAttempts.Level.2");s.recordCampaignResult(level(2),false);
         assertEquals(Integer.MAX_VALUE,s.getLevelAttempts(level(2)));
     }
+    @Test void savedAttemptCountsOnceAcrossProfileReloadsAndCanUpgradeALoss() throws Exception {
+        var attempt=java.util.UUID.randomUUID();var branch=new CampaignLevel(Level,6,"b");
+        var s=settings();
+        assertTrue(s.recordCampaignResult(branch,attempt,false));s.save();
+        s=settings();assertFalse(s.recordCampaignResult(branch,attempt,false));
+        assertEquals(1,s.getLevelAttempts(branch));
+        assertTrue(s.recordCampaignResult(branch,attempt,true));s.save();
+        s=settings();assertFalse(s.recordCampaignResult(branch,attempt,true));
+        assertFalse(s.recordCampaignResult(branch,attempt,false));
+        assertEquals(1,s.getLevelAttempts(branch));assertEquals(Settings.LevelStatus.COMPLETED,s.getLevelStatus(branch));
+        assertTrue(s.recordCampaignResult(branch,java.util.UUID.randomUUID(),false));
+        assertEquals(2,s.getLevelAttempts(branch));
+    }
+
+    @Test void receiptCannotBeReusedForAnotherBranchOrModeAndResetRetainsMpdHistory() throws Exception {
+        var attempt=java.util.UUID.randomUUID();var mpdAttempt=java.util.UUID.randomUUID();
+        var branch=new CampaignLevel(Level,11,"c");var mpd=new CampaignLevel(MPD,2);
+        var s=settings();s.recordCampaignResult(branch,attempt,true);s.recordCampaignResult(mpd,mpdAttempt,true);
+        assertThrows(IllegalArgumentException.class,()->s.recordCampaignResult(new CampaignLevel(Level,11,"a"),attempt,true));
+        assertThrows(IllegalArgumentException.class,()->s.recordCampaignResult(mpd,attempt,true));
+        assertEquals(0,s.getLevelAttempts(new CampaignLevel(Level,11,"a")));
+        s.resetCampaignProgress();s.save();var restored=settings();
+        assertEquals(0,restored.getLevelAttempts(branch));
+        assertTrue(restored.recordCampaignResult(branch,attempt,true));
+        assertEquals(1,restored.getLevelAttempts(branch));
+        assertFalse(restored.recordCampaignResult(mpd,mpdAttempt,true));
+        assertEquals(1,restored.getLevelAttempts(mpd));
+    }
+
+    @Test void failedAtomicProfileWriteRetainsReceiptAndCanBeRetriedTogether() throws Exception {
+        Path target=temp.resolve("blocked");java.nio.file.Files.createDirectories(target);
+        java.nio.file.Files.writeString(target.resolve("child"),"keep");
+        var s=new Settings(new AppSettings(true),target);var attempt=java.util.UUID.randomUUID();
+        s.recordCampaignResult(level(1),attempt,true);
+        assertThrows(java.io.IOException.class,s::save);
+        assertFalse(s.recordCampaignResult(level(1),attempt,true));assertEquals(1,s.getLevelAttempts(level(1)));
+        java.nio.file.Files.delete(target.resolve("child"));java.nio.file.Files.delete(target);s.save();
+        var r=new Settings(new AppSettings(true),target);
+        assertFalse(r.recordCampaignResult(level(1),attempt,true));assertEquals(1,r.getLevelAttempts(level(1)));
+        assertEquals(Settings.LevelStatus.COMPLETED,r.getLevelStatus(level(1)));
+    }
+
 }

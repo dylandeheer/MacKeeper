@@ -18,20 +18,34 @@ class NativeResultSmoke {
    System.exit(1);
   });
   win=Boolean.parseBoolean(args[0]);continuePlaying=args.length>1&&Boolean.parseBoolean(args[1]);
-  var parse=Main.class.getDeclaredMethod("parseArguments",String[].class);parse.setAccessible(true);parse.invoke(null,(Object)new String[]{"-nomovies","-level","Level1"});
+  var parse=Main.class.getDeclaredMethod("parseArguments",String[].class);parse.setAccessible(true);parse.invoke(null,(Object)new String[]{"-nomovies"});
   var constructor=Main.class.getDeclaredConstructor();constructor.setAccessible(true);Main app=constructor.newInstance();
   var init=Main.class.getDeclaredMethod("initSettings",Main.class);init.setAccessible(true);init.invoke(null,app);
   app.setShowSettings(false);app.setPauseOnLostFocus(false);app.getStateManager().attach(new Probe());app.start();
   if(!successful)throw new AssertionError("Native result flow did not complete");
  }
  static class Probe extends AbstractAppState {
-  Main app;AppStateManager states;long began=System.nanoTime();float delay;int stage;double expectedTime;toniarts.openkeeper.game.state.session.PlayerService service;ScreenshotAppState capture;GameLoopManager cameraLoop;com.jme3.math.Vector3f stationaryPosition;
+  Main app;AppStateManager states;long began=System.nanoTime();float delay;int stage=-1;double expectedTime;
+  final toniarts.openkeeper.game.data.CampaignLevel campaign=new toniarts.openkeeper.game.data.CampaignLevel(toniarts.openkeeper.game.data.CampaignLevel.LevelType.Level,1);
+  toniarts.openkeeper.game.state.session.PlayerProgressState progress;int attemptsBefore;toniarts.openkeeper.game.state.session.PlayerService service;ScreenshotAppState capture;GameLoopManager cameraLoop;com.jme3.math.Vector3f stationaryPosition;
   @Override public void initialize(AppStateManager states,Application application){super.initialize(states,application);this.states=states;app=(Main)application;capture=new ScreenshotAppState(Path.of("work").toAbsolutePath()+"/","result-flow-"+win+"-"+continuePlaying);capture.setIsNumbered(false);states.attach(capture);}
   @Override public void update(float tpf){try{
    if((System.nanoTime()-began)/1e9>180)throw new AssertionError("Timed out at stage "+stage);
+   if(stage==-1){
+    var menu=states.getState(MainMenuState.class);
+    if(menu==null||!menu.isInitialized()||!menu.isEnabled()||app.getNifty().getCurrentScreen()==null
+      ||!app.getNifty().getCurrentScreen().getScreenId().equals(MainMenuScreenController.SCREEN_START_ID))return;
+    if((delay+=tpf)<2)return;
+    menu.setEnabled(false);
+    toniarts.openkeeper.game.state.session.LocalGameSession.createLocalGame("Level1",true,states,app,campaign);
+    stage=0;delay=0;
+   }
    var player=states.getState(PlayerState.class);
    if(stage==0&&player!=null&&player.isInitialized()&&player.isEnabled()){
     if((delay+=tpf)<4)return;
+    progress=player.captureProgressState();attemptsBefore=Main.getUserSettings().getLevelAttempts(campaign);
+    if(progress.result()!=null||!progress.campaign().equals(toniarts.openkeeper.game.state.session.PlayerProgressState.Campaign.of(campaign)))throw new AssertionError("Incorrect fresh campaign progress");
+    roundTripProgress(progress);
     var server=states.getState(GameServerState.class);var field=GameServerState.class.getDeclaredField("game");field.setAccessible(true);var loop=(GameLoopManager)field.get(server);
     service=(toniarts.openkeeper.game.state.session.PlayerService)states.getState(GameClientState.class).getGameClientService();
     if(continuePlaying){cameraLoop=loop;loop.pause();stage=6;delay=0;return;}
@@ -70,6 +84,16 @@ class NativeResultSmoke {
    if(stage==1){var end=states.getState(EndGameState.class);if(end!=null&&end.isInitialized()){
     if((delay+=tpf)<2)return;
     if(continuePlaying&&service.isInTransition())throw new AssertionError("Cancelled transition was not acknowledged");
+    var completed=player.captureProgressState();
+    if(!completed.attemptId().equals(progress.attemptId())||completed.result()==null)throw new AssertionError("Lost terminal playthrough identity");
+    roundTripProgress(completed);
+    var settings=Main.getUserSettings();
+    if(settings.getLevelAttempts(campaign)!=attemptsBefore+1)throw new AssertionError("Campaign attempt not counted exactly once");
+    if(settings.recordCampaignResult(campaign,completed.attemptId(),win)||settings.getLevelAttempts(campaign)!=attemptsBefore+1)throw new AssertionError("Receipt did not suppress repeated outcome");
+    var persisted=new com.jme3.system.AppSettings(false);
+    try(var in=Files.newInputStream(toniarts.openkeeper.utils.AppPaths.dataDirectory().resolve("settings.properties"))){persisted.load(in);}
+    if(!persisted.containsKey("CampaignReceipt."+completed.attemptId()))throw new AssertionError("Receipt missing from disk profile");
+    System.out.println("FLOW progress: stable identity, fresh/terminal disk roundtrips, durable receipt, duplicate credit suppressed");
     var key=new KeyInputEvent(continuePlaying?KeyInput.KEY_ESCAPE:KeyInput.KEY_SPACE,' ',false,false);end.onKeyEvent(key);if(!key.isConsumed())throw new AssertionError("End screen key not consumed");
     stage=continuePlaying?4:2;delay=0;System.out.println("FLOW end screen dismissed; continue="+continuePlaying);
    }}
@@ -90,6 +114,15 @@ class NativeResultSmoke {
    }
    if(stage==3&&(delay+=tpf)>2){successful=true;app.stop();}
   }catch(Exception e){throw new RuntimeException(e);}}
+  private void roundTripProgress(toniarts.openkeeper.game.state.session.PlayerProgressState expected)throws Exception {
+   var saved=expected;
+   Path path=Path.of("work/native-player-progress.mkpp");
+   for(int i=0;i<3;i++){
+    Files.write(path,toniarts.openkeeper.game.save.PlayerProgressSnapshots.encode(saved));
+    saved=toniarts.openkeeper.game.save.PlayerProgressSnapshots.decode(Files.readAllBytes(path));
+    if(!expected.equals(saved))throw new AssertionError("Changed player progress across disk restore");
+   }
+  }
   private void finishGame(GameLoopManager loop) {
    loop.getGameController().endGame((short)3,win);expectedTime=loop.getGameController().getGameResult().getElapsedSeconds();
    System.out.println("FLOW server result win="+win+" time="+expectedTime);stage=1;delay=0;

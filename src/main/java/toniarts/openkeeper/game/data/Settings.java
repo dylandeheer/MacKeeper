@@ -339,7 +339,7 @@ public final class Settings {
      *
      * @throws java.io.IOException may fail to save
      */
-    public void save() throws IOException {
+    public synchronized void save() throws IOException {
         toniarts.openkeeper.utils.AppPaths.writeAtomically(settingsFile, settings::save);
     }
 
@@ -545,7 +545,12 @@ public final class Settings {
      * Resets all campaign progress: level statuses, level number, attempts,
      * and secret/MPD level statuses.
      */
-    public void resetCampaignProgress() {
+    public synchronized void resetCampaignProgress() {
+        // Reset receipts only for modes whose progress is reset. Loading an old campaign save
+        // after an explicit reset may earn progress again; MPD progress and receipts survive.
+        settings.entrySet().removeIf(entry -> entry.getKey().startsWith(RECEIPT_PREFIX)
+                && entry.getValue() instanceof String receipt
+                && (receipt.startsWith("1|Level|") || receipt.startsWith("1|Secret|")));
         // Reset the current level number back to the start
         setSetting(Setting.LEVEL_NUMBER, Setting.LEVEL_NUMBER.getDefaultValue());
 
@@ -583,10 +588,35 @@ public final class Settings {
         return "CampaignAttempts." + level.getType() + "." + level.getLevel() + level.getVariation();
     }
 
-    /** Record one terminal campaign result. The session guards duplicate callbacks. */
+    private static final String RECEIPT_PREFIX = "CampaignReceipt.";
+
+    /** Record a new playthrough. Saved games must use the overload with a stable attempt ID. */
     public void recordCampaignResult(CampaignLevel level, boolean won) {
-        increaseLevelAttempts(level);
-        if (!won) return;
+        recordCampaignResult(level, java.util.UUID.randomUUID(), won);
+    }
+
+    /**
+     * Count each saved playthrough once. A later winning continuation upgrades a loss without
+     * counting another attempt; a later loss never erases a win. Save receipts and progress
+     * together with save(), including after a failed write that is retried by the caller.
+     * Returns whether this call changed the in-memory profile.
+     */
+    public synchronized boolean recordCampaignResult(CampaignLevel level, java.util.UUID attemptId, boolean won) {
+        var campaign = java.util.Objects.requireNonNull(
+                toniarts.openkeeper.game.state.session.PlayerProgressState.Campaign.of(level));
+        String key = RECEIPT_PREFIX + java.util.Objects.requireNonNull(attemptId);
+        String binding = "1|" + campaign.type() + "|" + campaign.level() + "|" + campaign.variation() + "|";
+        Object receipt = settings.get(key);
+        if (receipt != null && !receipt.equals(binding + "W") && !receipt.equals(binding + "L"))
+            throw new IllegalArgumentException("Campaign attempt receipt does not match this level");
+        if (receipt != null && (!won || receipt.equals(binding + "W"))) return false;
+        if (receipt == null) increaseLevelAttempts(level);
+        if (won) applyCampaignWin(level);
+        settings.put(key, binding + (won ? "W" : "L"));
+        return true;
+    }
+
+    private void applyCampaignWin(CampaignLevel level) {
         if (level.getType() == Secret) {
             setSecredLevelStatus(level, SecretLevelStatus.COMPLETED);
         } else {
