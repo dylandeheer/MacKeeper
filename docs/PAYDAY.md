@@ -12,7 +12,7 @@ The owned game manual, sections 7.6.2.2–3 and 8.1.2, establishes physical wage
 - Dropping gold on a living, conscious, owned wage-earning creature on the drop tile settles debt and credits excess as advance pay. Invalid targets fall back to the ordinary drop behavior. Payment clears only unpaid anger when the debt is fully covered.
 - Purse changes, level changes, loot extraction and relevant mood changes share the transaction boundary. Stored gold updates replace ECS components so clients can observe pile changes.
 - `LEVEL_PAY_DAY` conditions observe new cycles once per condition. A newly created trigger controller starts at the current cycle, avoiding replay of an event that preceded it.
-- The next-payday tooltip subtracts advance credit; collection has the original text entry and payday icon. Salary state is registered for replication, introduced with network protocol version 4 (current version: 9).
+- The next-payday tooltip subtracts advance credit; collection has the original text entry and payday icon. Salary state is registered for replication, introduced with network protocol version 4 (current version: 10).
 
 ## Evidence
 
