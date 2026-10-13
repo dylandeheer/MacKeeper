@@ -9,6 +9,9 @@ import toniarts.openkeeper.game.save.PresentationSnapshots;
 import toniarts.openkeeper.game.save.CameraSnapshots;
 import toniarts.openkeeper.game.save.MessageSnapshots;
 import toniarts.openkeeper.game.save.HudPanelSnapshots;
+import toniarts.openkeeper.game.save.InteractionSnapshots;
+import toniarts.openkeeper.view.InteractionSelection;
+import toniarts.openkeeper.view.PlayerInteractionState;
 import toniarts.openkeeper.gui.nifty.CustomTabGroupControl;
 import toniarts.openkeeper.view.MessageState;
 import toniarts.openkeeper.view.SystemMessageState;
@@ -69,6 +72,54 @@ class NativePresentationSmoke {
         }
         private MessageBoxControl box() {
             return app.getNifty().getScreen("hud").findControl("messageBox", MessageBoxControl.class);
+        }
+        private static java.lang.reflect.Field interactionField(String name) throws Exception {
+            var field = PlayerInteractionState.class.getDeclaredField(name);field.setAccessible(true);return field;
+        }
+        private void restoreInteraction() throws Exception {
+            var owner = states.getState(PlayerInteractionState.class);
+            short roomId = client.getPlayer().getAvailableRooms().getFirst().getId();
+            owner.setInteractionState(PlayerInteractionState.InteractionState.Type.ROOM, roomId);owner.setEnabled(false);
+            var saved = owner.captureSelection();
+            var selection = (toniarts.openkeeper.view.selection.SelectionHandler) interactionField("selectionHandler").get(owner);
+            @SuppressWarnings("unchecked") var keys = (Set<Integer>) interactionField("keys").get(owner);
+            selection.setActive(true);keys.add(com.jme3.input.KeyInput.KEY_LCONTROL);
+            Path file = Files.createTempFile(Path.of("work"), "interaction-selection-", ".bin");
+            try {
+                for (int i = 0; i < 3; i++) {
+                    Files.write(file, InteractionSnapshots.encode(saved));var decoded = InteractionSnapshots.decode(Files.readAllBytes(file));
+                    owner.setInteractionState(PlayerInteractionState.InteractionState.Type.NONE, 0);
+                    loop.captureSnapshot(game -> {owner.restoreSelection(decoded);return null;});
+                    if (!saved.equals(owner.captureSelection()) || selection.isActive() || !keys.isEmpty())
+                        throw new AssertionError("Interaction selection/gesture restoration failed");
+                }
+            } finally {Files.delete(file);}
+            for (var bad : List.of(new InteractionSelection((short)4, false, saved.type(), saved.itemId()),
+                    new InteractionSelection(saved.playerId(), false, saved.type(), 32767))) {
+                try {owner.restoreSelection(bad);throw new AssertionError("Invalid tool binding accepted");}
+                catch (IllegalArgumentException expected) {}
+                if (!saved.equals(owner.captureSelection())) throw new AssertionError("Invalid binding changed selected tool");
+            }
+            try (var worker = Executors.newSingleThreadExecutor()) {
+                worker.submit(() -> {
+                    try {owner.captureSelection();throw new AssertionError("Off-render interaction capture accepted");} catch (IllegalStateException expected) {}
+                }).get(5, TimeUnit.SECONDS);
+            }
+            System.out.println("INTERACTION selected room/disabled state retained through 3 disk round trips inside world boundary; gestures cleared and invalid bindings preserved owner");
+        }
+        private void verifyInteractionResume() throws Exception {
+            var owner = states.getState(PlayerInteractionState.class);var saved = owner.captureSelection();
+            if (!saved.enabled() || saved.type() != PlayerInteractionState.InteractionState.Type.ROOM
+                    || interactionField("refreshAfterRestore").getBoolean(owner)) throw new AssertionError("Interaction did not resume and refresh: " + saved + " pending=" + interactionField("refreshAfterRestore").getBoolean(owner));
+            var input = (com.jme3.input.RawInputListener) interactionField("inputListener").get(owner);
+            // Give injected release events a valid map context; no OS mouse movement is needed.
+            interactionField("isOnGui").setBoolean(owner, false);interactionField("isOnMap").setBoolean(owner, true);
+            input.onMouseButtonEvent(new com.jme3.input.event.MouseButtonEvent(com.jme3.input.MouseInput.BUTTON_RIGHT, false, 0, 0));
+            if (!saved.equals(owner.captureSelection())) throw new AssertionError("Pre-load release cancelled restored tool");
+            input.onMouseButtonEvent(new com.jme3.input.event.MouseButtonEvent(com.jme3.input.MouseInput.BUTTON_RIGHT, true, 0, 0));
+            input.onMouseButtonEvent(new com.jme3.input.event.MouseButtonEvent(com.jme3.input.MouseInput.BUTTON_RIGHT, false, 0, 0));
+            if (owner.captureSelection().type() != PlayerInteractionState.InteractionState.Type.NONE) throw new AssertionError("Fresh right click could not cancel the tool");
+            System.out.println("INTERACTION PASS resumed pointer refresh, ignored stale release and accepted fresh tool-cancel click");
         }
         private void restoreHudPanels(PlayerState player) throws Exception {
             var controller = player.getScreen();var hud = app.getNifty().getScreen("hud");
@@ -171,7 +222,7 @@ class NativePresentationSmoke {
                 if (stage == 3 && (delay += tpf) > 7) {
                     if (session.isInTransition() || !player.isTransitionEnd()) throw new AssertionError("Restored cinematic did not acknowledge completion");
                     if (!player.isPaused()) throw new AssertionError("Pending event delivery changed pause state");
-                    restoreMessages();restoreHudPanels(player);stage = 4;delay = 0;
+                    restoreMessages();restoreHudPanels(player);restoreInteraction();stage = 4;delay = 0;
                 }
                 if (stage == 4 && (delay += tpf) > 2) {
                     if (!pausedMessages.equals(states.getState(SystemMessageState.class).captureState())) throw new AssertionError("Paused messages aged");
@@ -190,10 +241,16 @@ class NativePresentationSmoke {
                     owner.addMessage(SystemMessageState.MessageType.INFO, "Immediate delivery");
                     if (owner.captureState().messages().size() != before + 1) throw new AssertionError("Message delivery deferred outside snapshot state");
                     System.out.println("MESSAGES PASS pause retained lifetime, expiry retained open text, dismissal preserved next icon, direct delivery captured immediately");
-                    System.out.println("PRESENTATION PASS pending events, active camera and message owners, cinematic acknowledgement and pause/resume");
-                    successful = true;app.stop();stage = 6;
+                    System.out.println("INTERACTION waiting for ordinary script/cinematic control return");
+                    stage = 6;
                 }
-            } catch (Throwable failure) {failure.printStackTrace();app.stop();stage = 6;}
+                if (stage == 6 && states.getState(PlayerInteractionState.class).isEnabled()
+                        && !interactionField("refreshAfterRestore").getBoolean(states.getState(PlayerInteractionState.class))) {
+                    verifyInteractionResume();
+                    System.out.println("PRESENTATION PASS pending events, active camera, messages, HUD panels and interaction owners, cinematic acknowledgement and pause/resume");
+                    successful = true;app.stop();stage = 7;
+                }
+            } catch (Throwable failure) {failure.printStackTrace();app.stop();stage = 7;}
         }
     }
 }

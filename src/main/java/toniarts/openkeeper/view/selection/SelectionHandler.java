@@ -199,6 +199,14 @@ public abstract class SelectionHandler {
         this.app.getRootNode().attachChild(this.wireBoxGeo);
     }
 
+    /** Discard an unfinished gesture without calling any world interaction. */
+    public void resetForRestore() {
+        active = false;
+        cameraPosition.set(Vector3f.NAN);
+        selectionArea.setStart(Vector2f.ZERO);
+        wireBoxGeo.setCullHint(CullHint.Always);
+    }
+
     /**
      * Detaches the selection box
      */

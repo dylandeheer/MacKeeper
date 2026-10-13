@@ -93,6 +93,9 @@ public abstract class PlayerInteractionState extends AbstractPauseAwareState {
     private static final float CURSOR_UPDATE_INTERVAL = 0.25f;
 
     private Main app;
+    private Thread renderThread;
+    private boolean refreshAfterRestore;
+    private final InteractionInputBarrier inputBarrier = new InteractionInputBarrier();
     private GameClientState gameClientState;
     private AssetManager assetManager;
     private AppStateManager stateManager;
@@ -144,6 +147,7 @@ public abstract class PlayerInteractionState extends AbstractPauseAwareState {
     public void initialize(final AppStateManager stateManager, final Application app) {
         super.initialize(stateManager, app);
         this.app = (Main) app;
+        renderThread = Thread.currentThread();
         assetManager = this.app.getAssetManager();
         this.stateManager = this.app.getStateManager();
         inputManager = this.app.getInputManager();
@@ -164,24 +168,31 @@ public abstract class PlayerInteractionState extends AbstractPauseAwareState {
             this.stateManager.attach(new InteractionCheatState());
         }
 
-        // Add listener
-        if (isEnabled()) {
-            setEnabled(true);
-        }
+        // Install the input boundary even when this owner starts disabled.
+        setEnabled(isEnabled());
     }
 
     @Override
     public void setEnabled(boolean enabled) {
         super.setEnabled(enabled);
-
+        if (!isInitialized()) {
+            if (!enabled) resetInputBoundary();
+            return;
+        }
         if (enabled && !inputListenerAdded) {
+            resetInputBoundary();
             app.getInputManager().addRawInputListener(inputListener);
             inputListenerAdded = true;
-        } else if (!enabled && inputListenerAdded) {
-            app.getInputManager().removeRawInputListener(inputListener);
+        } else if (!enabled) {
+            resetInputBoundary();
+            if (inputListenerAdded) app.getInputManager().removeRawInputListener(inputListener);
             inputListenerAdded = false;
-            keys.clear();
         }
+    }
+
+    private void resetInputBoundary() {
+        keys.clear();inputBarrier.reset();refreshAfterRestore = true;
+        if (selectionHandler != null) selectionHandler.resetForRestore();
     }
 
     @Override
@@ -211,9 +222,17 @@ public abstract class PlayerInteractionState extends AbstractPauseAwareState {
             return;
         }
 
-        constructionBlockingObjects.applyChanges();
-        constructionBlockingDoors.applyChanges();
-        constructionBlockingTraps.applyChanges();
+        refreshConstructionQueries();
+        if (refreshAfterRestore) {
+            mousePosition.set(inputManager.getCursorPosition());
+            keeperHandState.setPosition(mousePosition.x, mousePosition.y);
+            selectionHandler.update(mousePosition);
+            updateStateFlags();
+            if (isOnMap && !isOnGui && !isTaggable) updateInteractiveObjectOnCursor();
+            updateStateFlags();updateCursor();selectionHandler.updateSelectionBox();
+            timeFromLastUpdate = 0;refreshAfterRestore = false;
+            return;
+        }
 
         selectionHandler.update(mousePosition);
         if (isOnMap && !isOnGui && !isTaggable) {
@@ -247,6 +266,35 @@ public abstract class PlayerInteractionState extends AbstractPauseAwareState {
 
         // Call the update
         onInteractionStateChange(interactionState);
+    }
+
+    public InteractionSelection captureSelection() {
+        requireOwner();
+        return new InteractionSelection(player.getPlayerId(), isEnabled(), interactionState.getType(), interactionState.getItemId());
+    }
+
+    /** Bind the tool without executing it; the first ordinary frame rebuilds transient pointer state. */
+    public void restoreSelection(InteractionSelection saved) {
+        requireOwner();java.util.Objects.requireNonNull(saved);
+        if (saved.playerId() != player.getPlayerId()) throw new IllegalArgumentException("Interaction player mismatch");
+        saved.validateDefinitions(kwdFile);
+        keys.clear();inputBarrier.reset();
+        setInteractiveControl(null);
+        isOnGui = false;isOnMap = false;isTaggable = false;isInteractable = false;
+        selectionHandler.resetForRestore();tooltip.setText("");keeperHandState.setVisible(false);
+        playerEntityViewState = null;refreshAfterRestore = true;
+        interactionState.setState(saved.type(), saved.itemId());
+        setEnabled(saved.enabled());
+        onInteractionStateChange(interactionState);
+    }
+
+    private void requireOwner() {
+        if (!isInitialized() || Thread.currentThread() != renderThread || stateManager.getState(PlayerInteractionState.class) != this)
+            throw new IllegalStateException("Interaction selection requires the active render-thread owner");
+    }
+
+    private void refreshConstructionQueries() {
+        constructionBlockingObjects.applyChanges();constructionBlockingDoors.applyChanges();constructionBlockingTraps.applyChanges();
     }
 
     /**
@@ -521,6 +569,7 @@ public abstract class PlayerInteractionState extends AbstractPauseAwareState {
 
         @Override
         public void onMouseMotionEvent(MouseMotionEvent evt) {
+            if (!isInitialized() || !isEnabled() || refreshAfterRestore) return;
             mousePosition.set(evt.getX(), evt.getY());
             keeperHandState.setPosition(evt.getX(), evt.getY());
 
@@ -531,6 +580,7 @@ public abstract class PlayerInteractionState extends AbstractPauseAwareState {
 
         @Override
         public void onMouseButtonEvent(MouseButtonEvent evt) {
+            if (!isInitialized() || !isEnabled() || !inputBarrier.mouse(evt.getButtonIndex(), evt.isPressed()) || refreshAfterRestore) return;
 //            timeFromLastUpdate = 0;
             if (isOnGui || !isOnMap) {
                 return;
@@ -676,6 +726,7 @@ public abstract class PlayerInteractionState extends AbstractPauseAwareState {
 
         @Override
         public void onKeyEvent(KeyInputEvent evt) {
+            if (!isInitialized() || !isEnabled() || !inputBarrier.key(evt.getKeyCode(), evt.isPressed(), evt.isRepeating())) return;
             updateModifierKeys(evt);
 
             if (evt.isPressed()) {
