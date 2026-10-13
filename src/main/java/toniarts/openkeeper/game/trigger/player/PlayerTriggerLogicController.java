@@ -35,7 +35,7 @@ import toniarts.openkeeper.tools.convert.map.Player;
  *
  * @author Toni Helenius <helenius.toni@gmail.com>
  */
-public final class PlayerTriggerLogicController implements IGameLogicUpdatable {
+public final class PlayerTriggerLogicController implements IGameLogicUpdatable, toniarts.openkeeper.game.trigger.TriggerStateSource {
 
     private final IMapController mapController;
     private final DungeonBreachListener breachListener = this::onDungeonBreached;
@@ -64,6 +64,11 @@ public final class PlayerTriggerLogicController implements IGameLogicUpdatable {
         }
 
         // TODO: get notified on new parties (a.k.a. parties re-spawned)
+    }
+
+    @Override
+    public java.util.List<toniarts.openkeeper.game.save.TriggerSnapshots.State> captureTrees() {
+        return playerTriggerControls.stream().map(control -> control.captureState()).toList();
     }
 
     @Override

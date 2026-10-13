@@ -162,6 +162,15 @@ public final class GameController implements IGameLogicUpdatable, IGameControlle
 
     }
 
+    /** Trees only; registry owner references still require a separate snapshot. */
+    public Map<String, List<toniarts.openkeeper.game.save.TriggerSnapshots.State>> captureTriggerTrees() {
+        var result = new java.util.TreeMap<String, List<toniarts.openkeeper.game.save.TriggerSnapshots.State>>();
+        result.put("level", triggerControl == null ? List.of() : List.of(triggerControl.captureState()));
+        for (var controller : controllers) if (controller instanceof toniarts.openkeeper.game.trigger.TriggerStateSource source)
+            result.put(controller.getClass().getSimpleName(), source.captureTrees());
+        return Map.copyOf(result);
+    }
+
     public toniarts.openkeeper.game.save.KeeperEconomySnapshots.State captureEconomyState() {
         return economySystem.captureState();
     }

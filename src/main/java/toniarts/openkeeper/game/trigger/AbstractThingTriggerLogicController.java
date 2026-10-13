@@ -32,7 +32,7 @@ import toniarts.openkeeper.game.logic.IGameLogicUpdatable;
  * @param <T> the entity controller wrapper
  * @author Toni Helenius <helenius.toni@gmail.com>
  */
-public abstract class AbstractThingTriggerLogicController<T extends IEntityController> implements IGameLogicUpdatable {
+public abstract class AbstractThingTriggerLogicController<T extends IEntityController> implements IGameLogicUpdatable, toniarts.openkeeper.game.trigger.TriggerStateSource {
 
     private final Map<Integer, AbstractThingTriggerControl<T>> thingTriggers;
     private final SafeArrayList<AbstractThingTriggerControl> triggerControls;
@@ -61,6 +61,11 @@ public abstract class AbstractThingTriggerLogicController<T extends IEntityContr
 
         // Add existing entities
         processAddedEntities(entities);
+    }
+
+    @Override
+    public java.util.List<toniarts.openkeeper.game.save.TriggerSnapshots.State> captureTrees() {
+        return triggerControls.stream().map(control -> control.captureState()).toList();
     }
 
     @Override

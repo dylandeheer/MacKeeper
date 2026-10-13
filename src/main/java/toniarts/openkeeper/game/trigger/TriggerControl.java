@@ -50,7 +50,8 @@ public class TriggerControl extends Control {
     private static final short LEVEL_SCORE_FLAG_ID = 128;
     private static final short TIME_LIMIT_TIMER_ID = 16;
 
-    private final long initialPaydayCycle;
+    private long initialPaydayCycle;
+    private final TriggerTree tree;
     private final java.util.Map<Integer, Long> observedPaydays = new java.util.HashMap<>();
 
     protected TriggerGenericData trigger;
@@ -78,6 +79,20 @@ public class TriggerControl extends Control {
             throw new IllegalArgumentException("trigger can not be null");
         }
         trigger = root;
+        tree = new TriggerTree(triggerId, root);
+    }
+
+    public final toniarts.openkeeper.game.save.TriggerSnapshots.State captureState() {
+        return tree.capture(isEnabled(), initialPaydayCycle, observedPaydays, trigger);
+    }
+
+    /** Bind progress on a newly constructed control; no action or condition is evaluated. */
+    public final void restoreState(toniarts.openkeeper.game.save.TriggerSnapshots.State saved) {
+        tree.validate(saved);
+        trigger = tree.restore(saved);
+        initialPaydayCycle = saved.initialPayday();
+        observedPaydays.clear();observedPaydays.putAll(saved.paydays());
+        setEnabled(saved.enabled());
     }
 
     @Override

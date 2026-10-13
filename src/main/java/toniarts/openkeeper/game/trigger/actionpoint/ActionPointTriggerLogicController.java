@@ -30,7 +30,7 @@ import toniarts.openkeeper.game.logic.IGameLogicUpdatable;
  *
  * @author ArchDemon
  */
-public final class ActionPointTriggerLogicController implements IGameLogicUpdatable {
+public final class ActionPointTriggerLogicController implements IGameLogicUpdatable, toniarts.openkeeper.game.trigger.TriggerStateSource {
 
     private final SafeArrayList<ActionPointTriggerControl> triggers = new SafeArrayList<>(ActionPointTriggerControl.class);
 
@@ -43,6 +43,11 @@ public final class ActionPointTriggerLogicController implements IGameLogicUpdata
                 triggers.add(new ActionPointTriggerControl(gameController, levelInfo, gameTimer, mapController, creaturesController, actionPoint.getTriggerId(), actionPoint, entityPositionLookup));
             }
         }
+    }
+
+    @Override
+    public java.util.List<toniarts.openkeeper.game.save.TriggerSnapshots.State> captureTrees() {
+        return triggers.stream().map(control -> control.captureState()).toList();
     }
 
     @Override

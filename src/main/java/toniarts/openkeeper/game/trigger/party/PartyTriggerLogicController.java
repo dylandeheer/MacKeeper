@@ -29,7 +29,7 @@ import toniarts.openkeeper.game.logic.IGameLogicUpdatable;
  *
  * @author ArchDemon
  */
-public final class PartyTriggerLogicController implements IGameLogicUpdatable {
+public final class PartyTriggerLogicController implements IGameLogicUpdatable, toniarts.openkeeper.game.trigger.TriggerStateSource {
 
     private final SafeArrayList<PartyTriggerControl> partyControllers = new SafeArrayList<>(PartyTriggerControl.class);
 
@@ -42,6 +42,11 @@ public final class PartyTriggerLogicController implements IGameLogicUpdatable {
         }
 
         // TODO: get notified on new parties (a.k.a. parties re-spawned)
+    }
+
+    @Override
+    public java.util.List<toniarts.openkeeper.game.save.TriggerSnapshots.State> captureTrees() {
+        return partyControllers.stream().map(control -> control.captureState()).toList();
     }
 
     @Override
