@@ -11,6 +11,11 @@ import toniarts.openkeeper.game.save.MessageSnapshots;
 import toniarts.openkeeper.game.save.HudPanelSnapshots;
 import toniarts.openkeeper.game.save.InteractionSnapshots;
 import toniarts.openkeeper.game.save.FogSnapshots;
+import toniarts.openkeeper.game.save.CreatureCardSnapshots;
+import toniarts.openkeeper.view.creature.CreatureCardsState;
+import toniarts.openkeeper.view.creature.CreatureCardRoster;
+import toniarts.openkeeper.gui.nifty.WorkerAmountControl;
+import toniarts.openkeeper.gui.nifty.CreatureCardControl;
 import toniarts.openkeeper.view.PlayerMapViewState;
 import toniarts.openkeeper.view.fogofwar.FogSnapshot;
 import toniarts.openkeeper.game.fogofwar.FogState;
@@ -80,6 +85,59 @@ class NativePresentationSmoke {
         }
         private static java.lang.reflect.Field interactionField(String name) throws Exception {
             var field = PlayerInteractionState.class.getDeclaredField(name);field.setAccessible(true);return field;
+        }
+        private void restoreCreatureCards(PlayerState player) throws Exception {
+            var controller = player.getScreen();var hud = app.getNifty().getScreen("hud");
+            var managerField = PlayerScreenController.class.getDeclaredField("creatureCardManager");managerField.setAccessible(true);
+            var manager = managerField.get(controller);var rosterField = manager.getClass().getDeclaredField("roster");rosterField.setAccessible(true);
+            var roster = (CreatureCardRoster) rosterField.get(manager);
+            var original = controller.captureCreatureCards();controller.workersAmount("JOBS");
+            if (roster.selectNext(original.workerId(), null) == null) throw new AssertionError("Missing actual worker for cycling check");
+            var saved = controller.captureCreatureCards();
+            var expected = roster.selectNext(saved.workerId(), null);controller.restoreCreatureCards(saved);
+            var cameraBefore = states.getState(PlayerCameraState.class).captureState();
+            Path file = Files.createTempFile(Path.of("work"), "creature-cards-", ".bin");
+            try {
+                for (int i=0;i<3;i++) {
+                    Files.write(file,CreatureCardSnapshots.encode(saved));controller.workersAmount("TOTAL");
+                    var decoded = CreatureCardSnapshots.decode(Files.readAllBytes(file));
+                    loop.captureSnapshot(game -> {controller.restoreCreatureCards(decoded);return null;});
+                    if (!saved.equals(controller.captureCreatureCards())) throw new AssertionError("Creature observations/order/mode/cycling changed on restore");
+                    if (!expected.equals(roster.selectNext(saved.workerId(),null))) throw new AssertionError("Next selected worker changed on restore");
+                    String total = hud.findElementById("tab-workers").findNiftyControl("#workerTotal",de.lessvoid.nifty.controls.Label.class).getText();
+                    if (!total.equals(Integer.toString(roster.count(saved.workerId(),null)))) throw new AssertionError("Rendered worker count changed");
+                }
+            } finally {Files.delete(file);}
+            controller.restoreCreatureCards(saved);
+            var wrongPlayer = new CreatureCardsState((short)4,saved.workerId(),saved.creatures(),saved.groups(),saved.cards(),saved.nextIndices(),saved.mode(),saved.firstVisible());
+            try {controller.restoreCreatureCards(wrongPlayer);throw new AssertionError("Wrong-player cards accepted");} catch (IllegalArgumentException expectedFailure) {}
+            if (!saved.equals(controller.captureCreatureCards())) throw new AssertionError("Failed creature binding changed cards");
+            // Controlled historical projection exercises creation of a portrait even though Level1 currently has only workers.
+            var species = player.getKwdFile().getCreatureList().stream().filter(c -> c.getCreatureId()!=saved.workerId() && c.getPortraitResource()!=null).findFirst().orElseThrow();
+            var observed = saved.creatures().stream().filter(c -> c.selectable()).findFirst().orElseThrow();
+            var portrait = new CreatureCardsState(saved.playerId(),saved.workerId(),
+                    List.of(new CreatureCardsState.Observation(observed.id(),species.getCreatureId(),observed.position(),observed.activity(),false)),
+                    List.of(new CreatureCardsState.Group(species.getCreatureId(),List.of(observed.id()))),
+                    List.of(species.getCreatureId()),Map.of(),WorkerAmountControl.State.JOBS,0);
+            loop.captureSnapshot(game -> {controller.restoreCreatureCards(portrait);return null;});
+            var cardsField = manager.getClass().getDeclaredField("creatureCardControls");cardsField.setAccessible(true);
+            @SuppressWarnings("unchecked") var cards = (Map<Short,CreatureCardControl>) cardsField.get(manager);
+            var card = cards.get(species.getCreatureId());
+            if (!card.getElement().findNiftyControl("#total",de.lessvoid.nifty.controls.Label.class).getText().equals("1")
+                    || !card.getElement().findElementById("#tab-jobs").isVisible()) throw new AssertionError("Created portrait did not inherit saved mode/count");
+            var empty = new CreatureCardsState(saved.playerId(),saved.workerId(),List.of(),List.of(),List.of(),Map.of(),WorkerAmountControl.State.JOBS,0);
+            loop.captureSnapshot(game -> {
+                controller.restoreCreatureCards(empty);var workers = hud.findNiftyControl("tab-workers",WorkerAmountControl.class);
+                workers.zoomTo("null");workers.pickUp("null");return null;
+            });
+            if (!cameraBefore.equals(states.getState(PlayerCameraState.class).captureState())) throw new AssertionError("Restore or empty click moved the camera");
+            try (var worker = Executors.newSingleThreadExecutor()) {
+                worker.submit(() -> {
+                    try {controller.captureCreatureCards();throw new AssertionError("Off-render cards capture accepted");} catch (IllegalStateException expectedFailure) {}
+                }).get(5,TimeUnit.SECONDS);
+            }
+            controller.restoreCreatureCards(original);
+            System.out.println("CARDS PASS three actual-worker disk restores preserve observations/cycling/mode and rendered counts; controlled portrait projection renders saved mode; empty worker actions are quiet; invalid owner rejected");
         }
         private void restoreFog() throws Exception {
             var owner = states.getState(PlayerMapViewState.class);
@@ -266,7 +324,7 @@ class NativePresentationSmoke {
                 if (stage == 3 && (delay += tpf) > 7) {
                     if (session.isInTransition() || !player.isTransitionEnd()) throw new AssertionError("Restored cinematic did not acknowledge completion");
                     if (!player.isPaused()) throw new AssertionError("Pending event delivery changed pause state");
-                    restoreMessages();restoreHudPanels(player);restoreInteraction();restoreFog();stage = 4;delay = 0;
+                    restoreMessages();restoreHudPanels(player);restoreInteraction();restoreFog();restoreCreatureCards(player);stage = 4;delay = 0;
                 }
                 if (stage == 4 && (delay += tpf) > 2) {
                     if (!pausedMessages.equals(states.getState(SystemMessageState.class).captureState())) throw new AssertionError("Paused messages aged");
@@ -291,7 +349,7 @@ class NativePresentationSmoke {
                 if (stage == 6 && states.getState(PlayerInteractionState.class).isEnabled()
                         && !interactionField("refreshAfterRestore").getBoolean(states.getState(PlayerInteractionState.class))) {
                     verifyInteractionResume();
-                    System.out.println("PRESENTATION PASS pending events, active camera, messages, HUD panels, interaction and fog owners, cinematic acknowledgement and pause/resume");
+                    System.out.println("PRESENTATION PASS pending events, active camera, messages, HUD panels, interaction, fog and creature-card owners, cinematic acknowledgement and pause/resume");
                     successful = true;app.stop();stage = 7;
                 }
             } catch (Throwable failure) {failure.printStackTrace();app.stop();stage = 7;}

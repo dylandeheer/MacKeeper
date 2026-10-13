@@ -25,7 +25,6 @@ import com.jme3.texture.Texture;
 import com.jme3.texture.Texture2D;
 import com.jme3.texture.plugins.AWTLoader;
 import com.simsilica.es.*;
-import com.simsilica.es.filter.FieldFilter;
 import de.lessvoid.nifty.Nifty;
 import de.lessvoid.nifty.NiftyEventSubscriber;
 import de.lessvoid.nifty.NiftyIdCreator;
@@ -52,7 +51,6 @@ import de.lessvoid.nifty.tools.SizeValue;
 import de.lessvoid.nifty.tools.SizeValueType;
 import toniarts.openkeeper.Main;
 import toniarts.openkeeper.game.component.*;
-import toniarts.openkeeper.game.controller.creature.CreatureState;
 import toniarts.openkeeper.game.data.ResearchableEntity;
 import toniarts.openkeeper.game.sound.GlobalCategory;
 import toniarts.openkeeper.game.sound.GlobalType;
@@ -68,6 +66,8 @@ import toniarts.openkeeper.tools.convert.map.CreatureSpell;
 import toniarts.openkeeper.utils.AssetUtils;
 import toniarts.openkeeper.utils.Utils;
 import toniarts.openkeeper.view.HudPanelState;
+import toniarts.openkeeper.view.creature.CreatureCardRoster;
+import toniarts.openkeeper.view.creature.CreatureCardsState;
 import toniarts.openkeeper.view.PlayerInteractionState;
 import toniarts.openkeeper.view.PlayerInteractionState.InteractionState.Type;
 import toniarts.openkeeper.view.PossessionInteractionState;
@@ -426,10 +426,7 @@ public final class PlayerScreenController implements IPlayerScreenController {
             WorkerEqualControl cEqual = s.findNiftyControl("tab-workers-equal", WorkerEqualControl.class);
             cEqual.setState(controlState);
 
-            Element e = s.findElementById("tab-creature-content");
-            for (Element element : e.getChildren()) {
-                element.getControl(CreatureCardControl.class).setState(controlState);
-            }
+            if (creatureCardManager != null) creatureCardManager.setMode(controlState);
         }
     }
 
@@ -626,6 +623,19 @@ public final class PlayerScreenController implements IPlayerScreenController {
         hud.findElementById("optionsMenu").setVisible(menu.visible());menuState = menu;
         // Hover text belongs to the current pointer, not the saved world.
         if (tooltip != null) tooltip.setText("");
+    }
+
+    public CreatureCardsState captureCreatureCards() {
+        requireHudOwner();
+        if (creatureCardManager == null) throw new IllegalStateException("Creature cards are not initialized");
+        return creatureCardManager.capture();
+    }
+
+    public void restoreCreatureCards(CreatureCardsState saved) {
+        requireHudOwner();
+        if (creatureCardManager == null) throw new IllegalStateException("Creature cards are not initialized");
+        creatureCardManager.restore(saved);
+        workersAmount(saved.mode().name());
     }
 
     private void requireHudOwner() {
@@ -1225,189 +1235,107 @@ public final class PlayerScreenController implements IPlayerScreenController {
      * creature cards and worker amounts
      */
     private static final class CreatureCardManager {
-
         private final IPlayerScreenController playerScreenController;
         private final IKwdFile kwdFile;
-        private final EntityData entityData;
-        private final EntitySet playerCreatureEntities;
         private final Element creaturePanel;
         private final CreaturePortraitScrollControl portraitScroll;
         private final WorkerAmountControl workerAmountControl;
         private final Screen hud;
-        private final short impId;
-
-        private final Map<EntityId, WatchedEntity> creatureEntities = new LinkedHashMap<>();
-        private final Map<EntityId, Short> creatureIdsByEntityIds = new HashMap<>();
-        private final Map<Short, Set<EntityId>> creaturesByTypes = new LinkedHashMap<>();
+        private final CreatureCardRoster roster;
         private final Map<Short, CreatureCardControl> creatureCardControls = new LinkedHashMap<>();
-        private final CreatureCardEventListener creatureCardEventListener = new EventListener();
+        private final CreatureCardEventListener creatureCardEventListener = new CreatureCardEventListener() {
+            @Override public void zoomTo(short creatureId, CreatureUIState filter) {
+                var value = roster.selectNext(creatureId, filter);
+                if (value != null) playerScreenController.zoomToPosition(value.position().vector());
+            }
+            @Override public void pickUp(short creatureId, CreatureUIState filter) {
+                var value = roster.selectNext(creatureId, filter);
+                if (value != null) playerScreenController.pickUpEntity(value.id());
+            }
+        };
 
-        public CreatureCardManager(IPlayerScreenController playerScreenController, IKwdFile kwdFile, EntityData entityData, Element creaturePanel, CreaturePortraitScrollControl portraitScroll, WorkerAmountControl workerAmountControl, Screen hud, short playerId) {
-            this.playerScreenController = playerScreenController;
-            this.kwdFile = kwdFile;
-            this.entityData = entityData;
-            this.creaturePanel = creaturePanel;
-            this.portraitScroll = portraitScroll;
-            this.workerAmountControl = workerAmountControl;
-            this.hud = hud;
-
-            impId = kwdFile.getImp().getCreatureId();
-
-            this.workerAmountControl.addListener(creatureCardEventListener);
-
-            playerCreatureEntities = entityData.getEntities(new FieldFilter(Owner.class, "ownerId", playerId), CreatureComponent.class, Health.class, Owner.class);
-            processAddedPlayerCreatureEntities(playerCreatureEntities);
+        public CreatureCardManager(IPlayerScreenController controller, IKwdFile definition, EntityData data,
+                Element panel, CreaturePortraitScrollControl scroll, WorkerAmountControl workers, Screen hud, short playerId) {
+            playerScreenController = controller;kwdFile = definition;creaturePanel = panel;portraitScroll = scroll;
+            workerAmountControl = workers;this.hud = hud;
+            roster = new CreatureCardRoster(data, playerId, definition.getImp().getCreatureId());
+            workerAmountControl.addListener(creatureCardEventListener);
+            portraitScroll.setPortraits(List.of());refreshCounts();
         }
 
         public void update(float tpf) {
-
-            // Get our creatures for monitoring
-            if (playerCreatureEntities.applyChanges()) {
-                processAddedPlayerCreatureEntities(playerCreatureEntities.getAddedEntities());
-                processDeletedPlayerCreatureEntities(playerCreatureEntities.getRemovedEntities());
-            }
-
-            // Update the creatures individually
-            Set<Entity> modifiedCreatures = new LinkedHashSet<>();
-            for (WatchedEntity watchedEntity : creatureEntities.values()) {
-                if (watchedEntity.applyChanges()) {
-                    modifiedCreatures.add(watchedEntity);
-                }
-            }
-            if (!modifiedCreatures.isEmpty()) {
-                processChangedPlayerCreatureEntities(modifiedCreatures);
-            }
+            roster.update();var order = roster.cards();
+            if (!order.equals(new ArrayList<>(creatureCardControls.keySet()))) publishCards(prepareCards(order));
+            refreshCounts();
         }
 
         public void cleanup() {
-            playerCreatureEntities.release();
-
-            for (WatchedEntity watchedEntity : creatureEntities.values()) {
-                watchedEntity.release();
-            }
-            creatureEntities.clear();
-            workerAmountControl.removeListener(creatureCardEventListener);
+            roster.close();workerAmountControl.removeListener(creatureCardEventListener);
+            for (var card : creatureCardControls.values()) card.removeListener(creatureCardEventListener);
         }
 
-        private void processAddedPlayerCreatureEntities(Set<Entity> entities) {
-            for (Entity entity : entities) {
-                creatureEntities.put(entity.getId(), entityData.watchEntity(entity.getId(), new Class[]{CreatureAi.class, CreatureComponent.class,
-                    AttackTarget.class, TaskComponent.class, Position.class, CreatureImprisoned.class, CreatureImprisoned.class}));
-            }
+        CreatureCardsState capture() {
+            return roster.capture(workerAmountControl.getState(), portraitScroll.getFirstVisible());
         }
 
-        private void processDeletedPlayerCreatureEntities(Set<Entity> entities) {
-            Set<Short> deletedCreatures = new LinkedHashSet<>();
-            for (Entity entity : entities) {
-
-                // Remove from the list
-                Short creatureId = creatureIdsByEntityIds.remove(entity.getId());
-                if (creatureId != null) {
-                    Set<EntityId> creatureSet = creaturesByTypes.get(creatureId);
-                    if (creatureSet != null) {
-                        creatureSet.remove(entity.getId());
-                        deletedCreatures.add(creatureId);
-                    }
-                }
-                creatureEntities.remove(entity.getId()).release();
+        void restore(CreatureCardsState saved) {
+            roster.validate(saved, kwdFile);
+            // Construct missing controls before replacing behavioral state or removing live cards.
+            var prepared = prepareCards(saved.cards());
+            try {roster.restore(saved, kwdFile);}
+            catch (RuntimeException failure) {
+                for (var entry : prepared.entrySet()) if (!creatureCardControls.containsKey(entry.getKey())) removeCard(entry.getValue());
+                throw failure;
             }
-
-            updateCreatureCards(deletedCreatures);
+            publishCards(prepared);refreshCounts();
+            portraitScroll.restoreFirstVisible(saved.firstVisible());
         }
 
-        private void updateCreatureCards(Set<Short> creatureTypes) {
+        void setMode(WorkerAmountControl.State mode) {
+            for (var card : creatureCardControls.values()) card.setState(mode);
+        }
 
-            // Update the creature cards
-            for (Short creatureId : creatureTypes) {
-
-                // Imps
-                if (creatureId == impId) {
-                    updateWorkerStatistics();
-                    continue;
-                }
-
-                int realTotal = creaturesByTypes.get(creatureId).size();
-                CreatureCardControl card = creatureCardControls.get(creatureId);
-
-                // Remove the card if no longer any creatures of the type
-                if (realTotal == 0 && card != null) {
-                    card.removeListener(creatureCardEventListener);
-                    card.getElement().markForRemoval(); // Remove
-                    creatureCardControls.remove(creatureId);
-                } else if (realTotal > 0) {
-
-                    // Create the card if it doesn't exist
+        private Map<Short, CreatureCardControl> prepareCards(List<Short> order) {
+            var prepared = new LinkedHashMap<Short, CreatureCardControl>();
+            var created = new ArrayList<CreatureCardControl>();
+            try {
+                for (short type : order) {
+                    var card = creatureCardControls.get(type);
                     if (card == null) {
-                        card = createPlayerCreatureIcon(kwdFile.getCreature(creatureId), hud, creaturePanel);
-                        creatureCardControls.put(creatureId, card);
+                        card = createPlayerCreatureIcon(kwdFile.getCreature(type), hud, creaturePanel);
+                        created.add(card);card.getElement().hide();card.setState(workerAmountControl.getState());
                     }
-
-                    card.setTotal(calculateTotal(creatureId));
+                    prepared.put(type, card);
                 }
-            }
-            if (!creatureTypes.isEmpty()) {
-                List<Element> portraits = new ArrayList<>(creatureCardControls.size());
-                for (CreatureCardControl card : creatureCardControls.values()) {
-                    portraits.add(card.getElement());
-                }
-                portraitScroll.setPortraits(portraits);
+                return prepared;
+            } catch (RuntimeException failure) {
+                for (var card : created) removeCard(card);
+                throw failure;
             }
         }
 
-        private void processChangedPlayerCreatureEntities(Set<Entity> entities) {
-            Set<Short> modifiedCreatures = new LinkedHashSet<>();
-            for (Entity entity : entities) {
-                short creatureId = entity.get(CreatureComponent.class).creatureId;
-                Short oldCreatureId = creatureIdsByEntityIds.put(entity.getId(), creatureId);
-                if (oldCreatureId != null) {
-
-                    // We have the creature already on our list, update it
-                    modifiedCreatures.add(creatureId);
-                    modifiedCreatures.add(oldCreatureId);
-
-                    // See if it still qualifies
-                    if (isValidEntity(entity)) {
-
-                        // The creature has changed its type
-                        if (creatureId != oldCreatureId) {
-                            creaturesByTypes.get(oldCreatureId).remove(entity.getId());
-                            Set<EntityId> creatureSet = creaturesByTypes.get(creatureId);
-                            if (creatureSet == null) {
-                                creatureSet = new LinkedHashSet<>();
-                                creaturesByTypes.put(creatureId, creatureSet);
-                            }
-                            creatureSet.add(entity.getId());
-                        }
-                    } else {
-                        creatureIdsByEntityIds.remove(entity.getId());
-                        creaturesByTypes.get(oldCreatureId).remove(entity.getId());
-                    }
-                } else if (isValidEntity(entity)) {
-
-                    // New
-                    creatureIdsByEntityIds.put(entity.getId(), creatureId);
-                    Set<EntityId> creatureSet = creaturesByTypes.get(creatureId);
-                    if (creatureSet == null) {
-                        creatureSet = new LinkedHashSet<>();
-                        creaturesByTypes.put(creatureId, creatureSet);
-                    }
-                    creatureSet.add(entity.getId());
-                    modifiedCreatures.add(creatureId);
-                }
-            }
-
-            updateCreatureCards(modifiedCreatures);
+        private void publishCards(Map<Short, CreatureCardControl> prepared) {
+            for (var entry : creatureCardControls.entrySet()) if (!prepared.containsKey(entry.getKey())) removeCard(entry.getValue());
+            creatureCardControls.clear();creatureCardControls.putAll(prepared);int index = 0;
+            for (var card : creatureCardControls.values()) {card.getElement().setIndex(index++);card.getElement().show();}
+            portraitScroll.setPortraits(creatureCardControls.values().stream().map(CreatureCardControl::getElement).toList());
         }
 
-        /**
-         * Checks if the entity qualifies to be added to a card. Even if it may
-         * qualify, it might not be qualified to be added to the count
-         *
-         * @param entity entity to check
-         * @return {@code true} if entity should be added on a card
-         */
-        private boolean isValidEntity(Entity entity) {
-            return true;
+        private void removeCard(CreatureCardControl card) {
+            card.removeListener(creatureCardEventListener);card.getElement().hide();card.getElement().markForRemoval();
+        }
+
+        private void refreshCounts() {
+            short worker = roster.workerId();
+            workerAmountControl.setTotal(roster.count(worker, null));
+            workerAmountControl.setIdle(roster.count(worker, CreatureUIState.IDLE));
+            workerAmountControl.setBusy(roster.count(worker, CreatureUIState.BUSY));
+            workerAmountControl.setFight(roster.count(worker, CreatureUIState.FIGHT));
+            for (var entry : creatureCardControls.entrySet()) {
+                short type = entry.getKey();var card = entry.getValue();
+                card.setTotal(roster.count(type, null));card.setIdle(roster.count(type, CreatureUIState.IDLE));
+                card.setBusy(roster.count(type, CreatureUIState.BUSY));card.setFight(roster.count(type, CreatureUIState.FIGHT));
+            }
         }
 
         private CreatureCardControl createPlayerCreatureIcon(Creature creature, Screen hud, Element parent) {
@@ -1418,7 +1346,7 @@ public final class PlayerScreenController implements IPlayerScreenController {
                     parameter("creatureId", Integer.toString(creature.getCreatureId()));
                     parameter("creatureName", Utils.getMainTextResourceBundle().getString(
                             Integer.toString(creature.getNameStringId())));
-                    id("creature_" + creature.getCreatureId());
+                    id("creature_" + creature.getCreatureId() + "_" + NiftyIdCreator.generate());
                 }
             };
             Element element = cb.build(parent);
@@ -1428,137 +1356,6 @@ public final class PlayerScreenController implements IPlayerScreenController {
             creatureCardControl.addListener(creatureCardEventListener);
 
             return creatureCardControl;
-        }
-
-        private int calculateTotal(short creatureId) {
-            int total = 0;
-            Set<EntityId> creatureSet = creaturesByTypes.get(creatureId);
-            if (creatureSet != null) {
-                for (EntityId entityId : creatureSet) {
-                    if (isIncludeEntityInCount(creatureEntities.get(entityId))) {
-                        total++;
-                    }
-                }
-            }
-            return total;
-        }
-
-        /**
-         * Checks if the entity adds to the count
-         *
-         * @param entity entity to check
-         * @return {@code true} if entity should be added on a count
-         */
-        private boolean isIncludeEntityInCount(Entity entity) {
-            return (entity.get(Position.class) != null);
-        }
-
-        private void updateWorkerStatistics() {
-
-            // Calculate
-            int impTotal = 0;
-            int impIdle = 0;
-            int impFighting = 0;
-            int impBusy = 0;
-
-            Set<EntityId> imps = creaturesByTypes.get(impId);
-            for (EntityId entityId : imps) {
-                Entity entity = creatureEntities.get(entityId);
-                if (entity.get(Position.class) == null
-                        || entity.get(Death.class) != null) {
-                    continue;
-                }
-
-                AttackTarget attackTarget = entity.get(AttackTarget.class);
-                CreatureAi creatureAi = entity.get(CreatureAi.class);
-                if (creatureAi != null && creatureAi.getCreatureState() == CreatureState.IDLE) {
-                    impIdle++;
-                } else if (attackTarget != null) {
-                    impFighting++;
-                } else {
-                    impBusy++;
-                }
-                impTotal++;
-            }
-
-            // Set the amounts
-            workerAmountControl.setBusy(impBusy);
-            workerAmountControl.setFight(impFighting);
-            workerAmountControl.setIdle(impIdle);
-            workerAmountControl.setTotal(impTotal);
-        }
-
-        private final class EventListener implements CreatureCardEventListener {
-
-            private final Map<Short, Integer> selectionIndices = new HashMap<>();
-
-            @Override
-            public void zoomTo(short creatureId, CreatureUIState uiState) {
-                Entity entity = getNextCreature(creatureId, uiState);
-                if (entity != null) {
-                    playerScreenController.zoomToPosition(entity.get(Position.class).position);
-                }
-            }
-
-            @Override
-            public void pickUp(short creatureId, CreatureUIState uiState) {
-                Entity entity = getNextCreature(creatureId, uiState);
-                if (entity != null) {
-                    playerScreenController.pickUpEntity(entity.getId());
-                }
-            }
-
-            /**
-             * Get the next creature of the selected type. And advances the
-             * current selection
-             *
-             * @param creatureId the type of creature
-             * @param state the state filter
-             * @return the next creature of the type
-             */
-            private Entity getNextCreature(short creatureId, CreatureUIState state) {
-                List<EntityId> creatureList = new ArrayList<>(creaturesByTypes.get(creatureId));
-                Integer index = selectionIndices.get(creatureId);
-                if (index == null || index >= creatureList.size()) {
-                    index = 0;
-                }
-
-                // Loop until filter hits or we looped it around
-                int startIndex = index;
-                Entity selectedCreature = null;
-                do {
-                    EntityId creature = creatureList.get(index);
-                    Entity entity = creatureEntities.get(creature);
-                    index++;
-                    if (isCreatureState(entity, state) && entity.get(Position.class) != null) {
-                        selectionIndices.put(creatureId, index);
-                        selectedCreature = entity;
-                        break;
-                    }
-
-                    if (index == creatureList.size()) {
-                        index = 0;
-                    }
-                } while (index != startIndex);
-                return selectedCreature;
-            }
-
-            private boolean isCreatureState(Entity entity, CreatureUIState state) {
-                if (state == null) {
-                    return true;
-                }
-
-                AttackTarget attackTarget = entity.get(AttackTarget.class);
-                CreatureAi creatureAi = entity.get(CreatureAi.class);
-                if (creatureAi != null && creatureAi.getCreatureState() == CreatureState.IDLE) {
-                    return state == CreatureUIState.IDLE;
-                } else if (attackTarget != null) {
-                    return state == CreatureUIState.FIGHT;
-                } else {
-                    return state == CreatureUIState.BUSY;
-                }
-            }
-
         }
 
     }
