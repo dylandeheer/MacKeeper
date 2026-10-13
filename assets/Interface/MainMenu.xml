@@ -131,7 +131,9 @@
                     <text style="menuText" text="${menu.141}" align="center">
                         <interact onClick="startSkirmish()" />
                     </text>
-                    <text id="loadGame" style="menuText" text="${menu.145}" align="center" />
+                    <text id="loadGame" style="menuText" text="${menu.145}" align="center">
+                        <interact onClick="loadGame()" />
+                    </text>
                 </panel>
             </panel>
             <panel childLayout="horizontal" align="right" valign="bottom">

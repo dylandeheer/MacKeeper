@@ -31,7 +31,9 @@ class NativeActiveSessionLoadSmoke {
   LocalSessionArchive saved;GameClientState original;CompletableFuture<LocalSessionLoader.Result> operation;
   final Path good=Path.of("work/native-active-good.mkls"),bad=Path.of("work/native-active-bad.mkls");
   Path recoveryFolder;byte[] expectedServer;double resumedAt;
-  @Override public void initialize(AppStateManager manager,Application application){super.initialize(manager,application);states=manager;app=(Main)application;}
+  @Override public void initialize(AppStateManager manager,Application application){super.initialize(manager,application);
+            application.getListener().setVolume(0); // Keep native playback running without audible test output.
+states=manager;app=(Main)application;}
   void next(int value){stage=value;delay=0;System.out.println("ACTIVE stage="+value);}
   @Override public void update(float tpf){try{
    delay+=tpf;var client=states.getState(GameClientState.class);var player=states.getState(PlayerState.class);var menu=states.getState(MainMenuState.class);

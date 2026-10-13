@@ -40,7 +40,9 @@ class NativeSessionRestoreSmoke {
   LocalSessionArchive saved;IKwdFile definition;GameClientState previous,receiving;Object oldData;PlayerState oldPlayer;
   byte[] expectedServer,profile;double resumedAt;
   final CampaignLevel campaign=new CampaignLevel(CampaignLevel.LevelType.Level,1);
-  @Override public void initialize(AppStateManager manager,Application application){super.initialize(manager,application);states=manager;app=(Main)application;}
+  @Override public void initialize(AppStateManager manager,Application application){super.initialize(manager,application);
+            application.getListener().setVolume(0); // Keep native playback running without audible test output.
+states=manager;app=(Main)application;}
   @Override public void update(float tpf){try{
    delay+=tpf;
    var client=states.getState(GameClientState.class);var player=states.getState(PlayerState.class);var menu=states.getState(MainMenuState.class);

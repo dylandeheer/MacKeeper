@@ -222,6 +222,8 @@ public final class MainMenuScreenController implements IMainMenuScreenController
         nifty.showPopup(nifty.getCurrentScreen(), popupElement.getId(), null);
     }
 
+    public void loadGame() {SavedGamesState.open(state.app, false);}
+
     protected void showError(String title, String message) {
         closePopup();
 

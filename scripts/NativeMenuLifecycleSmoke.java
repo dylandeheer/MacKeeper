@@ -29,7 +29,9 @@ class NativeMenuLifecycleSmoke {
   Main app;AppStateManager states;MainMenuState menu;Thread worker;int stage;float delay;
   final CountDownLatch entered=new CountDownLatch(1),release=new CountDownLatch(1);
   final AtomicBoolean gate=new AtomicBoolean();
-  @Override public void initialize(AppStateManager manager,Application application){super.initialize(manager,application);states=manager;app=(Main)application;}
+  @Override public void initialize(AppStateManager manager,Application application){super.initialize(manager,application);
+            application.getListener().setVolume(0); // Keep native playback running without audible test output.
+states=manager;app=(Main)application;}
   @Override public void update(float tpf){try{
    delay+=tpf;
    if(stage==0){

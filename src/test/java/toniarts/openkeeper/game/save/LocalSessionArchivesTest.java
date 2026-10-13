@@ -127,7 +127,7 @@ class LocalSessionArchivesTest {
     private static ClientState copy(ClientState c,ClientModelState model,PlayerProgressState progress,PlayerScreenState screen,ClientState.Active active) {
         return new ClientState(model,progress,screen,c.fog(),c.sound(),c.worldView(),active);
     }
-    private static LocalSessionArchive fixture(boolean terminal) {
+    static LocalSessionArchive fixture(boolean terminal) {
         var base=SimulationArchivesTest.fixture();var s=base.simulation();
         var keeper=new Keeper(false,(short)3);keeper.setGold(12);var authoritative=keeper.captureState();keeper.setGold(7);
         var index=new PlayerControlState.ResearchIndex(List.of(),List.of());

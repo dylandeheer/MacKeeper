@@ -61,7 +61,7 @@ public final class LocalSessionLoader extends AbstractAppState {
             original = states.getState(GameClientState.class);originalServer = states.getState(GameServerState.class);
             if (original != null) {
                 if (!(original.getGameClientService() instanceof LocalGameSession) || originalServer == null
-                        || !original.isInitialized() || !original.isAcceptingInput()
+                        || !original.isInitialized() || !original.isReadyForReplacement()
                         || !original.loadingCompletion().toCompletableFuture().isDone())
                     throw new IllegalStateException("Only a fully loaded local game can be replaced");
                 originalDefinition = original.getLevelData();

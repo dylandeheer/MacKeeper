@@ -268,6 +268,9 @@ public final class PlayerScreenController implements IPlayerScreenController {
         element.show();
     }
 
+    public void saveGame() {SavedGamesState.open(state.app, true);}
+    public void loadGame() {SavedGamesState.open(state.app, false);}
+
     @Override
     public void pauseMenu() {
 
@@ -327,8 +330,11 @@ public final class PlayerScreenController implements IPlayerScreenController {
 
                      items.add(new GameMenu("i-objective", "${menu.537}", "pauseMenu()", optionsColumnOne));
                 items.add(new GameMenu("i-game", "${menu.97}", "pauseMenu()", optionsColumnOne));
-                items.add(new GameMenu("i-load", "${menu.143}", "pauseMenu()", optionsColumnOne));
-                items.add(new GameMenu("i-save", "${menu.201}", "pauseMenu()", optionsColumnOne));
+                var localClient = state.app.getStateManager().getState(GameClientState.class);
+                if (localClient != null && localClient.getGameClientService() instanceof toniarts.openkeeper.game.state.session.LocalGameSession) {
+                    items.add(new GameMenu("i-load", "${menu.143}", "loadGame()", optionsColumnOne));
+                    items.add(new GameMenu("i-save", "${menu.201}", "saveGame()", optionsColumnOne));
+                }
                 items.add(new GameMenu("i-quit", "${menu.1266}", String.format("pauseMenuNavigate(%s,%s,null,null)",
                         PauseMenuState.QUIT.name(), PauseMenuState.MAIN.name()), optionsColumnTwo));
                 items.add(new GameMenu("i-restart", "${menu.1269}", "pauseMenu()", optionsColumnTwo));

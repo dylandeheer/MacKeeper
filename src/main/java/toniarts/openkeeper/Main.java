@@ -336,6 +336,8 @@ public final class Main extends SimpleApplication {
         inputManager.addMapping("MacKeeperPause", new com.jme3.input.controls.KeyTrigger(com.jme3.input.KeyInput.KEY_ESCAPE));
         inputManager.addListener((com.jme3.input.controls.ActionListener) (name, pressed, tpf) -> {
             if (pressed) return;
+            var client = stateManager.getState(toniarts.openkeeper.game.state.GameClientState.class);
+            if (client != null && !client.isAcceptingInput()) return;
             var possession = stateManager.getState(toniarts.openkeeper.view.PossessionInteractionState.class);
             if (possession != null && possession.isEnabled()) {
                 possession.exitPossession();

@@ -57,7 +57,9 @@ class NativePresentationSmoke {
         Main app;AppStateManager states;int stage;float delay;GameLoopManager loop;long gold;
         LocalGameSession session;GameClientState client;MessageState pausedMessages;PlayerScreenState originalScreen,savedScreen;
         @Override public void initialize(AppStateManager states, Application app) {
-            super.initialize(states, app);this.states = states;this.app = (Main) app;
+            super.initialize(states, app);
+            app.getListener().setVolume(0); // Keep native playback running without audible test output.
+this.states = states;this.app = (Main) app;
         }
         private void captureJoinedSession(String phase) throws Exception {
             var server=states.getState(GameServerState.class);

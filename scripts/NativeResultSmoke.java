@@ -28,7 +28,9 @@ class NativeResultSmoke {
   Main app;AppStateManager states;long began=System.nanoTime();float delay;int stage=-1;double expectedTime;
   final toniarts.openkeeper.game.data.CampaignLevel campaign=new toniarts.openkeeper.game.data.CampaignLevel(toniarts.openkeeper.game.data.CampaignLevel.LevelType.Level,1);
   toniarts.openkeeper.game.state.session.PlayerProgressState progress;int attemptsBefore;boolean rebuiltEnd;toniarts.openkeeper.game.state.session.PlayerScreenState terminalScreen;toniarts.openkeeper.game.state.session.PlayerService service;ScreenshotAppState capture;GameLoopManager cameraLoop;com.jme3.math.Vector3f stationaryPosition;
-  @Override public void initialize(AppStateManager states,Application application){super.initialize(states,application);this.states=states;app=(Main)application;capture=new ScreenshotAppState(Path.of("work").toAbsolutePath()+"/","result-flow-"+win+"-"+continuePlaying);capture.setIsNumbered(false);states.attach(capture);}
+  @Override public void initialize(AppStateManager states,Application application){super.initialize(states,application);
+            application.getListener().setVolume(0); // Keep native playback running without audible test output.
+this.states=states;app=(Main)application;capture=new ScreenshotAppState(Path.of("work").toAbsolutePath()+"/","result-flow-"+win+"-"+continuePlaying);capture.setIsNumbered(false);states.attach(capture);}
   @Override public void update(float tpf){try{
    if((System.nanoTime()-began)/1e9>180)throw new AssertionError("Timed out at stage "+stage);
    if(stage==-1){

@@ -33,7 +33,9 @@ class NativeAudioSmoke {
     }
     static class Probe extends AbstractAppState {
         Main app;AppStateManager states;GameClientState client;GameLoopManager loop;SoundState sound;int stage,messages,first;float delay;SoundSnapshot paused;
-        @Override public void initialize(AppStateManager manager,Application application){super.initialize(manager,application);states=manager;app=(Main)application;}
+        @Override public void initialize(AppStateManager manager,Application application){super.initialize(manager,application);
+            application.getListener().setVolume(0); // Keep native playback running without audible test output.
+states=manager;app=(Main)application;}
         int count(){return states.getState(SystemMessageState.class).captureState().messages().size();}
         SoundSnapshot with(SoundSnapshot s,boolean enabled,List<Speech> pending,ActiveSpeech speech,Playback background){return new SoundSnapshot(s.playerId(),s.levelCategory(),enabled,s.backgroundCategory(),s.playlist(),s.nextTrack(),pending,speech,background);}
         Playback at(Playback p,float seconds){return new Playback(p.file(),p.fingerprint(),seconds,p.status(),p.volume());}
