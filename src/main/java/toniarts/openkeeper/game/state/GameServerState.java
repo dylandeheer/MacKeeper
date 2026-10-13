@@ -120,6 +120,21 @@ public final class GameServerState extends AbstractAppState {
         return multiplayer;
     }
 
+    /** Capture a local world and its exact client under one exclusive simulation boundary. */
+    public toniarts.openkeeper.game.save.LocalSessionArchive captureLocalSession(GameClientState client) {
+        if (!(gameService instanceof toniarts.openkeeper.game.state.session.LocalGameSession)
+                || client.getGameClientService() != gameService || !gameLoaded || game == null
+                || stateManager == null || stateManager.getState(GameServerState.class) != this)
+            throw new IllegalStateException("The local server/client session is not ready");
+        return toniarts.openkeeper.game.save.SimulationState.capture(game, simulation -> {
+            var savedClient = client.captureClientState();
+            savedClient.progress().validateBinding(toniarts.openkeeper.tools.convert.map.Player.KEEPER1_ID, levelObject);
+            return new toniarts.openkeeper.game.save.LocalSessionArchive(campaign,
+                    new toniarts.openkeeper.game.save.SimulationArchive(
+                            toniarts.openkeeper.game.save.SimulationArchive.Definition.capture(kwdFile), simulation), savedClient);
+        });
+    }
+
     private void loadGame(List<Keeper> players) {
         loader = new GameLoader(players);
         loader.start();

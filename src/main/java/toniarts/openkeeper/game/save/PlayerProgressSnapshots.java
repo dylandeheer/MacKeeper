@@ -11,7 +11,7 @@ import static toniarts.openkeeper.game.save.SaveValues.*;
 /** MKPP v1: local attempt identity, campaign branch and already observed terminal result. */
 public final class PlayerProgressSnapshots {
     private static final int MAGIC = 0x4d4b5050;
-    private static final int MAX_BYTES = 257 * 1024;
+    public static final int MAX_BYTES = 257 * 1024;
 
     public static byte[] encode(PlayerProgressState state) throws IOException {
         var bytes = new ByteArrayOutputStream();

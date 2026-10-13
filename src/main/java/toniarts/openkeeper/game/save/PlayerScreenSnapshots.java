@@ -7,7 +7,7 @@ import static toniarts.openkeeper.game.save.SaveValues.*;
 
 /** MKUI v1: logical screen destination and local pause/result-input lifecycle. */
 public final class PlayerScreenSnapshots {
-    private static final int MAX_BYTES = 256 * 1024;
+    public static final int MAX_BYTES = 256 * 1024;
     public static byte[] encode(PlayerScreenState state) throws IOException {
         var bytes = new ByteArrayOutputStream();
         try (var out = new DataOutputStream(bytes)) {

@@ -134,6 +134,26 @@ public final class GameClientState extends AbstractPauseAwareState {
         saved.restore(players, pendingPresentation, kwdFile);
     }
 
+    /** All implemented logical owners, observed on the render thread without draining notifications. */
+    public toniarts.openkeeper.game.state.session.ClientState captureClientState() {
+        requireReadyClient();
+        var screen = playerState.captureScreenState();
+        toniarts.openkeeper.game.state.session.ClientState.Active active = null;
+        if (screen.playerEnabled()) {
+            var camera = stateManager.getState(PlayerCameraState.class);
+            var messages = stateManager.getState(SystemMessageState.class);
+            var interaction = stateManager.getState(toniarts.openkeeper.view.PlayerInteractionState.class);
+            var console = stateManager.getState(toniarts.openkeeper.game.console.ConsoleState.class);
+            if (camera == null || messages == null || interaction == null || console == null || !console.isInitialized())
+                throw new IllegalStateException("Client owners are still loading");
+            active = new toniarts.openkeeper.game.state.session.ClientState.Active(camera.captureState(), messages.captureState(),
+                    playerState.getScreen().captureHudState(), interaction.captureSelection(),
+                    playerState.getScreen().captureCreatureCards(), interaction.captureHandView(), console.isEnabled());
+        }
+        return new toniarts.openkeeper.game.state.session.ClientState(captureClientModel(), playerState.captureProgressState(),
+                screen, playerMapViewState.captureFogState(), stateManager.getState(SoundState.class).captureState(), active);
+    }
+
     private void requireReadyClient() {
         requireRenderThread();
         if (!isInitialized() || !gameStarted || stateManager.getState(GameClientState.class) != this)

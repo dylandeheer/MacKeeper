@@ -59,6 +59,31 @@ class NativePresentationSmoke {
         @Override public void initialize(AppStateManager states, Application app) {
             super.initialize(states, app);this.states = states;this.app = (Main) app;
         }
+        private void captureJoinedSession(String phase) throws Exception {
+            var server=states.getState(GameServerState.class);
+            var pending=client.capturePendingPresentation();
+            var archive=server.captureLocalSession(client);
+            archive.validateDefinition(client.getLevelData());
+            byte[] original=toniarts.openkeeper.game.save.LocalSessionArchives.encode(archive);
+            Path file=Files.createTempFile(Path.of("work"),"joined-session-",".mkls");
+            try {
+                for(int i=0;i<3;i++) {
+                    toniarts.openkeeper.game.save.LocalSessionArchives.write(file,archive);
+                    archive=toniarts.openkeeper.game.save.LocalSessionArchives.read(file);
+                    if(!java.util.Arrays.equals(original,toniarts.openkeeper.game.save.LocalSessionArchives.encode(archive)))
+                        throw new AssertionError("Joined local archive changed across disk roundtrip");
+                    archive.validateDefinition(client.getLevelData());
+                }
+            }finally{Files.delete(file);}
+            if(!pending.equals(client.capturePendingPresentation()))throw new AssertionError("Joined capture drained client events");
+            try(var worker=Executors.newSingleThreadExecutor()) {
+                worker.submit(()->{try{server.captureLocalSession(client);throw new AssertionError("Off-render joined capture accepted");}
+                    catch(IllegalStateException expected){}}).get(5,TimeUnit.SECONDS);
+            }
+            if(server.captureLocalSession(client).server().simulation().level().clock().elapsedSeconds()!=archive.server().simulation().level().clock().elapsedSeconds())
+                throw new AssertionError("Archive encoding advanced paused simulation");
+            System.out.println("SESSION "+phase+" joined server/client capture, definition binding and three exact disk roundtrips; pending events unchanged");
+        }
         private void restoreActiveCamera() throws Exception {
             var camera = states.getState(PlayerCameraState.class);
             var saved = loop.captureSnapshot(game -> camera.captureState());
@@ -414,7 +439,7 @@ class NativePresentationSmoke {
                             if (before.getGold() == gold || !session.isInTransition()) throw new AssertionError("Restore rendered or acknowledged event");
                         }
                     } finally {Files.delete(file);}
-                    restoreClientModel();
+                    restoreClientModel();captureJoinedSession("queued");
                     System.out.println("PRESENTATION 6 worker notifications retained through 3 disk round trips; no staging side effects");
                     stage = 2;delay = 0;
                 }
@@ -426,7 +451,7 @@ class NativePresentationSmoke {
                     if (!session.isInTransition() || player.isTransitionEnd()) throw new AssertionError("Restored cinematic never played");
                     if (!client.capturePendingPresentation().events().isEmpty()) throw new AssertionError("Delivered events stayed queued");
                     System.out.println("PRESENTATION restored HUD notifications rendered and EnginePath67 is playing");
-                    restoreActiveCamera();stage = 3;
+                    restoreActiveCamera();captureJoinedSession("cinematic");stage = 3;
                 }
                 if (stage == 3 && (delay += tpf) > 7) {
                     if (session.isInTransition() || !player.isTransitionEnd()) throw new AssertionError("Restored cinematic did not acknowledge completion");
@@ -436,7 +461,7 @@ class NativePresentationSmoke {
                 if(stage==10 && (delay+=tpf)>2){
                     if(!player.isScreenReady() || !app.getNifty().getCurrentScreen().getScreenId().equals("cinematic")
                             || !savedScreen.equals(player.captureScreenState()))throw new AssertionError("Restored screen did not settle");
-                    player.restoreScreenState(originalScreen);stage=4;delay=0;
+                    captureJoinedSession("restored HUD");player.restoreScreenState(originalScreen);stage=4;delay=0;
                 }
                 if (stage == 4 && (delay += tpf) > 2) {
                     if(!player.isScreenReady()||!app.getNifty().getCurrentScreen().getScreenId().equals(originalScreen.route().screenId()))

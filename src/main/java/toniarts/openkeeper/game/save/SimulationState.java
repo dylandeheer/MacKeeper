@@ -42,16 +42,22 @@ public record SimulationState(GameEntityData.Snapshot entities, List<KeeperState
     }
 
     public static SimulationState capture(GameLoopManager manager) {
+        return capture(manager, java.util.function.Function.identity());
+    }
+
+    /** Join render-thread client observations while the same exclusive server boundary is held. */
+    public static <T> T capture(GameLoopManager manager, java.util.function.Function<SimulationState, T> joined) {
+        Objects.requireNonNull(joined);
         return manager.captureSnapshotWithSystems((game, systems) -> {
             var controller = (GameController) game;
             var map = (MapController) game.getGameWorldController().getMapController();
-            try { return new SimulationState(((GameEntityData) manager.getEntityData()).capture(),
+            try { return joined.apply(new SimulationState(((GameEntityData) manager.getEntityData()).capture(),
                     game.getLevelInfo().getPlayers().values().stream().sorted(Comparator.comparingInt(Keeper::getId)).map(Keeper::captureState).toList(),
                     game.getPlayerControllers().values().stream().sorted(Comparator.comparingInt(p -> p.getKeeper().getId()))
                             .map(p -> ((PlayerController)p).captureState()).toList(),
                     map.captureRoomStates(), map.captureFlashControls(),
                     new LevelSnapshots.State(LevelState.capture(game.getLevelInfo()), ((GameTimeController)game.getGameTimer()).captureState()),
-                    systems, controller.captureTriggerRegistries(), game.getRandom().captureState(), controller.captureResults(), manager.captureLoopPhases(), manager.captureTransitions());
+                    systems, controller.captureTriggerRegistries(), game.getRandom().captureState(), controller.captureResults(), manager.captureLoopPhases(), manager.captureTransitions()));
             } catch (java.io.IOException failure) {throw new java.io.UncheckedIOException(failure);}
         });
     }

@@ -88,6 +88,17 @@ class NativeResultSmoke {
      states.detach(end);states.attach(EndGameState.restored(player));rebuiltEnd=true;delay=0;return;
     }
     if(!terminalScreen.equals(player.captureScreenState()))throw new AssertionError("Restored end listener replayed screen actions");
+    var joined=states.getState(GameServerState.class).captureLocalSession(states.getState(GameClientState.class));
+    joined.validateDefinition(states.getState(GameClientState.class).getLevelData());
+    if(joined.client().active()!=null||joined.client().progress().result()==null)throw new AssertionError("Invalid terminal joined owners");
+    var joinedBytes=toniarts.openkeeper.game.save.LocalSessionArchives.encode(joined);
+    Path joinedPath=Path.of("work/native-terminal-session.mkls");
+    for(int i=0;i<3;i++){
+     toniarts.openkeeper.game.save.LocalSessionArchives.write(joinedPath,joined);
+     joined=toniarts.openkeeper.game.save.LocalSessionArchives.read(joinedPath);
+     if(!java.util.Arrays.equals(joinedBytes,toniarts.openkeeper.game.save.LocalSessionArchives.encode(joined)))throw new AssertionError("Terminal joined archive changed");
+    }
+    System.out.println("FLOW joined terminal server/client save and three exact disk roundtrips without rebuilding inactive HUD owners");
     byte[] profileBefore=Files.readAllBytes(toniarts.openkeeper.utils.AppPaths.dataDirectory().resolve("settings.properties"));
     for(int i=0;i<3;i++){
      Path path=Path.of("work/native-terminal-screen.mkui");
