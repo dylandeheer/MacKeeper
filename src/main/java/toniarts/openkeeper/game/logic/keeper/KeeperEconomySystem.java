@@ -2,6 +2,7 @@
 package toniarts.openkeeper.game.logic.keeper;
 
 import com.jme3.math.Vector2f;
+import toniarts.openkeeper.game.save.KeeperEconomySnapshots;
 import com.simsilica.es.EntityData;
 import toniarts.openkeeper.game.component.*;
 import toniarts.openkeeper.utils.WorldUtils;
@@ -30,6 +31,7 @@ public final class KeeperEconomySystem implements IGameLogicUpdatable {
         int unchanged;
         int progress = -1;
     }
+
     private record Plan(short room, int x, int y, int width, int height) { }
 
     public KeeperEconomySystem(IGameWorldController world, IKwdFile level, Collection<IPlayerController> players, EntityData data) {
@@ -38,6 +40,36 @@ public final class KeeperEconomySystem implements IGameLogicUpdatable {
         this.map = world.getMapController();
         this.level = level;
         this.players = players.stream().sorted(Comparator.comparingInt(p -> p.getKeeper().getId())).toList();
+    }
+
+    /** Call inside the simulation capture boundary. Does not discover new deposits or issue commands. */
+    public KeeperEconomySnapshots.State captureState() {
+        var result = new TreeMap<Short, KeeperEconomySnapshots.Brain>();
+        states.forEach((owner, state) -> result.put(owner, new KeeperEconomySnapshots.Brain(state.elapsed,
+                state.knownGold, state.plan == null ? null : new KeeperEconomySnapshots.Plan(state.plan.room(),
+                        state.plan.x(), state.plan.y(), state.plan.width(), state.plan.height()), state.unchanged, state.progress)));
+        return new KeeperEconomySnapshots.State(result);
+    }
+
+    public static KeeperEconomySystem restoreState(IGameWorldController world, IKwdFile level,
+            Collection<IPlayerController> players, EntityData data, KeeperEconomySnapshots.State saved) {
+        var system = new KeeperEconomySystem(world, level, players, data);
+        var owners = new HashSet<Short>();
+        for (var player : players) if (!owners.add(player.getKeeper().getId())) throw new IllegalArgumentException("Duplicate economy owner");
+        var mapData = system.map.getMapData();
+        for (var entry : saved.players().entrySet()) {
+            if (!owners.contains(entry.getKey())) throw new IllegalArgumentException("Missing economy owner");
+            var brain = entry.getValue();
+            for (var point : brain.knownGold()) if (mapData.getTile(point) == null) throw new IllegalArgumentException("Remembered deposit outside map");
+            var plan = brain.plan();
+            if (plan != null && (level.getRoomById(plan.room()) == null || (long) plan.x() + plan.width() > mapData.getWidth()
+                    || (long) plan.y() + plan.height() > mapData.getHeight())) throw new IllegalArgumentException("Invalid economy plan binding");
+            if (brain.progress() > (long) mapData.getWidth() * mapData.getHeight()) throw new IllegalArgumentException("Invalid economy progress");
+            var state = new State();state.elapsed = brain.elapsed();state.knownGold.addAll(brain.knownGold());
+            state.plan = plan == null ? null : new Plan(plan.room(), plan.x(), plan.y(), plan.width(), plan.height());
+            state.unchanged = brain.unchanged();state.progress = brain.progress();system.states.put(entry.getKey(), state);
+        }
+        return system;
     }
 
     @Override public void processTick(float tpf) {

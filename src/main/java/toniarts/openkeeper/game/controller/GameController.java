@@ -74,6 +74,7 @@ public final class GameController implements IGameLogicUpdatable, IGameControlle
 
     private GameWorldController gameWorldController;
     private PaydaySystem paydaySystem;
+    private toniarts.openkeeper.game.logic.keeper.KeeperEconomySystem economySystem;
     private GameTimeController gameTimer;
     private INavigationService navigationService;
     private PositionSystem positionSystem;
@@ -148,8 +149,9 @@ public final class GameController implements IGameLogicUpdatable, IGameControlle
         controllers.add(new PlayerTriggerLogicController(this, levelInfo, gameTimer,
                 gameWorldController.getMapController(), gameWorldController.getCreaturesController(),
                 playerService));
-        controllers.add(new toniarts.openkeeper.game.logic.keeper.KeeperEconomySystem(
-                gameWorldController, levelInfo.kwdFile, playerControllers.values(), entityData));
+        economySystem = new toniarts.openkeeper.game.logic.keeper.KeeperEconomySystem(
+                gameWorldController, levelInfo.kwdFile, playerControllers.values(), entityData);
+        controllers.add(economySystem);
         controllers.add(gameTimer);
         controllers.add(positionSystem);
 
@@ -158,6 +160,10 @@ public final class GameController implements IGameLogicUpdatable, IGameControlle
             triggerControl = new TriggerControl(this, levelInfo, gameTimer, gameWorldController.getMapController(), gameWorldController.getCreaturesController(), triggerId);
         }
 
+    }
+
+    public toniarts.openkeeper.game.save.KeeperEconomySnapshots.State captureEconomyState() {
+        return economySystem.captureState();
     }
 
     private void setupPlayers() {

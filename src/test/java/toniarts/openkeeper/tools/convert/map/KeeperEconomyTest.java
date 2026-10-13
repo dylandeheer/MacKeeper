@@ -7,6 +7,8 @@ import com.simsilica.es.EntityId;
 import toniarts.openkeeper.game.component.*;
 import java.util.*;
 import org.junit.jupiter.api.Test;
+import java.io.IOException;
+import toniarts.openkeeper.game.save.KeeperEconomySnapshots;
 import toniarts.openkeeper.game.controller.*;
 import toniarts.openkeeper.game.controller.player.PlayerRoomControl;
 import toniarts.openkeeper.game.controller.room.IRoomController;
@@ -205,6 +207,131 @@ class KeeperEconomyTest {
         }
     }
 
+    @Test void restoredDecisionCadenceKeepsFractionalDelayAndDoesNotBurst() throws Exception {
+        Fixture a=new Fixture(), b=new Fixture();a.ai.setSpeed((short)4);b.ai.setSpeed((short)4);
+        step(a,b,.75f);reload(b);step(a,b,3);assertTrue(a.built.isEmpty());
+        reload(b);step(a,b,.25f);assertEquals(List.of((short)2),a.built);
+        reload(b);step(a,b,100);assertEquals(List.of((short)2,(short)1),a.built);
+        reload(b);step(a,b,.5f);assertEquals(.5,a.system.captureState().players().get((short)4).elapsed());
+    }
+
+    @Test void restoredExcavationPlanRetainsProgressAndBuildsAtTheSameFutureTick() throws Exception {
+        Fixture a=new Fixture(),b=new Fixture();
+        for(var f:List.of(a,b)) {
+            f.ai.setBuildAreaStartX(9);f.ai.setBuildAreaStartY(3);f.ai.setBuildAreaEndX(11);f.ai.setBuildAreaEndY(5);
+        }
+        step(a,b,1);assertNotNull(a.system.captureState().players().get((short)4).plan());
+        step(a,b,.25f);reload(b);
+        for(int x=9;x<=11;x++) {
+            for(var f:List.of(a,b)) for(int y=3;y<=5;y++){f.terrain[x][y]=f.floor;f.owners[x][y]=4;}
+            reload(b);step(a,b,1);
+        }
+        assertEquals(List.of((short)2),a.built);assertEquals(9100,a.keeper.getGold());
+        assertNull(a.system.captureState().players().get((short)4).plan());
+    }
+
+    @Test void stalledPlanRetainsAbandonmentCounterAcrossRepeatedLoads() throws Exception {
+        Fixture a=new Fixture(),b=new Fixture();
+        for(var f:List.of(a,b)) {
+            f.ai.setBuildAreaStartX(9);f.ai.setBuildAreaStartY(3);f.ai.setBuildAreaEndX(11);f.ai.setBuildAreaEndY(5);
+        }
+        step(a,b,1);
+        for(int i=0;i<59;i++){reload(b);step(a,b,1);}
+        assertEquals(59,a.system.captureState().players().get((short)4).unchanged());
+        reload(b);step(a,b,1);assertNull(a.system.captureState().players().get((short)4).plan());
+        assertEquals(60,a.system.captureState().players().get((short)4).unchanged());
+        reload(b);step(a,b,1);assertNotNull(a.system.captureState().players().get((short)4).plan());
+        assertEquals(0,a.system.captureState().players().get((short)4).unchanged());
+    }
+
+    @Test void rememberedGoldSurvivesLostPerceptionAndIsPrunedAtTheNormalDecision() throws Exception {
+        Fixture a=new Fixture(),b=new Fixture();var watcherA=a.preparePerceivedGold(10);var watcherB=b.preparePerceivedGold(10);
+        step(a,b,1);assertEquals(Set.of(new Point(12,4)),a.system.captureState().players().get((short)4).knownGold());
+        a.data.removeEntity(watcherA);b.data.removeEntity(watcherB);step(a,b,.5f);
+        for(var f:List.of(a,b)){f.terrain[9][4]=f.floor;f.owners[9][4]=4;f.selected.clear();}
+        reload(b);step(a,b,.5f);assertEquals(Set.of(new Point(10,4)),a.selected);
+        for(var f:List.of(a,b)){f.gold[12][4]=0;f.selected.clear();}
+        reload(b);assertFalse(b.system.captureState().players().get((short)4).knownGold().isEmpty());
+        step(a,b,1);assertTrue(a.system.captureState().players().get((short)4).knownGold().isEmpty());
+    }
+
+    @Test void stalePlanAndInactiveOwnerRevalidateOnTheNextTickInsteadOfDuringLoad() throws Exception {
+        for(int change=0;change<4;change++) {
+            Fixture a=new Fixture(),b=new Fixture();
+            for(var f:List.of(a,b)) {
+                f.ai.setBuildAreaStartX(9);f.ai.setBuildAreaStartY(3);f.ai.setBuildAreaEndX(11);f.ai.setBuildAreaEndY(5);
+            }
+            step(a,b,1);
+            for(var f:List.of(a,b)) switch(change) {
+                case 0->f.blocked.add(new Point(10,4));
+                case 1->f.keeper.getAvailableRooms().forEach(r->r.setDiscovered(false));
+                case 2->f.rooms.onSold(f.heart);
+                case 3->f.keeper.getPlayer().setAiAttributes(null);
+            }
+            var before=a.system.captureState();reload(b);assertEquals(before,b.system.captureState());
+            step(a,b,1);assertTrue(a.built.isEmpty());
+            if(change==2)assertTrue(a.system.captureState().players().isEmpty());
+            else if(change==3)assertEquals(before,a.system.captureState());
+            else assertNull(a.system.captureState().players().get((short)4).plan());
+        }
+    }
+
+    @Test void economyCodecRejectsMalformedValuesAndKeepsCollectionsDetached() throws Exception {
+        var points=new HashSet<>(Set.of(new Point(7,8)));var players=new HashMap<Short,KeeperEconomySnapshots.Brain>();
+        players.put((short)4,new KeeperEconomySnapshots.Brain(.5,points,new KeeperEconomySnapshots.Plan((short)2,1,2,3,4),12,5));
+        var saved=new KeeperEconomySnapshots.State(players);points.clear();players.clear();
+        assertEquals(1,saved.players().get((short)4).knownGold().size());
+        assertThrows(UnsupportedOperationException.class,()->saved.players().clear());
+        assertThrows(UnsupportedOperationException.class,()->saved.players().get((short)4).knownGold().clear());
+        var bytes=KeeperEconomySnapshots.encode(saved);assertEquals(saved,KeeperEconomySnapshots.decode(bytes));
+        for(int i=0;i<bytes.length;i++){var truncated=Arrays.copyOf(bytes,i);assertThrows(IOException.class,()->KeeperEconomySnapshots.decode(truncated));}
+        byte[] header=bytes.clone();header[0]=0;assertThrows(IOException.class,()->KeeperEconomySnapshots.decode(header));
+        assertThrows(IOException.class,()->KeeperEconomySnapshots.decode(Arrays.copyOf(bytes,bytes.length+1)));
+        assertThrows(IllegalArgumentException.class,()->new KeeperEconomySnapshots.Brain(Double.NaN,Set.of(),null,0,-1));
+        assertThrows(IllegalArgumentException.class,()->new KeeperEconomySnapshots.Brain(0,Set.of(),null,61,0));
+        assertThrows(IllegalArgumentException.class,()->new KeeperEconomySnapshots.Brain(0,Set.of(),null,0,-2));
+        assertThrows(IllegalArgumentException.class,()->new KeeperEconomySnapshots.Plan((short)2,0,0,100000,100000));
+        assertThrows(IllegalArgumentException.class,()->new KeeperEconomySnapshots.State(Map.of((short)1,saved.players().get((short)4))));
+        // Duplicate owner and duplicate point records are rejected, even though a map/set could hide them.
+        try(var buffer=new java.io.ByteArrayOutputStream();var out=new java.io.DataOutputStream(buffer)) {
+            out.writeInt(0x4d4b4543);out.writeInt(1);out.writeInt(2);
+            out.write(bytes,12,bytes.length-12);out.write(bytes,12,bytes.length-12);
+            assertThrows(IOException.class,()->KeeperEconomySnapshots.decode(buffer.toByteArray()));
+        }
+        try(var buffer=new java.io.ByteArrayOutputStream();var out=new java.io.DataOutputStream(buffer)) {
+            out.writeInt(0x4d4b4543);out.writeInt(1);out.writeInt(1);out.writeShort(4);out.writeDouble(0);out.writeInt(2);
+            out.writeInt(1);out.writeInt(2);out.writeInt(1);out.writeInt(2);out.writeBoolean(false);out.writeInt(0);out.writeInt(-1);
+            assertThrows(IOException.class,()->KeeperEconomySnapshots.decode(buffer.toByteArray()));
+        }
+    }
+
+    @Test void economyBindingRejectsForeignOwnersAndInvalidMapReferencesWithoutCommands() {
+        Fixture f=new Fixture();
+        var ordinary=new KeeperEconomySnapshots.Brain(.75,Set.of(),null,0,-1);
+        for(var invalid:List.of(new KeeperEconomySnapshots.State(Map.of((short)5,ordinary)),
+                new KeeperEconomySnapshots.State(Map.of((short)4,new KeeperEconomySnapshots.Brain(0,Set.of(new Point(20,0)),null,0,-1))),
+                new KeeperEconomySnapshots.State(Map.of((short)4,new KeeperEconomySnapshots.Brain(0,Set.of(),new KeeperEconomySnapshots.Plan((short)88,1,1,3,3),0,-1))),
+                new KeeperEconomySnapshots.State(Map.of((short)4,new KeeperEconomySnapshots.Brain(0,Set.of(),new KeeperEconomySnapshots.Plan((short)2,19,1,3,3),0,-1))))) {
+            assertThrows(IllegalArgumentException.class,()->KeeperEconomySystem.restoreState(f.world,f.level,List.of(f.player),f.data,invalid));
+            assertTrue(f.built.isEmpty());assertTrue(f.selected.isEmpty());assertEquals(10000,f.keeper.getGold());
+        }
+        assertThrows(IllegalArgumentException.class,()->KeeperEconomySystem.restoreState(f.world,f.level,List.of(f.player,f.player),f.data,new KeeperEconomySnapshots.State(Map.of())));
+    }
+
+    private static void reload(Fixture f) throws Exception {
+        var saved=f.system.captureState();var selected=Set.copyOf(f.selected);var built=List.copyOf(f.built);long gold=f.keeper.getGold();
+        var restored=KeeperEconomySystem.restoreState(f.world,f.level,List.of(f.player),f.data,KeeperEconomySnapshots.decode(KeeperEconomySnapshots.encode(saved)));
+        assertEquals(saved,restored.captureState());assertEquals(selected,f.selected);assertEquals(built,f.built);assertEquals(gold,f.keeper.getGold());
+        f.system.stop();f.system=restored;assertEquals(saved,restored.captureState());
+    }
+    private static void step(Fixture a,Fixture b,float time) {
+        a.system.processTick(time);b.system.processTick(time);
+        assertEquals(a.system.captureState(),b.system.captureState());assertEquals(a.built,b.built);assertEquals(a.selected,b.selected);
+        assertEquals(a.keeper.getGold(),b.keeper.getGold());assertEquals(a.rooms.getRoomSlabsCount(a.first),b.rooms.getRoomSlabsCount(b.first));
+        assertEquals(a.rooms.getRoomSlabsCount(a.second),b.rooms.getRoomSlabsCount(b.second));
+        for(int x=0;x<20;x++)for(int y=0;y<20;y++){assertEquals(a.terrain[x][y].getFlags(),b.terrain[x][y].getFlags());assertEquals(a.owners[x][y],b.owners[x][y]);}
+    }
+
     private static final class Fixture {
         final Terrain floor=new Terrain(), earth=new Terrain(), rock=new Terrain(), roomTile=new Terrain();
         final Terrain[][] terrain=new Terrain[20][20];
@@ -219,7 +346,10 @@ class KeeperEconomyTest {
         final Room first=room((short)1),second=room((short)2);
         final PlayerRoomControl rooms;
         final IRoomController heart;
-        final KeeperEconomySystem system;
+        KeeperEconomySystem system;
+        IGameWorldController world;
+        IKwdFile level;
+        IPlayerController player;
         final List<Short> built=new ArrayList<>();
         Fixture() { this(true); }
         Fixture(boolean computer) {
@@ -255,12 +385,12 @@ class KeeperEconomyTest {
                 case "isBuildable"->{Point p=(Point)args[0];yield tile(p)!=null&&terrain[p.x][p.y]==floor&&owners[p.x][p.y]==4;}
                 default->throw new AssertionError(name);
             });
-            IKwdFile level=proxy(IKwdFile.class,(name,args)->switch(name){
+            level=proxy(IKwdFile.class,(name,args)->switch(name){
                 case "getCreature"->scout;
-                case "getRoomById"->((Number)args[0]).intValue()==1?first:second;
+                case "getRoomById"->switch(((Number)args[0]).intValue()){case 1->first;case 2->second;default->null;};
                 default->throw new AssertionError(name);
             });
-            IGameWorldController world=proxy(IGameWorldController.class,(name,args)->switch(name){
+            world=proxy(IGameWorldController.class,(name,args)->switch(name){
                 case "getMapController"->map;
                 case "getConstructionBlockingTiles"->Set.copyOf(blocked);
                 case "build"->{
@@ -275,7 +405,7 @@ class KeeperEconomyTest {
                 }
                 default->throw new AssertionError(name);
             });
-            IPlayerController player=proxy(IPlayerController.class,(name,args)->switch(name){
+            player=proxy(IPlayerController.class,(name,args)->switch(name){
                 case "getKeeper"->keeper;case "getRoomControl"->rooms;default->throw new AssertionError(name);
             });
             system=new KeeperEconomySystem(world,level,List.of(player),this.data);
