@@ -118,6 +118,8 @@ public final class CreaturesController implements ICreaturesController {
     private final ILevelInfo levelInfo;
     private final boolean restoring;
     private boolean controllersRestored;
+    private boolean partiesRestored;
+    private final java.util.concurrent.atomic.AtomicLong nextPartyId = new java.util.concurrent.atomic.AtomicLong(1);
 
     private final static int MANA_GENERATION_IMP = -7;  // I don't find in Creature.java
 
@@ -210,6 +212,41 @@ public final class CreaturesController implements ICreaturesController {
         return controller;
     }
 
+    private long allocatePartyId() {
+        return nextPartyId.getAndUpdate(id -> {
+            if (id == Long.MAX_VALUE) throw new IllegalStateException("Party ID space exhausted");
+            return id + 1;
+        });
+    }
+
+    public toniarts.openkeeper.game.data.PartyRegistryState captureParties() {
+        var identities = new java.util.IdentityHashMap<IPartyController, Integer>();
+        var nodes = new java.util.ArrayList<toniarts.openkeeper.game.data.PartyState>();
+        java.util.function.Function<IPartyController, Integer> index = party -> identities.computeIfAbsent(party, p -> {
+            int id = nodes.size();nodes.add(((PartyController) p).captureState());return id;
+        });
+        var current = new java.util.TreeMap<Short, Integer>();
+        var spawned = new java.util.TreeMap<Long, Integer>();
+        new java.util.TreeMap<>(creaturePartiesByPartyId).forEach((id, party) -> current.put(id, index.apply(party)));
+        new java.util.TreeMap<>(creaturePartiesById).forEach((id, party) -> spawned.put(id, index.apply(party)));
+        return new toniarts.openkeeper.game.data.PartyRegistryState(nextPartyId.get(), nodes, current, spawned);
+    }
+
+    /** Restore both party indexes after creature caches, without selecting leaders or spawning members. */
+    public void restoreParties(toniarts.openkeeper.game.data.PartyRegistryState saved) {
+        if (!restoring || !controllersRestored || partiesRestored || !creaturePartiesByPartyId.isEmpty() || !creaturePartiesById.isEmpty())
+            throw new IllegalStateException("Party registry cannot be rebound");
+        var nodes = new java.util.ArrayList<PartyController>();
+        for (var state : saved.nodes()) nodes.add(PartyController.restoreState(state, heroParties.get(state.definitionId()),
+                this::allocatePartyId, this::getBoundController));
+        var current = new HashMap<Short, IPartyController>();
+        var spawned = new HashMap<Long, IPartyController>();
+        saved.current().forEach((id, index) -> current.put(id, nodes.get(index)));
+        saved.spawned().forEach((id, index) -> spawned.put(id, nodes.get(index)));
+        creaturePartiesByPartyId.putAll(current);creaturePartiesById.putAll(spawned);
+        nextPartyId.set(saved.nextId());partiesRestored = true;
+    }
+
     private void loadCreatures() {
         for (Thing.GoodCreature creature : kwdFile.getThings(Thing.GoodCreature.class)) {
             try {
@@ -248,7 +285,7 @@ public final class CreaturesController implements ICreaturesController {
         for (Thing.HeroParty heroParty : kwdFile.getThings(Thing.HeroParty.class)) {
             try {
                 heroParties.put(heroParty.getId(), heroParty);
-                creaturePartiesByPartyId.put(heroParty.getId(), new PartyController(heroParty));
+                creaturePartiesByPartyId.put(heroParty.getId(), new PartyController(heroParty, this::allocatePartyId));
             } catch (Exception ex) {
                 logger.log(Level.WARNING, "Could not load Thing " + heroParty + "!", ex);
             }
@@ -682,7 +719,7 @@ public final class CreaturesController implements ICreaturesController {
          */
         IPartyController partyController = creaturePartiesByPartyId.get(partyId);
         if (partyController.isCreated()) {
-            partyController = new PartyController(heroParties.get(partyId));
+            partyController = new PartyController(heroParties.get(partyId), this::allocatePartyId);
             logger.log(Level.DEBUG, "Re-spawning party {0}!", partyId);
         }
         partyController.setType(partyType);

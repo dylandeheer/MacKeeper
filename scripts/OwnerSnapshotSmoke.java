@@ -23,11 +23,11 @@ class OwnerSnapshotSmoke {
             List<toniarts.openkeeper.game.controller.map.FlashTileControl.State> flashes,
             toniarts.openkeeper.game.logic.PlayerCreatureSystem.State creatureIndex,
             toniarts.openkeeper.game.logic.PlayerSpellbookSystem.State spellbookIndex,
-            toniarts.openkeeper.game.logic.ChickenAiSystem.SavedState chickens, List<CreatureControlState> creatureControllers, toniarts.openkeeper.game.logic.CreatureAiSystem.SavedState creatureAi) { }
+            toniarts.openkeeper.game.logic.ChickenAiSystem.SavedState chickens, List<CreatureControlState> creatureControllers, toniarts.openkeeper.game.logic.CreatureAiSystem.SavedState creatureAi, PartyRegistryState parties) { }
 
     public static void main(String[] args) throws Exception {
         String base = Path.of(args[0]).toAbsolutePath().normalize() + "/";
-        int ownerCount = 0, pickedUp = 0, observedBooks = 0, observedChickens = 0, observedCreatures = 0;
+        int ownerCount = 0, pickedUp = 0, observedBooks = 0, observedChickens = 0, observedCreatures = 0, observedParties = 0, spawnedParties = 0;
         for (String name : List.of("level1", "level17", "TrapTime", "level10")) {
             var kwd = KwdFile.load(base, Path.of(base, "Data/editor/maps/" + name + ".kwd"));
             var data = new GameEntityData();
@@ -61,6 +61,18 @@ class OwnerSnapshotSmoke {
                         var book = game.getGameWorldController().getObjectsController().addRoomSpellBook(room.getOwnerId(), point.x, point.y, new PlayerSpell(spell.getId()));
                         require(storage.addItem(book, point) == null, "Probe book did not enter library");
                         seededBooks.incrementAndGet();break;
+                    }
+                    var creatureFactory = (CreaturesController) game.getGameWorldController().getCreaturesController();
+                    var candidate = creatureFactory.getParties().stream().filter(p -> !p.getMembers().isEmpty())
+                            .min(Comparator.comparingInt(p -> p.getPartyId()));
+                    if (candidate.isPresent()) {
+                        for (var room : map.captureRoomStates()) {
+                            if (!map.getRoomController(room.entityId()).getRoom().isHeroGate() || room.destroyed()) continue;
+                            var tile = room.coordinates().getFirst();
+                            for (int spawn = 0; spawn < 2; spawn++) creatureFactory.spawnHeroParty(candidate.get().getPartyId(),
+                                    toniarts.openkeeper.game.controller.creature.PartyType.INVASION_PARTY, new com.jme3.math.Vector2f(tile.x, tile.y));
+                            break;
+                        }
                     }
                     var controller = game.getPlayerController((short) 3);
                     if (controller == null) return;
@@ -100,7 +112,7 @@ class OwnerSnapshotSmoke {
                                     new LevelSnapshots.State(LevelState.capture(game.getLevelInfo()), ((GameTimeController) game.getGameTimer()).captureState()), Map.copyOf(statistics),
                                     ((MapController) game.getGameWorldController().getMapController()).captureRoomStates(),
                                     game.getPlayerControllers().values().stream().map(player -> ((PlayerController) player).captureState()).toList(),
-                                    ((MapController) game.getGameWorldController().getMapController()).captureFlashControls(), systems.creatures(), systems.spellbooks(), systems.chickens(), systems.creatureControllers(), systems.creatureAi());
+                                    ((MapController) game.getGameWorldController().getMapController()).captureFlashControls(), systems.creatures(), systems.spellbooks(), systems.chickens(), systems.creatureControllers(), systems.creatureAi(), systems.parties());
                         } catch (IOException e) { throw new UncheckedIOException(e); }
                     });
                     var staged = GameEntityData.restore(EntitySnapshots.decode(EntitySnapshots.encode(capture.entities())));
@@ -214,6 +226,14 @@ class OwnerSnapshotSmoke {
                             if (staged.getComponent(controller.getEntityId(), CreatureComponent.class) != null)
                                 require(controller == creatures.createController(controller.getEntityId()), "Factory created a duplicate controller");
                         }
+                        var partyState = PartySnapshots.decode(PartySnapshots.encode(capture.parties()));
+                        creatures.restoreParties(partyState);
+                        require(partyState.equals(creatures.captureParties()), "Party members/leader/indexes/allocator differ");
+                        observedParties += partyState.nodes().size();spawnedParties += partyState.spawned().size();
+                        for (var entry : partyState.current().entrySet()) {
+                            var node = partyState.nodes().get(entry.getValue());
+                            if (partyState.spawned().containsKey(node.id())) require(creatures.getParty(entry.getKey()) == creatures.getPartyById(node.id()), "Shared party identity lost");
+                        }
                         var creatureAi = CreatureSystemSnapshots.decode(CreatureSystemSnapshots.encode(capture.creatureAi()));
                         var aiSystem = toniarts.openkeeper.game.logic.CreatureAiSystem.restoreState(staged, creatures, tasks, creatureAi);
                         try {require(creatureAi.equals(aiSystem.captureState()), "Active creature membership differs");}
@@ -253,8 +273,10 @@ class OwnerSnapshotSmoke {
         System.out.println("PASS observed chicken controller round trips=" + observedChickens);
         require(observedCreatures > 0, "No observed creature controllers");
         System.out.println("PASS creature cache/controller round trips=" + observedCreatures + " (task identities only, no task graph restore)");
+        require(spawnedParties > 0, "No spawned parties exercised");
+        System.out.println("PASS party node round trips=" + observedParties + " spawned index entries=" + spawnedParties);
         System.out.println("PASS 12 live owner captures; keeper round trips=" + ownerCount + " carried entity round trips=" + pickedUp);
-        System.out.println("Keeper/hand/level/time/statistics/map/room/player/flash/creature-index/spellbook-index/object/chicken/creature-cache/AI-membership bindings only. Full world restoration, resumed gameplay and complete save files remain unverified.");
+        System.out.println("Keeper/hand/level/time/statistics/map/room/player/flash/creature-index/spellbook-index/object/chicken/creature-cache/AI-membership/party bindings only. Full world restoration, resumed gameplay and complete save files remain unverified.");
     }
     static void require(boolean ok, String message) { if (!ok) throw new AssertionError(message); }
 }

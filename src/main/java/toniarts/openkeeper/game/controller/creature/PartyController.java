@@ -23,7 +23,10 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.SequencedMap;
 import java.util.Set;
-import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.LongSupplier;
+import java.util.function.Function;
+import com.simsilica.es.EntityId;
+import toniarts.openkeeper.game.data.PartyState;
 import toniarts.openkeeper.game.controller.IMapController;
 import toniarts.openkeeper.game.controller.door.IDoorController;
 import toniarts.openkeeper.game.logic.IEntityPositionLookup;
@@ -42,7 +45,8 @@ import toniarts.openkeeper.utils.Utils;
  */
 public final class PartyController implements IPartyController {
 
-    private static final AtomicLong PARTY_ID_GENERATOR = new AtomicLong(1);
+    private final LongSupplier idAllocator;
+    private final List<Thing.GoodCreature> authoredMembers;
 
     private long id;
     private final short partyId;
@@ -53,7 +57,9 @@ public final class PartyController implements IPartyController {
     private ICreatureController leader;
     private boolean created = false;
 
-    public PartyController(Thing.HeroParty heroParty) {
+    public PartyController(Thing.HeroParty heroParty, LongSupplier idAllocator) {
+        this.idAllocator = java.util.Objects.requireNonNull(idAllocator);
+        authoredMembers = List.copyOf(heroParty.getHeroPartyMembers());
         partyId = heroParty.getId();
         name = heroParty.getName();
         triggerId = heroParty.getTriggerId();
@@ -63,9 +69,46 @@ public final class PartyController implements IPartyController {
         }
     }
 
+    public PartyState captureState() {
+        var values = new ArrayList<PartyState.Member>();
+        for (var entry : members.entrySet()) {
+            int index = -1;
+            for (int i = 0; i < authoredMembers.size(); i++) if (authoredMembers.get(i) == entry.getKey()) {index = i;break;}
+            if (index < 0) throw new IllegalStateException("Party member has no authored identity");
+            values.add(new PartyState.Member(index, entry.getValue() == null ? null : entry.getValue().getEntityId()));
+        }
+        return new PartyState(id, partyId, created, type, leader == null ? null : leader.getEntityId(), values);
+    }
+
+    public static PartyController restoreState(PartyState saved, Thing.HeroParty definition,
+            LongSupplier allocator, Function<EntityId, ICreatureController> creatures) {
+        if (definition == null || definition.getId() != saved.definitionId())
+            throw new IllegalArgumentException("Missing party definition");
+        var result = new PartyController(definition, allocator);
+        result.members.clear();
+        for (var member : saved.members()) {
+            if (member.definitionIndex() >= result.authoredMembers.size()) throw new IllegalArgumentException("Missing authored party member");
+            var key = result.authoredMembers.get(member.definitionIndex());
+            if (result.members.containsKey(key)) throw new IllegalArgumentException("Aliased authored party member");
+            result.members.put(key, member.creature() == null ? null : resolve(creatures, member.creature()));
+        }
+        result.id = saved.id();result.created = saved.created();result.type = saved.type();
+        result.leader = saved.leader() == null ? null : resolve(creatures, saved.leader());
+        return result;
+    }
+
+    private static ICreatureController resolve(Function<EntityId, ICreatureController> creatures, EntityId id) {
+        var creature = creatures.apply(id);
+        if (creature == null || !id.equals(creature.getEntityId())) throw new IllegalArgumentException("Missing/mismatched party creature");
+        return creature;
+    }
+
     @Override
     public void create() {
-        id = PARTY_ID_GENERATOR.getAndIncrement();
+        if (created) throw new IllegalStateException("Party already created");
+        long allocated = idAllocator.getAsLong();
+        if (allocated < 1) throw new IllegalStateException("Invalid allocated party identity");
+        id = allocated;
         created = true;
     }
 
