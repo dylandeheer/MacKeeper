@@ -32,6 +32,9 @@ import toniarts.openkeeper.tools.convert.map.TriggerAction;
  */
 public interface GameSessionListener extends MapListener, PlayerListener {
 
+    /** Local preparation failed before readiness; clients must abandon the loading wait. */
+    default void onLoadFailed(String message) {}
+
     /**
      * Client should start to load the game data up visually
      *

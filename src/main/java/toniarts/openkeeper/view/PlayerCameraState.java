@@ -343,7 +343,7 @@ public final class PlayerCameraState extends AbstractPauseAwareState implements 
         // Update the container
         container.update(tpf);
 
-        updateEdgeScroll(tpf);
+        if (acceptsSessionInput()) updateEdgeScroll(tpf);
 
         // Update audio listener position
         app.getListener().setLocation(app.getCamera().getLocation());
@@ -432,9 +432,15 @@ public final class PlayerCameraState extends AbstractPauseAwareState implements 
         inputManager.removeListener(this);
     }
 
+    private boolean acceptsSessionInput() {
+        if (!isInitialized() || !isEnabled() || stateManager.getState(PlayerCameraState.class) != this) return false;
+        GameClientState client = stateManager.getState(GameClientState.class);
+        return client != null && client.isAcceptingInput();
+    }
+
     @Override
     public void onAction(String name, boolean isPressed, float tpf) {
-        if (!isEnabled()) {
+        if (!acceptsSessionInput()) {
             return;
         }
 
@@ -484,7 +490,7 @@ public final class PlayerCameraState extends AbstractPauseAwareState implements 
 
     @Override
     public void onAnalog(String name, float value, float tpf) {
-        if (!isEnabled()) {
+        if (!acceptsSessionInput()) {
             return;
         }
 

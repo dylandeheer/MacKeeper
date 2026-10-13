@@ -90,9 +90,9 @@ class PresentationQueueTest {
         var queue = new PresentationQueue();var calls = new ArrayList<String>();
         var listener = new QueuedGameSessionListener(queue, target((name, args) -> calls.add(name)));
         listener.onGameDataLoaded(List.of());listener.onLoadComplete((short) 3);
-        listener.onLoadStatusUpdate(.25f, (short) 3);listener.onGameStarted();
+        listener.onLoadStatusUpdate(.25f, (short) 3);listener.onGameStarted();listener.onLoadFailed("preparation failed");
         listener.onGoldChange((short) 3, 7_000_000_000L, 100);listener.onGamePaused();listener.onGameResumed();
-        assertEquals(List.of("onGameDataLoaded", "onLoadComplete", "onLoadStatusUpdate", "onGameStarted"), calls);
+        assertEquals(List.of("onGameDataLoaded", "onLoadComplete", "onLoadStatusUpdate", "onGameStarted", "onLoadFailed"), calls);
         assertEquals(List.of(new Gold((short) 3, 7_000_000_000L, 100), new Paused(), new Resumed()), queue.capture().events());
     }
 

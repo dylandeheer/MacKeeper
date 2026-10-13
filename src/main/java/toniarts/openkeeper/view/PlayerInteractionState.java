@@ -557,6 +557,13 @@ public abstract class PlayerInteractionState extends AbstractPauseAwareState {
      * and per-key helper methods (rather than one large listener method) to
      * keep each individual handler's branching manageable.
      */
+    private boolean acceptsSessionInput() {
+        return isInitialized() && isEnabled() && gameClientState != null
+                && stateManager.getState(PlayerInteractionState.class) == this
+                && stateManager.getState(GameClientState.class) == gameClientState
+                && gameClientState.isAcceptingInput();
+    }
+
     private final class MapInteractionInputListener implements RawInputListener {
 
         @Override
@@ -577,7 +584,7 @@ public abstract class PlayerInteractionState extends AbstractPauseAwareState {
 
         @Override
         public void onMouseMotionEvent(MouseMotionEvent evt) {
-            if (!isInitialized() || !isEnabled() || refreshAfterRestore) return;
+            if (!acceptsSessionInput() || refreshAfterRestore) return;
             mousePosition.set(evt.getX(), evt.getY());
             keeperHandState.setPosition(evt.getX(), evt.getY());
 
@@ -588,7 +595,7 @@ public abstract class PlayerInteractionState extends AbstractPauseAwareState {
 
         @Override
         public void onMouseButtonEvent(MouseButtonEvent evt) {
-            if (!isInitialized() || !isEnabled() || !inputBarrier.mouse(evt.getButtonIndex(), evt.isPressed()) || refreshAfterRestore) return;
+            if (!acceptsSessionInput() || !inputBarrier.mouse(evt.getButtonIndex(), evt.isPressed()) || refreshAfterRestore) return;
 //            timeFromLastUpdate = 0;
             if (isOnGui || !isOnMap) {
                 return;
@@ -734,7 +741,7 @@ public abstract class PlayerInteractionState extends AbstractPauseAwareState {
 
         @Override
         public void onKeyEvent(KeyInputEvent evt) {
-            if (!isInitialized() || !isEnabled() || !inputBarrier.key(evt.getKeyCode(), evt.isPressed(), evt.isRepeating())) return;
+            if (!acceptsSessionInput() || !inputBarrier.key(evt.getKeyCode(), evt.isPressed(), evt.isRepeating())) return;
             updateModifierKeys(evt);
 
             if (evt.isPressed()) {

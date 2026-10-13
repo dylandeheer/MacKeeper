@@ -36,7 +36,7 @@ class PresentationSnapshotsTest {
         var state = new PresentationQueue.State(examples());var bytes = PresentationSnapshots.encode(state);
         assertEquals(EnumSet.allOf(Kind.class), state.events().stream().map(PresentationEvent::kind).collect(Collectors.toSet()));
         var runtimeMethods = Arrays.stream(GameSessionListener.class.getMethods()).map(java.lang.reflect.Method::getName)
-                .filter(name -> !Set.of("onGameDataLoaded", "onLoadComplete", "onLoadStatusUpdate", "onGameStarted").contains(name))
+                .filter(name -> !Set.of("onGameDataLoaded", "onLoadComplete", "onLoadStatusUpdate", "onGameStarted", "onLoadFailed").contains(name))
                 .collect(Collectors.toSet());runtimeMethods.add("onEnemySighted");
         for (int i = 0; i < 5; i++) {
             state = PresentationSnapshots.decode(bytes);assertEquals(examples(), state.events());

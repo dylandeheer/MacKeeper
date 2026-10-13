@@ -64,6 +64,12 @@ public final class GameServerState extends AbstractAppState {
 
     private final Object loadingObject = new Object();
     private volatile boolean gameLoaded = false;
+    private boolean closing;
+    private boolean startRequested;
+    private boolean simulationStarted;
+    private final List<Keeper> initialPlayers;
+    private final GameLoopManager preparedGame;
+    private final java.util.concurrent.CompletableFuture<Void> loadCompletion = new java.util.concurrent.CompletableFuture<>();
 
     private final IKwdFile kwdFile;
     private final CampaignLevel levelObject;
@@ -88,6 +94,20 @@ public final class GameServerState extends AbstractAppState {
      * @param campaignLevel the campaign level, or {@code null} for non-campaign
      */
     public GameServerState(IKwdFile level, List<Keeper> players, boolean campaign, GameSessionServerService gameService, @Nullable toniarts.openkeeper.game.data.CampaignLevel campaignLevel) {
+        this(level, players, campaign, gameService, campaignLevel, null);
+    }
+
+    /** Own a fully staged independent world without replaying new-game construction or initial client data. */
+    public static GameServerState restored(IKwdFile level, boolean campaign,
+            toniarts.openkeeper.game.state.session.LocalGameSession service, CampaignLevel campaignLevel, GameLoopManager prepared) {
+        if (prepared.getEntityData() != service.getEntityData()) throw new IllegalArgumentException("Restored server store differs");
+        return new GameServerState(level, List.of(), campaign, service, campaignLevel, prepared);
+    }
+
+    private GameServerState(IKwdFile level, List<Keeper> players, boolean campaign, GameSessionServerService gameService,
+            CampaignLevel campaignLevel, GameLoopManager prepared) {
+        initialPlayers = players == null ? null : List.copyOf(players);
+        preparedGame = prepared;
         this.kwdFile = level;
         this.levelObject = campaignLevel;
         this.campaign = campaign;
@@ -112,8 +132,7 @@ public final class GameServerState extends AbstractAppState {
         // Add the listener
         gameService.addGameSessionServiceListener(gameSessionListener);
 
-        // Start loading game
-        loadGame(players);
+        // Loading starts after attachment, so a cancelled/unattached state cannot publish a world.
     }
 
     public boolean isMultiplayer() {
@@ -141,9 +160,49 @@ public final class GameServerState extends AbstractAppState {
     }
 
     @Override
+    public void stateAttached(AppStateManager manager) {
+        super.stateAttached(manager);
+        stateManager = manager;
+        if (closing) manager.detach(this);
+    }
+
+    @Override
     public void initialize(final AppStateManager stateManager, final Application app) {
+        super.initialize(stateManager, app);
         this.app = (Main) app;
         this.stateManager = stateManager;
+        synchronized (loadingObject) {
+            if (closing) return;
+            if (preparedGame != null) publishGame(preparedGame, false);
+            else loadGame(initialPlayers);
+        }
+    }
+
+    public java.util.concurrent.CompletionStage<Void> loadingCompletion() {return loadCompletion.minimalCompletionStage();}
+
+    private void publishGame(GameLoopManager prepared, boolean sendInitialData) {
+        // Caller owns loadingObject; cancellation cannot interleave publication or callbacks.
+        game = prepared;
+        gameWorldController = game.getGameController().getGameWorldController();
+        mapController = gameWorldController.getMapController();
+        gameWorldController.addListener(playerActionListener);mapController.addListener(mapListener);
+        for (IPlayerController player : game.getGameController().getPlayerControllers().values()) player.addListener(gameService);
+        gameLoaded = true;
+        if (sendInitialData) gameService.sendGameData(game.getGameController().getLevelInfo().getPlayers().values());
+        if (startRequested) startSimulation();
+        loadCompletion.complete(null);
+    }
+
+    private void startSimulation() {
+        if (!closing && gameLoaded && !simulationStarted) {
+            simulationStarted = true;game.start();
+        }
+    }
+
+    private void runPlayerCommand(Runnable command) {
+        synchronized (loadingObject) {
+            if (!closing && gameLoaded) game.runPlayerCommand(command);
+        }
     }
 
     /**
@@ -151,18 +210,17 @@ public final class GameServerState extends AbstractAppState {
      * same render loop. Otherwise the app might crash.
      */
     public void detach() {
-        if (loader != null && loader.isAlive()) {
-            loader.interrupt();
+        GameLoopManager retired;
+        synchronized (loadingObject) {
+            if (closing) return;
+            closing = true;
+            if (loader != null) loader.interrupt();
+            retired = game != null ? game : preparedGame;
+            loadCompletion.completeExceptionally(new java.util.concurrent.CancellationException("Server loading cancelled"));
         }
-        stateManager.detach(this);
-
-        if (game != null) {
-            try {
-                game.stop();
-            } catch (Exception ex) {
-                logger.log(Level.ERROR, "Failed to close the game!", ex);
-            }
-        }
+        gameService.removeGameSessionServiceListener(gameSessionListener);
+        if (stateManager != null) stateManager.detach(this);
+        if (retired != null) retired.stop();
     }
 
     @Override
@@ -189,32 +247,26 @@ public final class GameServerState extends AbstractAppState {
 
         @Override
         public void run() {
-            // Create the central game controller
-            game = new GameLoopManager(kwdFile, gameService, players);
-
-            gameWorldController = game.getGameController().getGameWorldController();
-            mapController = gameWorldController.getMapController();
-            gameWorldController.addListener(playerActionListener);
-
-            // Send the the initial game data
-            gameService.sendGameData(game.getGameController().getLevelInfo().getPlayers().values());
-
-            // Set up a listener for the map
-            mapController.addListener(mapListener);
-
-            // Set up a listener for the player changes, they are per player
-            for (IPlayerController playerController : game.getGameController().getPlayerControllers().values()) {
-                playerController.addListener(gameService);
+            GameLoopManager prepared = null;
+            try {
+                prepared = new GameLoopManager(kwdFile, gameService, players);
+                synchronized (loadingObject) {
+                    if (!closing) {publishGame(prepared, true);return;}
+                }
+            } catch (RuntimeException failure) {
+                boolean report;
+                synchronized (loadingObject) {
+                    report = !closing;gameLoaded = false;
+                    loadCompletion.completeExceptionally(failure);
+                }
+                if (report) {
+                    logger.log(Level.ERROR, "Failed to prepare game server", failure);
+                    if (gameService instanceof toniarts.openkeeper.game.state.session.LocalGameSession local) local.failLoading(failure);
+                }
+            } finally {
+                synchronized (loadingObject) {loader = null;}
             }
-
-            // Nullify the thread object
-            loader = null;
-
-            // Mark the server end ready
-            synchronized (loadingObject) {
-                gameLoaded = true;
-                loadingObject.notifyAll();
-            }
+            if (prepared != null) prepared.stop();
         }
     }
 
@@ -225,67 +277,55 @@ public final class GameServerState extends AbstractAppState {
 
         @Override
         public void onStartGame() {
-
-            // Just make sure that the server has fully set up itself before we start the game
-            if (!gameLoaded) {
-                synchronized (loadingObject) {
-                    if (!gameLoaded) {
-                        try {
-                            loadingObject.wait();
-                        } catch (InterruptedException ex) {
-                            logger.log(Level.ERROR, "Failed to load the game.", ex);
-                        }
-                    }
-                }
+            synchronized (loadingObject) {
+                if (closing) return;
+                startRequested = true;startSimulation();
             }
-
-            // Start the actual game
-            game.start();
         }
 
         @Override
         public void onSelectTiles(Vector2f start, Vector2f end, boolean select, short playerId) {
-            game.runPlayerCommand(() -> mapController.selectTiles(start, end, select, playerId));
+            runPlayerCommand(() -> mapController.selectTiles(start, end, select, playerId));
         }
 
         @Override
         public void onBuild(Vector2f start, Vector2f end, short roomId, short playerId) {
-            game.runPlayerCommand(() -> gameWorldController.build(start, end, playerId, roomId));
+            runPlayerCommand(() -> gameWorldController.build(start, end, playerId, roomId));
         }
 
         @Override
         public void onSell(Vector2f start, Vector2f end, short playerId) {
-            game.runPlayerCommand(() -> gameWorldController.sell(start, end, playerId));
+            runPlayerCommand(() -> gameWorldController.sell(start, end, playerId));
         }
 
         @Override
         public void onInteract(EntityId entity, short playerId) {
-            game.runPlayerCommand(() -> gameWorldController.interact(entity, playerId));
+            runPlayerCommand(() -> gameWorldController.interact(entity, playerId));
         }
 
         @Override
         public void onPickUp(EntityId entity, short playerId) {
-            game.runPlayerCommand(() -> gameWorldController.pickUp(entity, playerId));
+            runPlayerCommand(() -> gameWorldController.pickUp(entity, playerId));
         }
 
         @Override
         public void onDrop(EntityId entity, Point tile, Vector2f coordinates, EntityId dropOnEntity, short playerId) {
-            game.runPlayerCommand(() -> gameWorldController.drop(entity, tile, coordinates, dropOnEntity, playerId));
+            runPlayerCommand(() -> gameWorldController.drop(entity, tile, coordinates, dropOnEntity, playerId));
         }
 
         @Override
         public void onCastKeeperSpell(short keeperSpellId, EntityId target, Point tile, Vector2f position, short playerId) {
-            game.runPlayerCommand(() -> gameWorldController.castKeeperSpell(keeperSpellId, target, tile, position, playerId));
+            runPlayerCommand(() -> gameWorldController.castKeeperSpell(keeperSpellId, target, tile, position, playerId));
         }
 
         @Override
         public void onPlaceDoor(short doorId, Point tile, short playerId) {
-            game.runPlayerCommand(() -> gameWorldController.placeDoor(doorId, tile, playerId));
+            runPlayerCommand(() -> gameWorldController.placeDoor(doorId, tile, playerId));
         }
 
         @Override
         public void onPlaceTrap(short trapId, Point tile, short playerId) {
-            game.runPlayerCommand(() -> gameWorldController.placeTrap(trapId, tile, playerId));
+            runPlayerCommand(() -> gameWorldController.placeTrap(trapId, tile, playerId));
         }
 
         @Override
@@ -296,25 +336,25 @@ public final class GameServerState extends AbstractAppState {
         @Override
         public void onPauseRequest(short playerId) {
             // TODO: We should only allow the server owner etc. to pause, otherwise, send a system message that player x wants to pause?
-            game.pause();
+            synchronized (loadingObject) {if (!closing && gameLoaded) game.pause();}
 
         }
 
         @Override
         public void onResumeRequest(short playerId) {
             // TODO: We should only allow the server owner etc. to pause, otherwise, send a system message that player x wants to pause?
-            game.resume();
+            synchronized (loadingObject) {if (!closing && gameLoaded) game.resume();}
         }
 
         @Override
         public void onExitGame(short playerId) {
             // TODO: Close the server and game only when everybody has left
-            stateManager.detach(GameServerState.this);
+            GameServerState.this.detach();
         }
 
         @Override
         public void onGetGold(int amount, short playerId) {
-            game.runPlayerCommand(() -> gameWorldController.getGold(amount, playerId));
+            runPlayerCommand(() -> gameWorldController.getGold(amount, playerId));
         }
 
         @Override
@@ -323,7 +363,7 @@ public final class GameServerState extends AbstractAppState {
                 return; // No! Bad!
             }
 
-            game.runPlayerCommand(() -> applyCheat(cheat, playerId));
+            runPlayerCommand(() -> applyCheat(cheat, playerId));
         }
 
         private void applyCheat(CheatState.CheatType cheat, short playerId) {

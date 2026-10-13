@@ -62,6 +62,8 @@ public final class EndGameState extends AbstractAppState implements RawInputList
         return new EndGameState(playerState, true);
     }
 
+    boolean belongsTo(PlayerState owner) {return owner == playerState;}
+
     boolean isAwaitingInputFor(PlayerState owner) {
         return owner == playerState && isInitialized() && !dismissed;
     }
@@ -134,6 +136,8 @@ public final class EndGameState extends AbstractAppState implements RawInputList
         if (key != KeyInput.KEY_SPACE && key != KeyInput.KEY_ESCAPE && key != KeyInput.KEY_LCONTROL) return;
         // Even rejected stale releases must not reach the global Escape pause binding.
         evt.setConsumed();
+        GameClientState client = stateManager.getState(GameClientState.class);
+        if (client != null && !client.isAcceptingInput()) return;
         if (freshInputRequired) {
             if (evt.isPressed()) {
                 if (!evt.isRepeating()) pressedKeys.add(key);

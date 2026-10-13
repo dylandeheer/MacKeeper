@@ -16,6 +16,7 @@ public final class QueuedGameSessionListener implements PresentationEvent.Target
     public QueuedGameSessionListener(PresentationQueue queue, GameSessionListener lifecycle) {
         this.queue = Objects.requireNonNull(queue);this.lifecycle = Objects.requireNonNull(lifecycle);
     }
+    public void onLoadFailed(String message) {lifecycle.onLoadFailed(message);}
     public void onGameDataLoaded(Collection<Keeper> players) {lifecycle.onGameDataLoaded(players);}
     public void onLoadComplete(short keeperId) {lifecycle.onLoadComplete(keeperId);}
     public void onLoadStatusUpdate(float progress, short keeperId) {lifecycle.onLoadStatusUpdate(progress, keeperId);}

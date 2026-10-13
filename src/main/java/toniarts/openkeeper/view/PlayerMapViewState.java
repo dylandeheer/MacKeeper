@@ -61,6 +61,10 @@ public abstract class PlayerMapViewState extends AbstractAppState implements Map
 
     private Thread renderThread;
     private boolean mapAttached;
+    private volatile boolean closing;
+    private boolean disposed;
+    private boolean updatesSuspended;
+    private Thread mapLoaderThread;
     private Main app;
     private AppStateManager stateManager;
     private final IMapInformation mapInformation;
@@ -86,6 +90,20 @@ public abstract class PlayerMapViewState extends AbstractAppState implements Map
     }
 
     protected PlayerMapViewState(Main app, final IKwdFile kwdFile, final AssetManager assetManager, Collection<Keeper> players, EntityData entityData, short playerId, ILoadCompleteNotifier loadCompleteNotifier, Consumer<EntityId> enemySightedNotifier) {
+        this(app, kwdFile, assetManager, players, entityData, playerId, loadCompleteNotifier, enemySightedNotifier,
+                failure -> logger.log(System.Logger.Level.ERROR, "Failed to load map presentation", failure));
+    }
+
+    protected PlayerMapViewState(Main app, final IKwdFile kwdFile, final AssetManager assetManager, Collection<Keeper> players,
+            EntityData entityData, short playerId, ILoadCompleteNotifier loadCompleteNotifier,
+            Consumer<EntityId> enemySightedNotifier, Consumer<Throwable> loadFailureNotifier) {
+        this(app, kwdFile, assetManager, players, entityData, playerId, loadCompleteNotifier, enemySightedNotifier, loadFailureNotifier, null);
+    }
+
+    protected PlayerMapViewState(Main app, final IKwdFile kwdFile, final AssetManager assetManager, Collection<Keeper> players,
+            EntityData entityData, short playerId, ILoadCompleteNotifier loadCompleteNotifier, Consumer<EntityId> enemySightedNotifier,
+            Consumer<Throwable> loadFailureNotifier, toniarts.openkeeper.view.fogofwar.FogSnapshot initialFog) {
+        updatesSuspended = initialFog != null;
         this.app = app;
         this.kwdFile = kwdFile;
         this.assetManager = assetManager;
@@ -107,12 +125,14 @@ public abstract class PlayerMapViewState extends AbstractAppState implements Map
 
                 // Fog must be seeded before the initial geometry is built, since
                 // the renderer consults it while assembling the map
-                fogOfWarController.seedLevelStart();
+                if (initialFog == null) fogOfWarController.seedLevelStart();
+                else fogOfWarController.restoreState(initialFog);
 
                 // Don't block the caller, might be called from the render thread...
-                Thread mapLoaderThread = new Thread(() -> {
-
+                mapLoaderThread = new Thread(() -> {
+                    try {
                     Spatial map = mapLoader.load(assetManager, kwdFile);
+                    if (closing) return;
                     mapLoaded = true;
 
                     // Apply any tile updates (fog reveals from the seeding above,
@@ -128,11 +148,15 @@ public abstract class PlayerMapViewState extends AbstractAppState implements Map
                     }
 
                     app.enqueue(() -> {
+                        if (closing) return;
                         worldNode.attachChild(map);
                         mapAttached = true;
 
                         loadCompleteNotifier.onLoadComplete();
                     });
+                    } catch (RuntimeException failure) {
+                        if (!closing) loadFailureNotifier.accept(failure);
+                    }
                 }, "GameClientMapLoader");
                 mapLoaderThread.start();
             }
@@ -161,8 +185,8 @@ public abstract class PlayerMapViewState extends AbstractAppState implements Map
 
         // Start collecting the map entities
         mapRoomContainer.start();
-        mapTileContainer.start();
         fogOfWarController.start();
+        mapTileContainer.start();
     }
 
     @Override
@@ -184,6 +208,17 @@ public abstract class PlayerMapViewState extends AbstractAppState implements Map
 
     @Override
     public void cleanup() {
+        if (disposed) return;
+        cancelLoading();
+        // This worker only constructs CPU scene data; it never waits for render-thread work.
+        // Finish its reads before releasing the map/fog queries it depends on.
+        boolean interrupted = false;
+        while (mapLoaderThread != null && mapLoaderThread.isAlive()) {
+            try {mapLoaderThread.join();}
+            catch (InterruptedException failure) {interrupted = true;}
+        }
+        if (interrupted) Thread.currentThread().interrupt();
+        disposed = true;
 
         // Detach our map
         if (worldNode != null) {
@@ -192,10 +227,10 @@ public abstract class PlayerMapViewState extends AbstractAppState implements Map
         }
 
         // Tile flash state
-        stateManager.detach(flashTileControl);
+        if (stateManager != null) stateManager.detach(flashTileControl);
 
         // Effects
-        stateManager.detach(effectManager);
+        if (stateManager != null) stateManager.detach(effectManager);
 
         // The actual map data
         mapRoomContainer.stop();
@@ -205,9 +240,18 @@ public abstract class PlayerMapViewState extends AbstractAppState implements Map
         super.cleanup();
     }
 
+    /** May be called before initialization; late worker completion must not attach its scene. */
+    public void cancelLoading() {
+        closing = true;
+        if (mapLoaderThread != null) mapLoaderThread.interrupt();
+    }
+
+    /** Release initial restored observations only after the complete client is bound. */
+    public void resumeUpdates() {updatesSuspended = false;}
+
     @Override
     public void update(float tpf) {
-
+        if (closing || updatesSuspended) return;
         // Always process rooms before the map tiles
         mapRoomContainer.update();
         mapTileContainer.update();
@@ -277,7 +321,7 @@ public abstract class PlayerMapViewState extends AbstractAppState implements Map
     }
 
     private void requireFogOwner() {
-        if (!isInitialized() || !mapAttached || renderThread != Thread.currentThread()
+        if (closing || !isInitialized() || !mapAttached || renderThread != Thread.currentThread()
                 || stateManager.getState(PlayerMapViewState.class) != this)
             throw new IllegalStateException("Fog restore requires the loaded render-thread map owner");
     }
