@@ -39,6 +39,10 @@ public final class GameLoop {
 
     private final SimulationGate simulationGate;
     private volatile boolean initialized;
+    private final Object lifecycle = new Object();
+    private boolean launched;
+    private boolean stopping;
+    private final java.util.concurrent.CompletableFuture<Void> cleanup = new java.util.concurrent.CompletableFuture<>();
     private final long updateRate;
     private final AtomicBoolean pauseFlag = new AtomicBoolean(false);
 
@@ -68,7 +72,11 @@ public final class GameLoop {
      * background thread.
      */
     public void start() {
-        loop.start();
+        synchronized (lifecycle) {
+            if (stopping || launched) throw new IllegalStateException("Game loop already started or stopped");
+            loop.start();
+            launched = true;
+        }
     }
 
     /**
@@ -82,7 +90,10 @@ public final class GameLoop {
 
     /** Signal shutdown without waiting, so a group can stop all loops before joining any. */
     public void requestStop() {
-        loop.go.set(false);
+        synchronized (lifecycle) {
+            stopping = true;
+            loop.go.set(false);
+        }
         resume();
     }
 
@@ -98,6 +109,19 @@ public final class GameLoop {
         pauseFlag.set(false);
         synchronized (pauseFlag) {
             pauseFlag.notify();
+        }
+    }
+
+    private void stopSystems() {
+        try {
+            simulationGate.mutate(() -> {
+                initialized = false;
+                gameLoopManager.stop();
+            });
+            cleanup.complete(null);
+        } catch (RuntimeException | Error failure) {
+            cleanup.completeExceptionally(failure);
+            throw failure;
         }
     }
 
@@ -119,6 +143,10 @@ public final class GameLoop {
                 throw new IllegalStateException("A game loop cannot wait for its own shutdown; use requestStop");
             }
             requestStop();
+            synchronized (lifecycle) {
+                // Staging can allocate queries before a Runner has ever been started.
+                if (!launched && !cleanup.isDone()) stopSystems();
+            }
             boolean interrupted = false;
             while (isAlive()) {
                 try {
@@ -128,6 +156,7 @@ public final class GameLoop {
                 }
             }
             if (interrupted) Thread.currentThread().interrupt();
+            cleanup.join();
         }
 
         private long simulationTime() {
@@ -136,12 +165,11 @@ public final class GameLoop {
 
         @Override
         public void run() {
-            simulationGate.mutate(() -> {
-                gameLoopManager.start();
-                initialized = true;
-            });
-
             try {
+                simulationGate.mutate(() -> {
+                    gameLoopManager.start();
+                    initialized = true;
+                });
                 long frameRate = 0;
                 simulationGate.enterUpdate();
                 long lastTime;
@@ -219,10 +247,7 @@ public final class GameLoop {
                 }
 
             } finally {
-                simulationGate.mutate(() -> {
-                    initialized = false;
-                    gameLoopManager.stop();
-                });
+                stopSystems();
             }
         }
     }

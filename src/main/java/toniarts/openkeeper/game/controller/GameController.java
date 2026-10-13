@@ -84,6 +84,9 @@ public final class GameController implements IGameLogicUpdatable, IGameControlle
 
     private GameResultController gameResults;
     private TaskManager taskManager;
+    private toniarts.openkeeper.game.trigger.TriggerRegistries restoredTriggers;
+    private List<toniarts.openkeeper.game.controller.creature.ICreatureController> restorePins = List.of();
+    private final Map<EntityId, toniarts.openkeeper.game.controller.room.IRoomController> removedRoomBindings = new HashMap<>();
 
     /**
      * Single use game states
@@ -116,6 +119,76 @@ public final class GameController implements IGameLogicUpdatable, IGameControlle
         createNewGame();
     }
 
+    /** Build real dependencies without invoking new-game setup or running simulation ticks. */
+    public static GameController restore(IKwdFile definition, toniarts.openkeeper.game.save.GameEntityData data,
+            PlayerService service, toniarts.openkeeper.game.save.SimulationState saved) {
+        return new GameController(definition, data, service, saved);
+    }
+
+    private GameController(IKwdFile definition, toniarts.openkeeper.game.save.GameEntityData data,
+            PlayerService service, toniarts.openkeeper.game.save.SimulationState saved) {
+        entityData = data;gameSettings = definition.getVariables();playerService = service;
+        random = toniarts.openkeeper.game.random.SimulationRandom.restore(saved.random());
+        var keepers = saved.keepers().stream().map(state -> Keeper.restoreState(state, definition.getPlayers().get(state.id()))).toList();
+        levelInfo = (LevelInfo) restoreLevelInfo(definition, saved.level().level(), keepers);
+        gameTimer = new GameTimeController(saved.level().clock());
+        gameResults = GameResultController.restoreState(saved.results(), gameTimer, service, levelInfo.players.keySet());
+        try {
+            gameWorldController = GameWorldController.restoreBindings(this, levelInfo, data, playerControllers, gameTimer, saved);
+            var map = gameWorldController.getMapController();var objects = gameWorldController.getObjectsController();
+            var creatures = (CreaturesController) gameWorldController.getCreaturesController();
+            for (var state : saved.players()) playerControllers.put(state.playerId(), PlayerController.restoreState(
+                    definition, levelInfo.players.get(state.playerId()), data, state, map::getRoomController));
+            gameWorldController.bindPlayerRoomListeners();
+            positionSystem = PositionSystem.restoreState(map, data, creatures, gameWorldController.getDoorsController(), objects, saved.systems().positions());
+            gameWorldController.setEntityPositionLookup(positionSystem);
+            navigationService = new NavigationService(map, positionSystem, random);
+            var roomStates = new ArrayList<toniarts.openkeeper.game.data.RoomState>(saved.systems().taskGraph().removedRooms());
+            roomStates.addAll(saved.systems().recruitment().removedRooms());roomStates.addAll(saved.systems().chickenSpawning().removedRooms());
+            for (var state : roomStates) {
+                if (map.getRoomController(state.entityId()) != null) throw new IllegalArgumentException("Removed room remains active");
+                var previous = removedRoomBindings.get(state.entityId());
+                if (previous != null) {
+                    if (!state.equals(((toniarts.openkeeper.game.controller.room.AbstractRoomController)previous).captureState()))
+                        throw new IllegalArgumentException("Conflicting removed room state");
+                } else removedRoomBindings.put(state.entityId(), RoomControllerFactory.restoreRemovedRoom(
+                        data, definition, state, objects, gameSettings, gameTimer));
+            }
+            var allocation = toniarts.openkeeper.game.task.TaskIdentityAllocator.forSimulation(saved.systems().taskAllocation(), gameTimer);
+            taskManager = TaskManager.stageRestore(data, gameWorldController, map, objects, creatures, navigationService,
+                    playerControllers.values(), levelInfo, positionSystem, gameSettings, allocation);
+            var graph = toniarts.openkeeper.game.save.TaskGraphSnapshots.restoreShells(saved.systems().taskGraph(),
+                    new toniarts.openkeeper.game.save.TaskGraphSnapshots.Context(allocation, data, definition, navigationService,
+                            map, this::getRestoredRoom, taskManager, gameWorldController, positionSystem, objects,
+                            playerControllers::get, levelInfo));
+            restorePins = creatures.restoreCreatureControllers(saved.systems().creatureControllers(), graph.bindings());
+            graph.bindCreatures(creatures::getBoundController);
+            taskManager.bindRestoredState(saved.systems().taskManager(), graph, creatures::getBoundController, this::getRestoredRoom);
+            creatures.restoreParties(saved.systems().parties());
+            paydaySystem = PaydaySystem.restoreState(data, definition, gameTimer, gameSettings, new PaydaySystem.State(levelInfo.paydayCycle));
+            restoredTriggers = toniarts.openkeeper.game.trigger.TriggerRegistries.restore(saved.triggers(), this, levelInfo, gameTimer,
+                    map, creatures, objects, gameWorldController.getDoorsController(), positionSystem, service, data);
+            controllers.add(restoredTriggers);
+            economySystem = toniarts.openkeeper.game.logic.keeper.KeeperEconomySystem.restoreState(gameWorldController, definition,
+                    playerControllers.values(), data, saved.systems().economy());
+            controllers.add(economySystem);controllers.add(gameTimer);controllers.add(positionSystem);
+        } catch (RuntimeException | Error failure) {
+            for (var system : new IGameLogicUpdatable[]{restoredTriggers, economySystem, paydaySystem,
+                    (IGameLogicUpdatable)taskManager, positionSystem}) {
+                if (system != null) try {system.stop();} catch (RuntimeException | Error cleanup) {if (failure != cleanup) failure.addSuppressed(cleanup);}
+            }
+            restorePins = List.of();throw failure;
+        }
+    }
+
+    public toniarts.openkeeper.game.controller.room.IRoomController getRestoredRoom(EntityId id) {
+        var removed = removedRoomBindings.get(id);
+        return removed != null ? removed : gameWorldController.getMapController().getRoomController(id);
+    }
+
+    /** All task, party, trigger and AI owners must have bound before these temporary pins are released. */
+    public void finishRestoreBindings() { restorePins = List.of(); }
+
     public void createNewGame() {
         levelInfo.load();
         // The players
@@ -137,7 +210,8 @@ public final class GameController implements IGameLogicUpdatable, IGameControlle
         // Initialize tasks
         taskManager = new TaskManager(entityData, gameWorldController, gameWorldController.getMapController(),
                 gameWorldController.getObjectsController(), gameWorldController.getCreaturesController(),
-                navigationService, playerControllers.values(), levelInfo, positionSystem, gameSettings);
+                navigationService, playerControllers.values(), levelInfo, positionSystem, gameSettings,
+                toniarts.openkeeper.game.task.TaskIdentityAllocator.forSimulation(new toniarts.openkeeper.game.task.TaskIdentityAllocator.State(0), gameTimer));
 
         paydaySystem = new PaydaySystem(entityData, levelInfo.kwdFile, gameTimer, gameSettings);
 
@@ -173,6 +247,7 @@ public final class GameController implements IGameLogicUpdatable, IGameControlle
     }
 
     public Map<toniarts.openkeeper.game.save.TriggerRegistrySnapshots.Kind, toniarts.openkeeper.game.save.TriggerRegistrySnapshots.State> captureTriggerRegistries() {
+        if (restoredTriggers != null) return restoredTriggers.captureState();
         var result = new java.util.EnumMap<toniarts.openkeeper.game.save.TriggerRegistrySnapshots.Kind, toniarts.openkeeper.game.save.TriggerRegistrySnapshots.State>(toniarts.openkeeper.game.save.TriggerRegistrySnapshots.Kind.class);
         result.put(toniarts.openkeeper.game.save.TriggerRegistrySnapshots.Kind.LEVEL,
                 new toniarts.openkeeper.game.save.TriggerRegistrySnapshots.State(toniarts.openkeeper.game.save.TriggerRegistrySnapshots.Kind.LEVEL,
@@ -185,6 +260,7 @@ public final class GameController implements IGameLogicUpdatable, IGameControlle
 
     /** Trees only; registry owner references still require a separate snapshot. */
     public Map<String, List<toniarts.openkeeper.game.save.TriggerSnapshots.State>> captureTriggerTrees() {
+        if (restoredTriggers != null) return restoredTriggers.captureTrees();
         var result = new java.util.TreeMap<String, List<toniarts.openkeeper.game.save.TriggerSnapshots.State>>();
         result.put("level", triggerControl == null ? List.of() : List.of(triggerControl.captureState()));
         for (var controller : controllers) if (controller instanceof toniarts.openkeeper.game.trigger.TriggerStateSource source)
@@ -424,9 +500,10 @@ public final class GameController implements IGameLogicUpdatable, IGameControlle
 
     @Override
     public void stop() {
-        controllers.stream().forEach(IGameLogicUpdatable::stop);
-        controllers.clear();
-        paydaySystem.stop();
+        var owned = new ArrayList<IGameLogicUpdatable>(controllers);
+        owned.add(paydaySystem);
+        try {new toniarts.openkeeper.game.logic.GameLogicManager(owned.toArray(IGameLogicUpdatable[]::new)).stop();}
+        finally {controllers.clear();}
     }
 
     @Override

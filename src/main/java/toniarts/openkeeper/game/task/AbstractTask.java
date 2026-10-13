@@ -168,7 +168,8 @@ public abstract class AbstractTask implements Task {
     }
 
     public int compareTo(AbstractTask t) {
-        return getTaskCreated().compareTo(t.getTaskCreated());
+        int order = getTaskCreated().compareTo(t.getTaskCreated());
+        return order != 0 ? order : Long.compare(getId(), t.getId());
     }
 
     @Override

@@ -134,14 +134,32 @@ public final class GameWorldController implements IGameWorldController, IPlayerA
             Map<Variable.MiscVariable.MiscType, Variable.MiscVariable> gameSettings,
             Map<Short, IPlayerController> playerControllers, IGameTimer gameTimer) {
 
-        this.kwdFile = levelInfo.getLevelData();
-        this.entityData = entityData;
-        this.gameSettings = gameSettings;
-        this.gameTimer = gameTimer;
-        this.playerControllers = playerControllers;
-        this.players = levelInfo.getPlayers();
+        this(gameController, levelInfo, entityData, gameSettings, playerControllers, gameTimer, null);
+    }
 
-        this.createNewGame(gameController, levelInfo);
+    private GameWorldController(IGameController gameController, ILevelInfo levelInfo, EntityData entityData,
+            Map<Variable.MiscVariable.MiscType, Variable.MiscVariable> gameSettings,
+            Map<Short, IPlayerController> playerControllers, IGameTimer gameTimer,
+            toniarts.openkeeper.game.save.SimulationState saved) {
+        this.kwdFile = levelInfo.getLevelData();this.entityData = entityData;this.gameSettings = gameSettings;
+        this.gameTimer = gameTimer;this.playerControllers = playerControllers;this.players = levelInfo.getPlayers();
+        this.gameController = gameController;
+        if (saved == null) createNewGame(gameController, levelInfo);
+        else {
+            objectsController = ObjectsController.restoreBindings(kwdFile, entityData, gameSettings, gameTimer, gameController, levelInfo, gameController.getRandom());
+            var map = MapController.restore(kwdFile, objectsController, gameSettings, gameTimer, entityData, levelInfo, saved.rooms());
+            map.restoreFlashControls(saved.flashes());mapController = map;
+            creaturesController = CreaturesController.restoreBindings(kwdFile, entityData, gameSettings, gameTimer, gameController, map, levelInfo, gameController.getRandom());
+            doorsController = DoorsController.restoreBindings(kwdFile, entityData, gameSettings, map, gameController, levelInfo, objectsController);
+            trapsController = TrapsController.restoreBindings(kwdFile, entityData, gameSettings, gameController, levelInfo, objectsController, map);
+            shotsController = new ShotsController(kwdFile, entityData, gameSettings, gameTimer, gameController, map, levelInfo, objectsController, creaturesController);
+        }
+    }
+
+    static GameWorldController restoreBindings(IGameController game, ILevelInfo level,
+            toniarts.openkeeper.game.save.GameEntityData data, Map<Short, IPlayerController> players,
+            IGameTimer timer, toniarts.openkeeper.game.save.SimulationState saved) {
+        return new GameWorldController(game, level, data, level.getLevelData().getVariables(), players, timer, saved);
     }
 
     private IGameController gameController;
@@ -241,9 +259,15 @@ public final class GameWorldController implements IGameWorldController, IPlayerA
                 playerController.getRoomControl().init(rooms);
             }
 
-            // Add the listener
-            mapController.addListener(player.getId(), playerController.getRoomControl());
-            mapController.addListener(player.getId(), playerController.getGoldControl());
+        }
+        bindPlayerRoomListeners();
+    }
+
+    /** Bind lifecycle notifications without replaying initial rooms or starting funds. Called once per world. */
+    void bindPlayerRoomListeners() {
+        for (IPlayerController player : playerControllers.values()) {
+            mapController.addListener(player.getKeeper().getId(), player.getRoomControl());
+            mapController.addListener(player.getKeeper().getId(), player.getGoldControl());
         }
     }
 

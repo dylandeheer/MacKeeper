@@ -47,6 +47,12 @@ public final class TriggerRegistries implements IGameLogicUpdatable, AutoCloseab
         result.put(Kind.LEVEL,new State(Kind.LEVEL,levelControl==null?List.of():List.of(Entry.level(levelControl.captureState())),List.of()));
         for(var control:controls){var state=((TriggerStateSource)control).captureRegistry();result.put(state.kind(),state);}return Map.copyOf(result);
     }
+    public Map<String,List<TriggerSnapshots.State>> captureTrees() {
+        var result = new TreeMap<String,List<TriggerSnapshots.State>>();
+        result.put("level", levelControl == null ? List.of() : List.of(levelControl.captureState()));
+        for (var control : controls) result.put(control.getClass().getSimpleName(), ((TriggerStateSource)control).captureTrees());
+        return Map.copyOf(result);
+    }
     @Override public void processTick(float tpf) {if(levelControl!=null)levelControl.update(tpf);for(var control:controls)control.processTick(tpf);}
     @Override public void start() {for(var control:controls)control.start();}
     @Override public void stop() {for(var control:controls.reversed())control.stop();}

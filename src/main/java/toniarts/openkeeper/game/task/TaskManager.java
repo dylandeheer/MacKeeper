@@ -282,6 +282,14 @@ public final class TaskManager implements ITaskManager, IGameLogicUpdatable {
                 players, levelInfo, entityPositionLookup, gameSettings, new TaskIdentityAllocator(), false);
     }
 
+    public TaskManager(EntityData entityData, IGameWorldController gameWorldController, IMapController mapController,
+            IObjectsController objectsController, ICreaturesController creaturesController, INavigationService navigationService,
+            Collection<IPlayerController> players, ILevelInfo levelInfo, IEntityPositionLookup entityPositionLookup,
+            Map<Variable.MiscVariable.MiscType, Variable.MiscVariable> gameSettings, TaskIdentityAllocator ids) {
+        this(entityData, gameWorldController, mapController, objectsController, creaturesController, navigationService,
+                players, levelInfo, entityPositionLookup, gameSettings, ids, false);
+    }
+
     /** Inert owner for restored task shells. Bind ownership after the graph, then activate with start(). */
     public static TaskManager stageRestore(EntityData data, IGameWorldController world, IMapController map,
             IObjectsController objects, ICreaturesController creatures, INavigationService navigation,

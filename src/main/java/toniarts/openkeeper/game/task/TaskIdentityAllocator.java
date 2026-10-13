@@ -23,6 +23,17 @@ public final class TaskIdentityAllocator {
     public TaskIdentityAllocator(State saved, Supplier<Instant> clock) {
         next = new AtomicLong(saved.nextId());this.clock = Objects.requireNonNull(clock);
     }
+    /** Game tasks use the saved simulation clock; equal-time tasks are ordered by their stable ID. */
+    public static TaskIdentityAllocator forSimulation(State saved, toniarts.openkeeper.game.controller.IGameTimer timer) {
+        Objects.requireNonNull(timer);
+        return new TaskIdentityAllocator(saved, () -> {
+            double seconds = timer.getGameTime();
+            if (!Double.isFinite(seconds) || seconds < 0 || seconds >= Long.MAX_VALUE / 1_000_000_000d)
+                throw new IllegalStateException("Invalid simulation time for task creation");
+            return Instant.EPOCH.plusNanos((long)(seconds * 1_000_000_000d));
+        });
+    }
+
     public Identity allocate() {
         var created = Objects.requireNonNull(clock.get());
         long id = next.getAndUpdate(value -> {

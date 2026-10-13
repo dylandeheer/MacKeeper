@@ -145,6 +145,72 @@ public final class GameLoopManager {
         loops.add(new GameLoop(new GameLogicManager(movementSystem = new MovementSystem(entityData)), GameLoop.INTERVAL_FPS_60, "Steering", simulationGate));
     }
 
+    /** Stage an independent server world; the service factory must bind exactly the supplied store. */
+    public static GameLoopManager restore(IKwdFile definition, toniarts.openkeeper.game.save.SimulationState saved,
+            Function<toniarts.openkeeper.game.save.GameEntityData, GameSessionServerService> serviceFactory) throws java.io.IOException {
+        var data = toniarts.openkeeper.game.save.GameEntityData.restore(saved.entities());
+        try {
+            var service = java.util.Objects.requireNonNull(serviceFactory.apply(data));
+            if (service.getEntityData() != data) throw new IllegalArgumentException("Restored service must use the staged store");
+            return new GameLoopManager(definition, service, data, saved);
+        } catch (RuntimeException | Error failure) {data.close();throw failure;}
+    }
+
+    private GameLoopManager(IKwdFile definition, GameSessionServerService service,
+            toniarts.openkeeper.game.save.GameEntityData data, toniarts.openkeeper.game.save.SimulationState saved) {
+        gameService = service;
+        var staged = new ArrayList<IGameLogicUpdatable>();
+        try {
+            var game = track(staged, GameController.restore(definition, data, service, saved));gameController = game;
+            var level = game.getLevelInfo();var world = game.getGameWorldController();var map = world.getMapController();
+            var positions = game.getEntityLookupService();var players = game.getPlayerControllers();
+            var creatures = (toniarts.openkeeper.game.controller.CreaturesController)world.getCreaturesController();
+            var objects = (toniarts.openkeeper.game.controller.ObjectsController)world.getObjectsController();
+            var tasks = track(staged, (toniarts.openkeeper.game.task.TaskManager)game.getTaskManager());var state = saved.systems();
+            decaySystem = track(staged, DecaySystem.restoreState(data, state.lifetimes().decay()));
+            var bridge = track(staged, WoodenBridgeDecaySystem.restoreBindings(data, game.getGameTimer(), world));
+            experienceSystem = track(staged, CreatureExperienceSystem.restoreState(data, definition, creatures, state.experience()));
+            var mood = track(staged, new CreatureMoodSystem(data, definition, players.values()));
+            slapSystem = track(staged, SlapSystem.restoreState(data, definition, players.values(), state.slaps()));
+            healthSystem = track(staged, HealthSystem.restoreState(data, positions, creatures, level, players.values(), map, world, state.health()));
+            tortureSystem = track(staged, CreatureTorturingSystem.restoreState(data, creatures, map, state.lifetimes().torture()));
+            deathSystem = track(staged, DeathSystem.restoreState(data, positions, state.lifetimes().death()));
+            playerCreatureSystem = track(staged, PlayerCreatureSystem.restoreState(data, definition, players.values(), state.creatures()));
+            playerSpellbookSystem = track(staged, PlayerSpellbookSystem.restoreState(data, definition, players.values(), state.spellbooks()));
+            creatureSpawnSystem = track(staged, CreatureSpawnSystem.restoreState(creatures, players.values(), definition, map, data, game::getRestoredRoom, state.recruitment()));
+            chickenSpawnSystem = track(staged, ChickenSpawnSystem.restoreState(data, objects, players.values(), map, game::getRestoredRoom, state.chickenSpawning()));
+            manaSystem = track(staged, ManaCalculatorLogic.restoreState(players.values(), data, state.mana()));
+            creatureAiSystem = track(staged, CreatureAiSystem.restoreState(data, creatures, tasks, state.creatureAi()));
+            chickenAiSystem = track(staged, ChickenAiSystem.restoreState(data, objects, state.chickens()));
+            creatureViewSystem = track(staged, CreatureViewSystem.restoreState(data, state.creatureView()));
+            var doors = track(staged, new DoorViewSystem(data, positions));
+            var loose = track(staged, new LooseObjectSystem(data, map, players, positions, world));
+            var hauling = track(staged, new HaulingSystem(data));
+            var logic = new GameLogicManager(map, decaySystem, bridge, experienceSystem, mood, slapSystem, healthSystem,
+                    tortureSystem, deathSystem, playerCreatureSystem, playerSpellbookSystem, game,
+                    creatureSpawnSystem, chickenSpawnSystem, manaSystem, creatureAiSystem, chickenAiSystem,
+                    creatureViewSystem, doors, loose, hauling, tasks);
+            heartConstruction = track(staged, DungeonHeartConstruction.restoreState(data, state.animation().heart()));
+            fallSystem = track(staged, CreatureFallSystem.restoreState(data, state.animation().fall()));
+            movementSystem = track(staged, MovementSystem.restoreState(data, state.movement()));
+            loops.add(new GameLoop(logic, 1_000_000_000 / definition.getGameLevel().getTicksPerSec(), "Logic", simulationGate));
+            loops.add(new GameLoop(new GameLogicManager(heartConstruction, fallSystem), GameLoop.INTERVAL_FPS_60, "Animation", simulationGate));
+            loops.add(new GameLoop(new GameLogicManager(movementSystem), GameLoop.INTERVAL_FPS_60, "Steering", simulationGate));
+            game.finishRestoreBindings();
+        } catch (RuntimeException | Error failure) {
+            for (var system : staged.reversed()) {
+                try {system.stop();} catch (RuntimeException | Error cleanup) {if (failure != cleanup) failure.addSuppressed(cleanup);}
+            }
+            throw failure;
+        }
+    }
+
+    private static <T extends IGameLogicUpdatable> T track(List<IGameLogicUpdatable> staged, T system) {
+        staged.add(system);return system;
+    }
+
+    public EntityData getEntityData() { return gameService.getEntityData(); }
+
     /** Run a complete player command under the same capture boundary as all loops. */
     public void runPlayerCommand(Runnable command) {
         simulationGate.mutate(() -> {
@@ -218,8 +284,15 @@ public final class GameLoopManager {
         if (closeOwner) {
             try {
                 loops.forEach(GameLoop::requestStop);
-                loops.forEach(GameLoop::stop);
+                Throwable cleanupFailure = null;
+                for (var loop : loops) {
+                    try {loop.stop();} catch (RuntimeException | Error cleanup) {
+                        if (cleanupFailure == null) cleanupFailure = cleanup;else if (cleanupFailure != cleanup) cleanupFailure.addSuppressed(cleanup);
+                    }
+                }
                 loops.clear();
+                if (cleanupFailure instanceof Error error) throw error;
+                if (cleanupFailure instanceof RuntimeException exception) throw exception;
                 shutdown.complete(null);
             } catch (RuntimeException | Error failure) {
                 shutdown.completeExceptionally(failure);
