@@ -210,7 +210,7 @@ class DungeonHeartTest {
         instance.addCoordinate(new Point(0,0));
         double[] lastSpawn={-100}; int[] count={0};
         var portal=proxy(ICreatureEntrance.class,(method,args)->switch(method) {
-            case "isDestroyed", "isDungeonHeart" -> false;
+            case "isRemoved", "isDestroyed", "isDungeonHeart" -> false;
             case "getOwnerId" -> LOSER;
             case "getRoom" -> portalType;
             case "getRoomInstance" -> instance;

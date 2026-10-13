@@ -17,6 +17,10 @@
 package toniarts.openkeeper.game.logic;
 
 import com.jme3.math.Vector2f;
+import toniarts.openkeeper.game.save.CreatureSpawnSnapshots;
+import toniarts.openkeeper.game.save.GameEntityData;
+import toniarts.openkeeper.game.controller.room.AbstractRoomController;
+import java.util.function.Function;
 import com.jme3.util.SafeArrayList;
 import com.simsilica.es.EntityId;
 import toniarts.openkeeper.utils.Point;
@@ -65,46 +69,85 @@ public final class CreatureSpawnSystem extends GameTimeCounter {
     private final SafeArrayList<ICreatureEntrance> entrances = new SafeArrayList<>(ICreatureEntrance.class);
     private final IKwdFile kwdFile;
 
+    private final IMapController mapController;
+    private final Map<Short,RoomListener> roomListeners = new java.util.LinkedHashMap<>();
+    private boolean active;
+    private boolean closed;
+
     public CreatureSpawnSystem(ICreaturesController creaturesController, Collection<IPlayerController> playerControllers,
             Map<Variable.MiscVariable.MiscType, Variable.MiscVariable> gameSettings, ILevelInfo levelInfo,
             IMapController mapController) {
-        this.creaturesController = creaturesController;
-
-        // We need the game state just for the variables
-        entranceCooldownTime = (int) gameSettings.get(Variable.MiscVariable.MiscType.ENTRANCE_GENERATION_SPEED_SECONDS).getValue();
-        minimumImpCount = (int) gameSettings.get(Variable.MiscVariable.MiscType.MINIMUM_IMP_THRESHOLD).getValue();
-        initialPortalCapacity = (int) gameSettings.get(Variable.MiscVariable.MiscType.CREATURES_SUPPORTED_BY_FIRST_PORTAL).getValue();
-        additionalPortalCapacity = (int) gameSettings.get(Variable.MiscVariable.MiscType.CREATURES_SUPPORTED_PER_ADDITIONAL_PORTAL).getValue();
-        freeImpCoolDownTime = (int) gameSettings.get(Variable.MiscVariable.MiscType.TIME_BEFORE_FREE_IMP_GENERATED_SECONDS).getValue();
-        kwdFile = levelInfo.getLevelData();
-
-        // Populate entrance list
-        playerControllersById = HashMap.newHashMap(playerControllers.size());
+        this(creaturesController, playerControllers, levelInfo.getLevelData(), mapController, new CreatureSpawnSnapshots.Settings(
+                (int)gameSettings.get(Variable.MiscVariable.MiscType.MINIMUM_IMP_THRESHOLD).getValue(),
+                (int)gameSettings.get(Variable.MiscVariable.MiscType.ENTRANCE_GENERATION_SPEED_SECONDS).getValue(),
+                (int)gameSettings.get(Variable.MiscVariable.MiscType.CREATURES_SUPPORTED_BY_FIRST_PORTAL).getValue(),
+                (int)gameSettings.get(Variable.MiscVariable.MiscType.CREATURES_SUPPORTED_PER_ADDITIONAL_PORTAL).getValue(),
+                (int)gameSettings.get(Variable.MiscVariable.MiscType.TIME_BEFORE_FREE_IMP_GENERATED_SECONDS).getValue()));
+        // Preserve initial player/room traversal order. Restoration installs saved references instead.
         for (IPlayerController player : playerControllers) {
-            playerControllersById.put(player.getKeeper().getId(), player);
-
-            // Add initial rooms
             for (Entry<Room, Set<IRoomController>> keeperRooms : player.getRoomControl().getRoomControllers().entrySet()) {
-
-                // See that should we add
-                for (IRoomController genericRoom : keeperRooms.getValue()) {
-
-                    // A bit clumsy to check like this
-                    if (!(genericRoom instanceof ICreatureEntrance)) {
-                        break;
-                    }
-                    entrances.add((ICreatureEntrance) genericRoom);
+                for (IRoomController room : keeperRooms.getValue()) {
+                    if (!(room instanceof ICreatureEntrance entrance)) break;
+                    entrances.add(entrance);
                 }
             }
-
-            // Add room listener to get notified of the changes
-            // They should be quite rare vs the rate in which we iterate on each tick
-            mapController.addListener(player.getKeeper().getId(), new EntranceListener(player.getKeeper().getId()));
         }
+        start();
+    }
+
+    private CreatureSpawnSystem(ICreaturesController creatures, Collection<IPlayerController> players,
+            IKwdFile definition, IMapController map, CreatureSpawnSnapshots.Settings settings) {
+        creaturesController=creatures;kwdFile=definition;mapController=map;
+        minimumImpCount=settings.minimumImps();entranceCooldownTime=settings.entranceCooldown();
+        initialPortalCapacity=settings.initialCapacity();additionalPortalCapacity=settings.additionalCapacity();freeImpCoolDownTime=settings.freeImpCooldown();
+        playerControllersById=new java.util.LinkedHashMap<>();
+        for(var player:players)if(playerControllersById.putIfAbsent(player.getKeeper().getId(),player)!=null)
+            throw new IllegalArgumentException("Duplicate recruitment player");
+    }
+
+    public CreatureSpawnSnapshots.State captureState() {
+        var removed=new java.util.TreeMap<EntityId,IRoomController>();
+        var identities=new java.util.HashMap<EntityId,IRoomController>();
+        for(var entrance:entrances) {
+            var previous=identities.putIfAbsent(entrance.getEntityId(),entrance);
+            if(previous!=null && previous!=entrance)throw new IllegalArgumentException("Aliased entrance room");
+            if(entrance.isRemoved())removed.put(entrance.getEntityId(),entrance);
+        }
+        return new CreatureSpawnSnapshots.State(timeElapsed,new CreatureSpawnSnapshots.Settings(minimumImpCount,entranceCooldownTime,
+                initialPortalCapacity,additionalPortalCapacity,freeImpCoolDownTime), List.copyOf(playerControllersById.keySet()),
+                entrances.stream().map(IRoomController::getEntityId).toList(),
+                removed.values().stream().map(room->((AbstractRoomController)room).captureState()).toList());
+    }
+
+    /** Resolve rooms from the same staged registry used by the map and tasks. Call start only after complete world binding. */
+    public static CreatureSpawnSystem restoreState(ICreaturesController creatures, Collection<IPlayerController> players,
+            IKwdFile definition, IMapController map, GameEntityData data, Function<EntityId,IRoomController> rooms,
+            CreatureSpawnSnapshots.State saved) {
+        var byId=new java.util.HashMap<Short,IPlayerController>();
+        for(var player:players)if(byId.putIfAbsent(player.getKeeper().getId(),player)!=null)throw new IllegalArgumentException("Duplicate recruitment player");
+        if(!byId.keySet().equals(new java.util.HashSet<>(saved.players())))throw new IllegalArgumentException("Recruitment players differ");
+        var removed=new java.util.HashMap<EntityId,toniarts.openkeeper.game.data.RoomState>();
+        saved.removedRooms().forEach(room->removed.put(room.entityId(),room));
+        var restored=new ArrayList<ICreatureEntrance>();var identities=new java.util.HashMap<EntityId,IRoomController>();
+        for(var id:saved.entrances()) {
+            var room=rooms.apply(id);
+            if(!data.wasAllocated(id) || !(room instanceof ICreatureEntrance entrance) || !id.equals(room.getEntityId()))
+                throw new IllegalArgumentException("Missing or invalid creature entrance");
+            var previous=identities.putIfAbsent(id,room);
+            if(previous!=null && previous!=room)throw new IllegalArgumentException("Aliased entrance binding");
+            if(removed.containsKey(id)) {
+                if(map.getRoomController(id)!=null || !room.isRemoved() || !(room instanceof AbstractRoomController actual)
+                        || !removed.get(id).equals(actual.captureState()))throw new IllegalArgumentException("Removed entrance binding differs");
+            } else if(room.isRemoved() || map.getRoomController(id)!=room)throw new IllegalArgumentException("Entrance map binding differs");
+            restored.add(entrance);
+        }
+        var system=new CreatureSpawnSystem(creatures,saved.players().stream().map(byId::get).toList(),definition,map,saved.settings());
+        system.timeElapsed=saved.elapsed();system.entrances.addAll(restored);return system;
     }
 
     @Override
     public void processTick(float tpf) {
+        if (!active || closed) throw new IllegalStateException("Recruitment system is not active");
         super.processTick(tpf);
 
         for (ICreatureEntrance entrance : entrances.getArray()) {
@@ -114,8 +157,8 @@ public final class CreatureSpawnSystem extends GameTimeCounter {
 
     private void evaluateAndSpawnCreature(ICreatureEntrance entrance) {
 
-        // TODO: we should have a listener for destroy that we can remove the room
-        if (entrance.isDestroyed()) {
+        // Removed controllers can remain referenced until room-listener cleanup.
+        if (entrance.isRemoved() || entrance.isDestroyed()) {
             return;
         }
 
@@ -213,12 +256,20 @@ public final class CreatureSpawnSystem extends GameTimeCounter {
 
     @Override
     public void start() {
-
+        if(closed)throw new IllegalStateException("Recruitment system is stopped");
+        if(active)return;
+        try {
+            for(short player:playerControllersById.keySet()) {
+                var listener=new EntranceListener(player);roomListeners.put(player,listener);mapController.addListener(player,listener);
+            }
+            active=true;
+        } catch(RuntimeException|Error failure) {stop();throw failure;}
     }
 
     @Override
     public void stop() {
-
+        if(closed)return;closed=true;active=false;
+        roomListeners.forEach((player,listener)->mapController.removeListener(player,listener));roomListeners.clear();
     }
 
     /**
@@ -253,13 +304,13 @@ public final class CreatureSpawnSystem extends GameTimeCounter {
         }
 
         private void addRoom(IRoomController room) {
-            if (room instanceof ICreatureEntrance iCreatureEntrance) {
+            if (!closed && room instanceof ICreatureEntrance iCreatureEntrance) {
                 entrances.add(iCreatureEntrance);
             }
         }
 
         private void removeRoom(IRoomController room) {
-            if (room instanceof ICreatureEntrance iCreatureEntrance) {
+            if (!closed && room instanceof ICreatureEntrance iCreatureEntrance) {
                 entrances.remove(iCreatureEntrance);
             }
         }

@@ -56,11 +56,12 @@ public final class GameLoopManager {
     private final CreatureAiSystem creatureAiSystem;
     private final ManaCalculatorLogic manaSystem;
     private final CreatureExperienceSystem experienceSystem;
+    private final CreatureSpawnSystem creatureSpawnSystem;
 
     /** Implemented system sections; not yet the complete simulation state. */
     public record SystemState(PlayerCreatureSystem.State creatures, PlayerSpellbookSystem.State spellbooks, ChickenAiSystem.SavedState chickens,
             List<toniarts.openkeeper.game.data.CreatureControlState> creatureControllers, CreatureAiSystem.SavedState creatureAi, toniarts.openkeeper.game.data.PartyRegistryState parties, toniarts.openkeeper.game.task.TaskIdentityAllocator.State taskAllocation,
-            List<toniarts.openkeeper.game.save.TileTaskSnapshots.State> tileTasks, toniarts.openkeeper.game.save.RoomTaskSnapshots.Capture roomTasks, toniarts.openkeeper.game.save.EntityTaskSnapshots.Capture entityTasks, toniarts.openkeeper.game.save.TaskGraphSnapshots.State taskGraph, toniarts.openkeeper.game.save.TaskManagerSnapshots.State taskManager, toniarts.openkeeper.game.save.ManaSnapshots.State mana, toniarts.openkeeper.game.save.ExperienceSnapshots.State experience, toniarts.openkeeper.game.save.KeeperEconomySnapshots.State economy) {
+            List<toniarts.openkeeper.game.save.TileTaskSnapshots.State> tileTasks, toniarts.openkeeper.game.save.RoomTaskSnapshots.Capture roomTasks, toniarts.openkeeper.game.save.EntityTaskSnapshots.Capture entityTasks, toniarts.openkeeper.game.save.TaskGraphSnapshots.State taskGraph, toniarts.openkeeper.game.save.TaskManagerSnapshots.State taskManager, toniarts.openkeeper.game.save.ManaSnapshots.State mana, toniarts.openkeeper.game.save.ExperienceSnapshots.State experience, toniarts.openkeeper.game.save.KeeperEconomySnapshots.State economy, toniarts.openkeeper.game.save.CreatureSpawnSnapshots.State recruitment) {
         public SystemState {creatureControllers = List.copyOf(creatureControllers);tileTasks = List.copyOf(tileTasks);}
     }
 
@@ -102,7 +103,7 @@ public final class GameLoopManager {
                 playerCreatureSystem = new PlayerCreatureSystem(entityData, levelInfo.getLevelData(), playerControllers.values()),
                 playerSpellbookSystem = new PlayerSpellbookSystem(entityData, levelInfo.getLevelData(), playerControllers.values()),
                 (IGameLogicUpdatable) gameController,
-                new CreatureSpawnSystem(gameWorldController.getCreaturesController(), playerControllers.values(),
+                creatureSpawnSystem = new CreatureSpawnSystem(gameWorldController.getCreaturesController(), playerControllers.values(),
                         gameSettings, levelInfo, gameWorldController.getMapController()),
                 new ChickenSpawnSystem(entityData, gameWorldController.getObjectsController(),
                         playerControllers.values(), gameSettings, levelInfo, gameWorldController.getMapController()),
@@ -166,7 +167,7 @@ public final class GameLoopManager {
             var managerState = tasks.captureState(references);
             return capture.apply(game, new SystemState(playerCreatureSystem.captureState(), playerSpellbookSystem.captureState(),
                     chickenAiSystem.captureState(), controllers, creatureAiSystem.captureState(), creatures.captureParties(),
-                    tasks.captureAllocationState(), tasks.captureTileTaskStates(), tasks.captureRoomTaskStates(references.nodes()), tasks.captureEntityTaskStates(references.nodes()), tasks.captureTaskGraph(references), managerState, manaSystem.captureState(), experienceSystem.captureState(), ((GameController) game).captureEconomyState()));
+                    tasks.captureAllocationState(), tasks.captureTileTaskStates(), tasks.captureRoomTaskStates(references.nodes()), tasks.captureEntityTaskStates(references.nodes()), tasks.captureTaskGraph(references), managerState, manaSystem.captureState(), experienceSystem.captureState(), ((GameController) game).captureEconomyState(), creatureSpawnSystem.captureState()));
         });
     }
 
