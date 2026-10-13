@@ -116,6 +116,8 @@ public final class CreaturesController implements ICreaturesController {
     private final IGameController gameController;
     private final IMapController mapController;
     private final ILevelInfo levelInfo;
+    private final boolean restoring;
+    private boolean controllersRestored;
 
     private final static int MANA_GENERATION_IMP = -7;  // I don't find in Creature.java
 
@@ -138,6 +140,20 @@ public final class CreaturesController implements ICreaturesController {
      */
     public CreaturesController(IKwdFile kwdFile, EntityData entityData, Map<Variable.MiscVariable.MiscType, Variable.MiscVariable> gameSettings, IGameTimer gameTimer,
             IGameController gameController, IMapController mapController, ILevelInfo levelInfo) {
+        this(kwdFile, entityData, gameSettings, gameTimer, gameController, mapController, levelInfo, false);
+    }
+
+    /** Stage a factory without spawning authored creatures or initializing runtime parties. */
+    public static CreaturesController restoreBindings(IKwdFile kwdFile, EntityData entityData,
+            Map<Variable.MiscVariable.MiscType, Variable.MiscVariable> settings, IGameTimer timer,
+            IGameController game, IMapController map, ILevelInfo level) {
+        return new CreaturesController(kwdFile, entityData, settings, timer, game, map, level, true);
+    }
+
+    private CreaturesController(IKwdFile kwdFile, EntityData entityData,
+            Map<Variable.MiscVariable.MiscType, Variable.MiscVariable> gameSettings, IGameTimer gameTimer,
+            IGameController gameController, IMapController mapController, ILevelInfo levelInfo, boolean restoring) {
+        this.restoring = restoring;
         this.kwdFile = kwdFile;
         this.entityData = entityData;
         this.gameSettings = gameSettings;
@@ -146,8 +162,52 @@ public final class CreaturesController implements ICreaturesController {
         this.mapController = mapController;
         this.levelInfo = levelInfo;
 
-        // Load creatures
-        loadCreatures();
+        if (!restoring) loadCreatures();
+        else for (Thing.HeroParty party : kwdFile.getThings(Thing.HeroParty.class)) heroParties.put(party.getId(), party);
+    }
+
+    /** Include all live cache entries, also controllers held by parties/tasks outside the AI system. */
+    public List<toniarts.openkeeper.game.data.CreatureControlState> captureControllerStates(
+            toniarts.openkeeper.game.save.TaskNodeReferences.Capture taskNodes) {
+        var controllers = new java.util.ArrayList<ICreatureController>();
+        for (var reference : creatureControllersByEntityId.values()) {
+            var controller = reference.get();
+            if (controller != null) controllers.add(controller);
+        }
+        controllers.sort(java.util.Comparator.comparing(ICreatureController::getEntityId));
+        return controllers.stream().map(c -> ((CreatureController) c).captureState(taskNodes)).toList();
+    }
+
+    /** Bind caches atomically after all values validate. Keep the returned controllers strongly held
+     * until their system, party and task owners have been reconstructed. */
+    public List<ICreatureController> restoreCreatureControllers(
+            List<toniarts.openkeeper.game.data.CreatureControlState> states,
+            toniarts.openkeeper.game.save.TaskNodeReferences.Bindings taskNodes) {
+        if (!restoring || controllersRestored || !creatureControllersByEntityId.isEmpty())
+            throw new IllegalStateException("Creature cache cannot be rebound");
+        if (!(entityData instanceof toniarts.openkeeper.game.save.GameEntityData data))
+            throw new IllegalArgumentException("Restoration requires tracked entities");
+        if (states.size() > 65_536) throw new IllegalArgumentException("Too many creature controllers");
+        var ids = new java.util.HashSet<EntityId>();
+        var result = new java.util.ArrayList<ICreatureController>();
+        for (var state : states) {
+            if (!ids.add(state.entityId())) throw new IllegalArgumentException("Duplicate creature controller");
+            result.add(CreatureController.restoreState(state, taskNodes, data, kwdFile.getCreature(state.creatureType()),
+                    gameController.getNavigationService(), gameController.getTaskManager(), gameTimer, gameSettings,
+                    this, gameController.getEntityLookupService(), mapController, levelInfo,
+                    gameController.getGameWorldController().getObjectsController(), gameController.getGameWorldController().getShotsController()));
+        }
+        result.forEach(c -> creatureControllersByEntityId.put(c.getEntityId(), new WeakReference<>(c)));
+        controllersRestored = true;
+        return List.copyOf(result);
+    }
+
+    /** Lookup for graph binding, including cached controllers whose ECS removal is pending. */
+    public ICreatureController getBoundController(EntityId id) {
+        var reference = creatureControllersByEntityId.get(id);
+        var controller = reference == null ? null : reference.get();
+        if (controller == null) throw new IllegalArgumentException("Missing bound creature controller: " + id);
+        return controller;
     }
 
     private void loadCreatures() {

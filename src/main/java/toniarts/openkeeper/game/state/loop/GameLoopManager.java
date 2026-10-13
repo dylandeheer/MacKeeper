@@ -57,7 +57,7 @@ public final class GameLoopManager {
 
     /** Implemented system sections; not yet the complete simulation state. */
     public record SystemState(PlayerCreatureSystem.State creatures, PlayerSpellbookSystem.State spellbooks, ChickenAiSystem.SavedState chickens,
-            List<toniarts.openkeeper.game.data.CreatureControlState> creatureControllers) {
+            List<toniarts.openkeeper.game.data.CreatureControlState> creatureControllers, CreatureAiSystem.SavedState creatureAi) {
         public SystemState {creatureControllers = List.copyOf(creatureControllers);}
     }
 
@@ -156,7 +156,7 @@ public final class GameLoopManager {
     /** Capture implemented system sections together with controllers and ECS. */
     public <T> T captureSnapshotWithSystems(java.util.function.BiFunction<IGameController, SystemState, T> capture) {
         return captureSnapshot(game -> capture.apply(game, new SystemState(
-                playerCreatureSystem.captureState(), playerSpellbookSystem.captureState(), chickenAiSystem.captureState(), creatureAiSystem.captureControllerStates(new toniarts.openkeeper.game.save.TaskNodeReferences.Capture()))));
+                playerCreatureSystem.captureState(), playerSpellbookSystem.captureState(), chickenAiSystem.captureState(), ((toniarts.openkeeper.game.controller.CreaturesController) game.getGameWorldController().getCreaturesController()).captureControllerStates(new toniarts.openkeeper.game.save.TaskNodeReferences.Capture()), creatureAiSystem.captureState())));
     }
 
     public void pause() {

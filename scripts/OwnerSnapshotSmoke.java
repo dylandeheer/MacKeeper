@@ -23,7 +23,7 @@ class OwnerSnapshotSmoke {
             List<toniarts.openkeeper.game.controller.map.FlashTileControl.State> flashes,
             toniarts.openkeeper.game.logic.PlayerCreatureSystem.State creatureIndex,
             toniarts.openkeeper.game.logic.PlayerSpellbookSystem.State spellbookIndex,
-            toniarts.openkeeper.game.logic.ChickenAiSystem.SavedState chickens, List<CreatureControlState> creatureControllers) { }
+            toniarts.openkeeper.game.logic.ChickenAiSystem.SavedState chickens, List<CreatureControlState> creatureControllers, toniarts.openkeeper.game.logic.CreatureAiSystem.SavedState creatureAi) { }
 
     public static void main(String[] args) throws Exception {
         String base = Path.of(args[0]).toAbsolutePath().normalize() + "/";
@@ -100,7 +100,7 @@ class OwnerSnapshotSmoke {
                                     new LevelSnapshots.State(LevelState.capture(game.getLevelInfo()), ((GameTimeController) game.getGameTimer()).captureState()), Map.copyOf(statistics),
                                     ((MapController) game.getGameWorldController().getMapController()).captureRoomStates(),
                                     game.getPlayerControllers().values().stream().map(player -> ((PlayerController) player).captureState()).toList(),
-                                    ((MapController) game.getGameWorldController().getMapController()).captureFlashControls(), systems.creatures(), systems.spellbooks(), systems.chickens(), systems.creatureControllers());
+                                    ((MapController) game.getGameWorldController().getMapController()).captureFlashControls(), systems.creatures(), systems.spellbooks(), systems.chickens(), systems.creatureControllers(), systems.creatureAi());
                         } catch (IOException e) { throw new UncheckedIOException(e); }
                     });
                     var staged = GameEntityData.restore(EntitySnapshots.decode(EntitySnapshots.encode(capture.entities())));
@@ -121,9 +121,13 @@ class OwnerSnapshotSmoke {
                         }
                         byte[] beforeHands = EntitySnapshots.encode(staged.capture());
                         var mapRef = new IMapController[1];
+                        var objectRef = new IObjectsController[1];
+                        var taskRef = new toniarts.openkeeper.game.task.ITaskManager[1];
                         var world = (IGameWorldController) Proxy.newProxyInstance(IGameWorldController.class.getClassLoader(),
                                 new Class<?>[]{IGameWorldController.class}, (p, m, a) -> {
                                     if (m.getName().equals("getMapController")) return mapRef[0];
+                                    if (m.getName().equals("getObjectsController")) return objectRef[0];
+                                    if (m.getName().equals("getShotsController")) return null;
                                     throw new AssertionError("Unexpected staged world call: " + m.getName());
                                 });
                         var navigation = (toniarts.openkeeper.game.navigation.INavigationService) Proxy.newProxyInstance(
@@ -133,9 +137,12 @@ class OwnerSnapshotSmoke {
                                 new Class<?>[]{IGameController.class}, (p, m, a) -> {
                                     if (m.getName().equals("getGameWorldController")) return world;
                                     if (m.getName().equals("getNavigationService")) return navigation;
+                                    if (m.getName().equals("getTaskManager")) return taskRef[0];
+                                    if (m.getName().equals("getEntityLookupService")) return null;
                                     throw new AssertionError("Unexpected staged game call: " + m.getName());
                                 });
                         var objects = ObjectsController.restoreBindings(kwd, staged, kwd.getVariables(), new GameTimeController(capture.clock()), gameRef, level);
+                        objectRef[0] = objects;
                         byte[] roomBytes = RoomSnapshots.encode(capture.rooms());
                         var map = MapController.restore(kwd, objects, kwd.getVariables(), new GameTimeController(capture.clock()),
                                 staged, level, RoomSnapshots.decode(roomBytes));
@@ -194,13 +201,23 @@ class OwnerSnapshotSmoke {
                                 new Class<?>[]{toniarts.openkeeper.game.task.ITaskManager.class}, (p, m, a) -> {
                                     throw new AssertionError("Binding replayed task work: " + m.getName());
                                 });
-                        for (var controllerState : capture.creatureControllers()) {
-                            byte[] encoded = CreatureControlSnapshots.encode(controllerState);
-                            var restored = toniarts.openkeeper.game.controller.creature.CreatureController.restoreState(
-                                    CreatureControlSnapshots.decode(encoded), bindings, staged, kwd.getCreature(controllerState.creatureType()),
-                                    navigation, tasks, new GameTimeController(capture.clock()), kwd.getVariables(), null, null, map, level, objects, null);
-                            require(controllerState.equals(restored.captureState(captureNodes)), "Creature FSM/retry state differs");observedCreatures++;
+                        taskRef[0] = tasks;
+                        var creatures = CreaturesController.restoreBindings(kwd, staged, kwd.getVariables(), new GameTimeController(capture.clock()), gameRef, map, level);
+                        var decodedControllers = new ArrayList<CreatureControlState>();
+                        for (var state : capture.creatureControllers()) decodedControllers.add(CreatureControlSnapshots.decode(CreatureControlSnapshots.encode(state)));
+                        // Keep every weak-cache entry pinned until all future task/party owners are reconstructed.
+                        var controllers = creatures.restoreCreatureControllers(decodedControllers, bindings);
+                        require(capture.creatureControllers().equals(creatures.captureControllerStates(captureNodes)), "Creature cache/FSM/retry state differs");
+                        observedCreatures += controllers.size();
+                        for (var controller : controllers) {
+                            require(controller == creatures.getBoundController(controller.getEntityId()), "Creature cache identity differs");
+                            if (staged.getComponent(controller.getEntityId(), CreatureComponent.class) != null)
+                                require(controller == creatures.createController(controller.getEntityId()), "Factory created a duplicate controller");
                         }
+                        var creatureAi = CreatureSystemSnapshots.decode(CreatureSystemSnapshots.encode(capture.creatureAi()));
+                        var aiSystem = toniarts.openkeeper.game.logic.CreatureAiSystem.restoreState(staged, creatures, tasks, creatureAi);
+                        try {require(creatureAi.equals(aiSystem.captureState()), "Active creature membership differs");}
+                        finally {aiSystem.stop();}
                         require(Arrays.equals(beforeHands, EntitySnapshots.encode(staged.capture())), "Binding players/flash controls mutated entities");
                         List<PlayerHandControl> hands = new ArrayList<>();
                         for (var state : capture.hands()) {
@@ -235,9 +252,9 @@ class OwnerSnapshotSmoke {
         require(observedChickens >= 12, "Missing observed chicken controllers");
         System.out.println("PASS observed chicken controller round trips=" + observedChickens);
         require(observedCreatures > 0, "No observed creature controllers");
-        System.out.println("PASS creature controller value round trips=" + observedCreatures + " (task identities only, no task graph restore)");
+        System.out.println("PASS creature cache/controller round trips=" + observedCreatures + " (task identities only, no task graph restore)");
         System.out.println("PASS 12 live owner captures; keeper round trips=" + ownerCount + " carried entity round trips=" + pickedUp);
-        System.out.println("Keeper/hand/level/time/statistics/map/room/player/flash/creature-index/spellbook-index/object/chicken/creature-value bindings only. Full world restoration, resumed gameplay and complete save files remain unverified.");
+        System.out.println("Keeper/hand/level/time/statistics/map/room/player/flash/creature-index/spellbook-index/object/chicken/creature-cache/AI-membership bindings only. Full world restoration, resumed gameplay and complete save files remain unverified.");
     }
     static void require(boolean ok, String message) { if (!ok) throw new AssertionError(message); }
 }
