@@ -17,6 +17,11 @@
 package toniarts.openkeeper.game.logic;
 
 import com.jme3.util.SafeArrayList;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.LinkedHashSet;
+import java.util.function.Function;
+import toniarts.openkeeper.game.save.*;
 import com.simsilica.es.Entity;
 import com.simsilica.es.EntityData;
 import com.simsilica.es.EntityId;
@@ -68,71 +73,86 @@ public final class ChickenSpawnSystem extends GameTimeCounter {
     private final Map<Short, Set<EntityId>> freeRangeChickensByPlayer;
     private final Map<EntityId, Short> freeRangeChickenOwners;
 
+    private final Map<Short,RoomListener> roomListeners=new java.util.LinkedHashMap<>();
+    private boolean reconcileOnNextTick,active,closed;
+
     public ChickenSpawnSystem(EntityData entityData, IObjectsController objectsController, Collection<IPlayerController> playerControllers,
             Map<Variable.MiscVariable.MiscType, Variable.MiscVariable> gameSettings, ILevelInfo levelInfo,
             IMapController mapController) {
-
-        this.entityData = entityData;
-        this.objectsController = objectsController;
-        this.mapController = mapController;
-
-        // We need the game state just for the variables
-        entranceCooldownTime = (int) gameSettings.get(Variable.MiscVariable.MiscType.CHICKEN_GENERATION_TIME_PER_HATCHERY).getValue() / levelInfo.getLevelData().getGameLevel().getTicksPerSec();
-        maximumFreerangeChickenCount = (int) gameSettings.get(Variable.MiscVariable.MiscType.MAX_FREE_RANGE_CHICKENS_PER_PLAYER).getValue();
-
-        // Populate entrance list
-        playerControllersById = HashMap.newHashMap(playerControllers.size());
-        for (IPlayerController player : playerControllers) {
-            playerControllersById.put(player.getKeeper().getId(), player);
-
-            // Add initial rooms
-            for (Entry<Room, Set<IRoomController>> keeperRooms : player.getRoomControl().getRoomControllers().entrySet()) {
-
-                // See that should we add
-                for (IRoomController genericRoom : keeperRooms.getValue()) {
-
-                    // A bit clumsy to check like this
-                    if (!(genericRoom instanceof IChickenGenerator)) {
-                        break;
-                    }
-                    entrances.add((IChickenGenerator) genericRoom);
-                }
+        this(entityData,objectsController,playerControllers,mapController,new ChickenSpawnSnapshots.Settings(
+                (int)gameSettings.get(Variable.MiscVariable.MiscType.CHICKEN_GENERATION_TIME_PER_HATCHERY).getValue()/levelInfo.getLevelData().getGameLevel().getTicksPerSec(),
+                (int)gameSettings.get(Variable.MiscVariable.MiscType.MAX_FREE_RANGE_CHICKENS_PER_PLAYER).getValue()));
+        for(var player:playerControllers) {
+            for(var keeperRooms:player.getRoomControl().getRoomControllers().entrySet())for(var room:keeperRooms.getValue()) {
+                if(!(room instanceof IChickenGenerator generator))break;
+                entrances.add(generator);
             }
-
-            // Add room listener to get notified of the changes
-            // They should be quite rare vs the rate in which we iterate on each tick
-            mapController.addListener(player.getKeeper().getId(), new EntranceListener(player.getKeeper().getId()));
         }
+        processAddedEntities(freerangeChickenGenerators);processAddedChickenEntities(freerangeChickens);start();
+    }
 
-        // Listen for the coops, also room specific generation...
-        freerangeChickenGenerators = entityData.getEntities(ChickenGenerator.class, Position.class);
-        processAddedEntities(freerangeChickenGenerators);
+    private ChickenSpawnSystem(EntityData data,IObjectsController objects,Collection<IPlayerController> players,IMapController map,
+            ChickenSpawnSnapshots.Settings settings) {
+        entityData=data;objectsController=objects;mapController=map;entranceCooldownTime=settings.cooldown();maximumFreerangeChickenCount=settings.maximumFreeRange();
+        playerControllersById=new java.util.LinkedHashMap<>();
+        for(var player:players)if(playerControllersById.putIfAbsent(player.getKeeper().getId(),player)!=null)throw new IllegalArgumentException("Duplicate chicken player");
+        freerangeChickenGenerators=data.getEntities(ChickenGenerator.class,Position.class);
+        freerangeChickens=data.getEntities(Food.class,Decay.class,Owner.class);
+        freeRangeChickenOwners=new HashMap<>();freeRangeChickensByPlayer=new HashMap<>();
+        playerControllersById.keySet().forEach(owner->freeRangeChickensByPlayer.put(owner,new HashSet<>()));
+    }
 
-        // Listen for freerange chickens
-        // For know we know this for the food and decay tag, not very elegant perhaps
-        freerangeChickens = entityData.getEntities(Food.class, Decay.class, Owner.class);
-        freeRangeChickenOwners = HashMap.newHashMap(playerControllersById.size() * maximumFreerangeChickenCount);
-        freeRangeChickensByPlayer = HashMap.newHashMap(playerControllers.size());
-        for (IPlayerController player : playerControllers) {
-            freeRangeChickensByPlayer.put(player.getKeeper().getId(), HashSet.newHashSet(maximumFreerangeChickenCount));
-        }
-        processAddedChickenEntities(freerangeChickens);
+    public ChickenSpawnSnapshots.State captureState() {
+        var coops=new java.util.TreeMap<EntityId,EntityId>();roomsByFreerangeChickenGenerators.forEach((id,room)->coops.put(id,room==null?null:room.getEntityId()));
+        var roomCoops=new java.util.TreeMap<EntityId,List<EntityId>>();freerangeChickenGeneratorsByRoom.forEach((room,ids)->roomCoops.put(room.getEntityId(),List.copyOf(ids)));
+        var populations=new java.util.TreeMap<Short,List<EntityId>>();freeRangeChickensByPlayer.forEach((owner,ids)->populations.put(owner,ids.stream().sorted().toList()));
+        var rooms=new ArrayList<IRoomController>(entrances);rooms.addAll(freerangeChickenGeneratorsByRoom.keySet());
+        roomsByFreerangeChickenGenerators.values().stream().filter(java.util.Objects::nonNull).forEach(rooms::add);
+        return new ChickenSpawnSnapshots.State(timeElapsed,new ChickenSpawnSnapshots.Settings(entranceCooldownTime,maximumFreerangeChickenCount),
+                List.copyOf(playerControllersById.keySet()),entrances.stream().map(IRoomController::getEntityId).toList(),coops,roomCoops,
+                freeRangeChickenOwners,populations,SpawnRoomBindings.captureRemoved(rooms));
+    }
+
+    public static ChickenSpawnSystem restoreState(GameEntityData data,IObjectsController objects,Collection<IPlayerController> players,IMapController map,
+            Function<EntityId,IRoomController> rooms,ChickenSpawnSnapshots.State saved) {
+        var byId=new HashMap<Short,IPlayerController>();
+        for(var player:players)if(byId.putIfAbsent(player.getKeeper().getId(),player)!=null)throw new IllegalArgumentException("Duplicate chicken player");
+        if(!byId.keySet().equals(new HashSet<>(saved.players())))throw new IllegalArgumentException("Chicken players differ");
+        for(var ids:List.of(saved.coops().keySet(),saved.owners().keySet()))for(var id:ids)if(!data.wasAllocated(id))throw new IllegalArgumentException("Unallocated spawning entity");
+        var references=new ArrayList<>(saved.entrances());references.addAll(saved.roomCoops().keySet());
+        var bindings=SpawnRoomBindings.resolve(IChickenGenerator.class,references,saved.removedRooms(),map,data,rooms);
+        var system=new ChickenSpawnSystem(data,objects,saved.players().stream().map(byId::get).toList(),map,saved.settings());
+        system.timeElapsed=saved.elapsed();system.entrances.addAll(saved.entrances().stream().map(bindings::get).toList());
+        saved.coops().forEach((id,room)->system.roomsByFreerangeChickenGenerators.put(id,room==null?null:bindings.get(room)));
+        saved.roomCoops().forEach((room,ids)->system.freerangeChickenGeneratorsByRoom.put(bindings.get(room),new LinkedHashSet<>(ids)));
+        system.freeRangeChickenOwners.putAll(saved.owners());system.freeRangeChickensByPlayer.clear();
+        saved.populations().forEach((owner,ids)->system.freeRangeChickensByPlayer.put(owner,new HashSet<>(ids)));
+        system.reconcileOnNextTick=true;return system;
     }
 
     @Override
     public void processTick(float tpf) {
+        if(!active || closed)throw new IllegalStateException("Chicken spawning is not active");
         super.processTick(tpf);
-        // Add new & remove old
-        // Basically they don't move, so lets not worry about that now, also the owner goes with the room
-        if (freerangeChickenGenerators.applyChanges()) {
-            processDeletedEntities(freerangeChickenGenerators.getRemovedEntities());
-            processAddedEntities(freerangeChickenGenerators.getAddedEntities());
-        }
-
-        if (freerangeChickens.applyChanges()) {
-            processDeletedChickenEntities(freerangeChickens.getRemovedEntities());
-            processAddedChickenEntities(freerangeChickens.getAddedEntities());
-            processChangedChickenEntities(freerangeChickens.getChangedEntities());
+        if(reconcileOnNextTick) {
+            var observed=new HashSet<>(roomsByFreerangeChickenGenerators.keySet());freerangeChickenGenerators.applyChanges();
+            processDeletedEntities(observed.stream().filter(id->!freerangeChickenGenerators.containsId(id)).toList());
+            processAddedEntities(freerangeChickenGenerators.stream().filter(entity->!observed.contains(entity.getId())).toList());
+            var chickens=new HashSet<>(freeRangeChickenOwners.keySet());freerangeChickens.applyChanges();
+            processDeletedChickenEntities(chickens.stream().filter(id->!freerangeChickens.containsId(id)).toList());
+            processAddedChickenEntities(freerangeChickens.stream().filter(entity->!chickens.contains(entity.getId())).toList());
+            processChangedChickenEntities(freerangeChickens.stream().filter(entity->chickens.contains(entity.getId())).toList());
+            reconcileOnNextTick=false;
+        } else {
+            if(freerangeChickenGenerators.applyChanges()) {
+                processDeletedEntities(freerangeChickenGenerators.getRemovedEntities().stream().map(Entity::getId).toList());
+                processAddedEntities(freerangeChickenGenerators.getAddedEntities());
+            }
+            if(freerangeChickens.applyChanges()) {
+                processDeletedChickenEntities(freerangeChickens.getRemovedEntities().stream().map(Entity::getId).toList());
+                processAddedChickenEntities(freerangeChickens.getAddedEntities());
+                processChangedChickenEntities(freerangeChickens.getChangedEntities());
+            }
         }
 
         for (IChickenGenerator entrance : entrances.getArray()) {
@@ -141,6 +161,7 @@ public final class ChickenSpawnSystem extends GameTimeCounter {
     }
 
     private void evaluateAndSpawnCreature(IChickenGenerator entrance) {
+        if(entrance.isRemoved() || entrance.isDestroyed())return;
         double timeSinceLastSpawn = timeElapsed - entrance.getLastSpawnTime();
         boolean spawned = false;
         EntityId entityId = null;
@@ -153,6 +174,7 @@ public final class ChickenSpawnSystem extends GameTimeCounter {
                 spawned = true;
             } else if (freeRangeChickensByPlayer.get(entrance.getOwnerId()).size() < maximumFreerangeChickenCount && freerangeChickenGeneratorsByRoom.get(entrance) != null) {
                 Set<EntityId> generators = freerangeChickenGeneratorsByRoom.get(entrance);
+                if (generators.isEmpty()) return;
                 Optional<EntityId> generator = Utils.getRandomItem(generators);
 
                 if (generator.isPresent()) {
@@ -174,11 +196,19 @@ public final class ChickenSpawnSystem extends GameTimeCounter {
 
     @Override
     public void start() {
-
+        if(closed)throw new IllegalStateException("Chicken spawning is stopped");if(active)return;
+        try {
+            for(short player:playerControllersById.keySet()) {
+                var listener=new EntranceListener(player);roomListeners.put(player,listener);mapController.addListener(player,listener);
+            }
+            active=true;
+        }catch(RuntimeException|Error failure){stop();throw failure;}
     }
 
     @Override
     public void stop() {
+        if(closed)return;closed=true;active=false;
+        roomListeners.forEach((player,listener)->mapController.removeListener(player,listener));roomListeners.clear();
         freerangeChickenGenerators.release();
         freerangeChickenGeneratorsByRoom.clear();
         roomsByFreerangeChickenGenerators.clear();
@@ -188,8 +218,8 @@ public final class ChickenSpawnSystem extends GameTimeCounter {
         freeRangeChickenOwners.clear();
     }
 
-    private void processAddedEntities(Set<Entity> entities) {
-        for (Entity entity : entities) {
+    private void processAddedEntities(Collection<Entity> entities) {
+        for (Entity entity : entities.stream().sorted(java.util.Comparator.comparing(Entity::getId)).toList()) {
             Position position = entity.get(Position.class);
             Point p = WorldUtils.vectorToPoint(position.position);
             IRoomController roomController = mapController.getRoomControllerByCoordinates(p);
@@ -198,7 +228,7 @@ public final class ChickenSpawnSystem extends GameTimeCounter {
                 chickenGenerator = (IChickenGenerator) roomController;
                 Set<EntityId> generators = freerangeChickenGeneratorsByRoom.get(chickenGenerator);
                 if (generators == null) {
-                    generators = new HashSet<>();
+                    generators = new LinkedHashSet<>();
                 }
                 generators.add(entity.getId());
                 freerangeChickenGeneratorsByRoom.put(chickenGenerator, generators);
@@ -207,17 +237,17 @@ public final class ChickenSpawnSystem extends GameTimeCounter {
         }
     }
 
-    private void processDeletedEntities(Set<Entity> entities) {
-        for (Entity entity : entities) {
-            IChickenGenerator chickenGenerator = roomsByFreerangeChickenGenerators.remove(entity.getId());
+    private void processDeletedEntities(Collection<EntityId> entities) {
+        for (EntityId id : entities) {
+            IChickenGenerator chickenGenerator = roomsByFreerangeChickenGenerators.remove(id);
             if (chickenGenerator != null) {
-                freerangeChickenGeneratorsByRoom.get(chickenGenerator).remove(entity.getId());
+                freerangeChickenGeneratorsByRoom.get(chickenGenerator).remove(id);
             }
         }
     }
 
-    private void processAddedChickenEntities(Set<Entity> entities) {
-        for (Entity entity : entities) {
+    private void processAddedChickenEntities(Collection<Entity> entities) {
+        for (Entity entity : entities.stream().sorted(java.util.Comparator.comparing(Entity::getId)).toList()) {
             Owner owner = entity.get(Owner.class);
             Set<EntityId> chickens = freeRangeChickensByPlayer.get(owner.ownerId);
             if (chickens == null) {
@@ -229,21 +259,21 @@ public final class ChickenSpawnSystem extends GameTimeCounter {
         }
     }
 
-    private void processDeletedChickenEntities(Set<Entity> entities) {
-        for (Entity entity : entities) {
-            short ownerId = freeRangeChickenOwners.remove(entity.getId());
-            freeRangeChickensByPlayer.get(ownerId).remove(entity.getId());
+    private void processDeletedChickenEntities(Collection<EntityId> entities) {
+        for (EntityId id : entities) {
+            short ownerId = freeRangeChickenOwners.remove(id);
+            freeRangeChickensByPlayer.get(ownerId).remove(id);
         }
     }
 
-    private void processChangedChickenEntities(Set<Entity> entities) {
-        for (Entity entity : entities) {
+    private void processChangedChickenEntities(Collection<Entity> entities) {
+        for (Entity entity : entities.stream().sorted(java.util.Comparator.comparing(Entity::getId)).toList()) {
             Owner owner = entity.get(Owner.class);
             short previousOwner = freeRangeChickenOwners.get(entity.getId());
             if (previousOwner != owner.ownerId) {
                 freeRangeChickenOwners.put(entity.getId(), owner.ownerId);
                 freeRangeChickensByPlayer.get(previousOwner).remove(entity.getId());
-                freeRangeChickensByPlayer.get(owner.ownerId).add(entity.getId());
+                freeRangeChickensByPlayer.computeIfAbsent(owner.ownerId,ignored->new HashSet<>()).add(entity.getId());
             }
         }
     }
@@ -277,13 +307,13 @@ public final class ChickenSpawnSystem extends GameTimeCounter {
         }
 
         private void addRoom(IRoomController room) {
-            if (room instanceof IChickenGenerator chickenGenerator) {
+            if (!closed && room instanceof IChickenGenerator chickenGenerator) {
                 entrances.add(chickenGenerator);
             }
         }
 
         private void removeRoom(IRoomController room) {
-            if (room instanceof IChickenGenerator chickenGenerator) {
+            if (!closed && room instanceof IChickenGenerator chickenGenerator) {
                 entrances.remove(chickenGenerator);
             }
         }
