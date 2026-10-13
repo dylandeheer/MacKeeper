@@ -23,11 +23,11 @@ class OwnerSnapshotSmoke {
             List<toniarts.openkeeper.game.controller.map.FlashTileControl.State> flashes,
             toniarts.openkeeper.game.logic.PlayerCreatureSystem.State creatureIndex,
             toniarts.openkeeper.game.logic.PlayerSpellbookSystem.State spellbookIndex,
-            toniarts.openkeeper.game.logic.ChickenAiSystem.SavedState chickens, List<CreatureControlState> creatureControllers, toniarts.openkeeper.game.logic.CreatureAiSystem.SavedState creatureAi, PartyRegistryState parties, toniarts.openkeeper.game.task.TaskIdentityAllocator.State taskAllocation, List<TileTaskSnapshots.State> tileTasks, RoomTaskSnapshots.Capture roomTasks, EntityTaskSnapshots.Capture entityTasks, TaskGraphSnapshots.State taskGraph, TaskManagerSnapshots.State taskManager, ManaSnapshots.State mana, ExperienceSnapshots.State experience, KeeperEconomySnapshots.State economy, CreatureSpawnSnapshots.State recruitment, ChickenSpawnSnapshots.State chickenSpawning, LifetimeSnapshots.State lifetimes, SlapSnapshots.State slaps, HealthSnapshots.State health, AnimationSnapshots.State animation, LifetimeSnapshots.Clock creatureView) { }
+            toniarts.openkeeper.game.logic.ChickenAiSystem.SavedState chickens, List<CreatureControlState> creatureControllers, toniarts.openkeeper.game.logic.CreatureAiSystem.SavedState creatureAi, PartyRegistryState parties, toniarts.openkeeper.game.task.TaskIdentityAllocator.State taskAllocation, List<TileTaskSnapshots.State> tileTasks, RoomTaskSnapshots.Capture roomTasks, EntityTaskSnapshots.Capture entityTasks, TaskGraphSnapshots.State taskGraph, TaskManagerSnapshots.State taskManager, ManaSnapshots.State mana, ExperienceSnapshots.State experience, KeeperEconomySnapshots.State economy, CreatureSpawnSnapshots.State recruitment, ChickenSpawnSnapshots.State chickenSpawning, LifetimeSnapshots.State lifetimes, SlapSnapshots.State slaps, HealthSnapshots.State health, AnimationSnapshots.State animation, LifetimeSnapshots.Clock creatureView, MovementSnapshots.State movement) { }
 
     public static void main(String[] args) throws Exception {
         String base = Path.of(args[0]).toAbsolutePath().normalize() + "/";
-        int ownerCount = 0, pickedUp = 0, observedBooks = 0, observedChickens = 0, observedCreatures = 0, observedParties = 0, spawnedParties = 0, tileTaskCount = 0, roomTaskCount = 0, entityTaskCount = 0, objectiveTaskCount = 0, decoratorCount = 0;
+        int ownerCount = 0, pickedUp = 0, observedBooks = 0, observedChickens = 0, observedCreatures = 0, observedParties = 0, spawnedParties = 0, tileTaskCount = 0, roomTaskCount = 0, entityTaskCount = 0, objectiveTaskCount = 0, decoratorCount = 0, movingBodies = 0;
         for (String name : List.of("level1", "level17", "TrapTime", "level10")) {
             var kwd = KwdFile.load(base, Path.of(base, "Data/editor/maps/" + name + ".kwd"));
             var data = new GameEntityData();
@@ -139,7 +139,7 @@ class OwnerSnapshotSmoke {
                                     new LevelSnapshots.State(LevelState.capture(game.getLevelInfo()), ((GameTimeController) game.getGameTimer()).captureState()), Map.copyOf(statistics),
                                     ((MapController) game.getGameWorldController().getMapController()).captureRoomStates(),
                                     game.getPlayerControllers().values().stream().map(player -> ((PlayerController) player).captureState()).toList(),
-                                    ((MapController) game.getGameWorldController().getMapController()).captureFlashControls(), systems.creatures(), systems.spellbooks(), systems.chickens(), systems.creatureControllers(), systems.creatureAi(), systems.parties(), systems.taskAllocation(), systems.tileTasks(), systems.roomTasks(), systems.entityTasks(), systems.taskGraph(), systems.taskManager(), systems.mana(), systems.experience(), systems.economy(), systems.recruitment(), systems.chickenSpawning(), systems.lifetimes(), systems.slaps(), systems.health(), systems.animation(), systems.creatureView());
+                                    ((MapController) game.getGameWorldController().getMapController()).captureFlashControls(), systems.creatures(), systems.spellbooks(), systems.chickens(), systems.creatureControllers(), systems.creatureAi(), systems.parties(), systems.taskAllocation(), systems.tileTasks(), systems.roomTasks(), systems.entityTasks(), systems.taskGraph(), systems.taskManager(), systems.mana(), systems.experience(), systems.economy(), systems.recruitment(), systems.chickenSpawning(), systems.lifetimes(), systems.slaps(), systems.health(), systems.animation(), systems.creatureView(), systems.movement());
                         } catch (IOException e) { throw new UncheckedIOException(e); }
                     });
                     var staged = GameEntityData.restore(EntitySnapshots.decode(EntitySnapshots.encode(capture.entities())));
@@ -289,6 +289,13 @@ class OwnerSnapshotSmoke {
                                 toniarts.openkeeper.game.logic.IEntityPositionLookup.class.getClassLoader(),
                                 new Class<?>[]{toniarts.openkeeper.game.logic.IEntityPositionLookup.class},
                                 (p, m, a) -> {throw new AssertionError("Lifetime binding replayed cleanup: " + m.getName());});
+                        var movementState = MovementSnapshots.decode(MovementSnapshots.encode(capture.movement()));
+                        var movementSystem = toniarts.openkeeper.game.logic.MovementSystem.restoreState(staged, movementState);
+                        try {
+                            require(movementState.equals(movementSystem.captureState()), "Movement dynamics/geometry/query observations differ");
+                            require(Arrays.equals(beforeHands, EntitySnapshots.encode(staged.capture())), "Movement binding changed entities");
+                            movingBodies += movementState.bodies().size();
+                        } finally {movementSystem.stop();}
                         var viewClock = CreatureViewSnapshots.decode(CreatureViewSnapshots.encode(capture.creatureView()));
                         var derivedSystems = new ArrayList<toniarts.openkeeper.game.logic.IGameLogicUpdatable>();
                         var beforeDerivedKeepers = stagedPlayers.stream().map(p -> p.getKeeper().captureState()).toList();
@@ -427,8 +434,10 @@ class OwnerSnapshotSmoke {
         require(objectiveTaskCount > 0, "No live objective tasks exercised");
         System.out.println("PASS objective task nodes=" + objectiveTaskCount + " decorators=" + decoratorCount);
         System.out.println("PASS party node round trips=" + observedParties + " spawned index entries=" + spawnedParties);
+        require(movingBodies > 0, "No active steering bodies exercised");
+        System.out.println("PASS movement body round trips=" + movingBodies);
         System.out.println("PASS 12 live owner captures; keeper round trips=" + ownerCount + " carried entity round trips=" + pickedUp);
-        System.out.println("Keeper/hand/level/time/statistics/map/room/player/flash/creature-index/spellbook-index/object/chicken/creature-cache/AI-membership/party/unified-task-graph/task-manager/mana/experience/economy/recruitment/chicken-spawning/lifetimes/slaps/health/animation/view/mood/doors/loose-objects/hauling/bridge bindings and listener activation only. Whole-world restoration, resumed gameplay and complete save files remain unverified.");
+        System.out.println("Keeper/hand/level/time/statistics/map/room/player/flash/creature-index/spellbook-index/object/chicken/creature-cache/AI-membership/party/unified-task-graph/task-manager/mana/experience/economy/recruitment/chicken-spawning/lifetimes/slaps/health/animation/view/mood/doors/loose-objects/hauling/bridge/movement bindings and listener activation only. Whole-world restoration, resumed gameplay and complete save files remain unverified.");
     }
     static void require(boolean ok, String message) { if (!ok) throw new AssertionError(message); }
 }
