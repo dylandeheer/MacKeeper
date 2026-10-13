@@ -127,14 +127,16 @@ class ChickenSpawnContinuationTest {
 
     record Spawn(EntityId id,short owner,boolean freeRange,float x,double created) { }
     static void reload(World w)throws Exception {
+        var random=RandomSnapshots.decode(RandomSnapshots.encode(w.random.captureState()));
+        w.random=toniarts.openkeeper.game.random.SimulationRandom.restore(random);
         var saved=ChickenSpawnSnapshots.decode(ChickenSpawnSnapshots.encode(w.system.captureState()));
         var before=EntitySnapshots.encode(w.data.capture());var spawned=List.copyOf(w.spawned);w.system.stop();w.system=w.restore(saved);
         assertEquals(0,w.listenerCount());assertEquals(saved,w.system.captureState());assertEquals(spawned,w.spawned);
         assertArrayEquals(before,EntitySnapshots.encode(w.data.capture()));w.system.start();assertEquals(2,w.listenerCount());
     }
     static void step(World a,World b,float tpf)throws Exception {
-        // Equal external RNG input tests ordered coop selection; RNG persistence itself is not implemented here.
-        ((Random)Utils.getRandom()).setSeed(731);a.system.processTick(tpf);((Random)Utils.getRandom()).setSeed(731);b.system.processTick(tpf);
+        a.system.processTick(tpf);b.system.processTick(tpf);
+        assertEquals(a.random.captureState(),b.random.captureState());
         assertEquals(a.system.captureState(),b.system.captureState());assertEquals(a.spawned,b.spawned);
         assertArrayEquals(EntitySnapshots.encode(a.data.capture()),EntitySnapshots.encode(b.data.capture()));
     }
@@ -147,7 +149,7 @@ class ChickenSpawnContinuationTest {
         public void onSpawn(double time,EntityId spawned){entityData.setComponent(entityId,new ChickenGenerator(time));}
     }
     static final class World implements AutoCloseable {
-        final GameEntityData data=new GameEntityData();final Room roomType=new Room();final IKwdFile definition;
+        toniarts.openkeeper.game.random.SimulationRandom random=new toniarts.openkeeper.game.random.SimulationRandom(731);final GameEntityData data=new GameEntityData();final Room roomType=new Room();final IKwdFile definition;
         final Map<EntityId,Generator> rooms=new LinkedHashMap<>();final Map<EntityId,IRoomController> live=new HashMap<>();
         final Map<Short,List<RoomListener>> listeners=new TreeMap<>();final Map<Short,PlayerRoomControl> roomControls=new TreeMap<>();
         final List<IPlayerController> players=new ArrayList<>();final List<Spawn> spawned=new ArrayList<>();
@@ -168,7 +170,7 @@ class ChickenSpawnContinuationTest {
                 case "removeListener"->{listeners.get((short)args[0]).remove(args[1]);yield null;}
                 default->throw new AssertionError(name);
             });
-            objects=proxy(IObjectsController.class,(name,args)->switch(name){
+            objects=proxy(IObjectsController.class,(name,args)->switch(name){case "getRandom"->random;
                 case "spawnChicken","spawnFreerangeChicken"->{short owner=(short)args[0];var p=(Vector3f)args[1];boolean free=name.equals("spawnFreerangeChicken");
                     double created=free?(double)args[2]:0;var id=data.createEntity();data.setComponents(id,new Owner(owner,owner),new Food(),new Position(0,p.clone()));
                     if(free)data.setComponent(id,new Decay(created,30));spawned.add(new Spawn(id,owner,free,p.x,created));yield id;}

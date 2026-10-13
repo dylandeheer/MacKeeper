@@ -155,8 +155,8 @@ class TriggerRegistryContinuationTest {
             map=proxy(IMapController.class,(n,a)->switch(n){case "getRoomControllerByCoordinates"->null;case "addBreachListener"->{listeners.add((DungeonBreachListener)a[0]);yield null;}case "removeBreachListener"->{listeners.remove(a[0]);yield null;}default->throw new AssertionError(n);});
             var world=proxy(IGameWorldController.class,(n,a)->switch(n){case "getObjectsController"->objects();case "getMapController"->map;case "getShotsController"->null;default->throw new AssertionError(n);});
             game=proxy(IGameController.class,(n,a)->switch(n){case "getGameWorldController"->world;case "getNavigationService","getTaskManager","getEntityLookupService"->null;default->throw new AssertionError(n);});
-            objects=ObjectsController.restoreBindings(kwd,data,Map.of(),()->0,game,info);doors=DoorsController.restoreBindings(kwd,data,Map.of(),map,game,info,objects);
-            creatures=CreaturesController.restoreBindings(kwd,data,Map.of(),()->0,game,map,info);pinned=creatures.restoreCreatureControllers(controllers,new TaskNodeReferences.Bindings(Map.of()));
+            objects=ObjectsController.restoreBindings(kwd,data,Map.of(),()->0,game,info, new toniarts.openkeeper.game.random.SimulationRandom(731));doors=DoorsController.restoreBindings(kwd,data,Map.of(),map,game,info,objects);
+            creatures=CreaturesController.restoreBindings(kwd,data,Map.of(),()->0,game,map,info, new toniarts.openkeeper.game.random.SimulationRandom(731));pinned=creatures.restoreCreatureControllers(controllers,new TaskNodeReferences.Bindings(Map.of()));
             creatures.restoreParties(parties==null?new PartyRegistryState(8,List.of(new PartyState(7,(short)1,true,PartyType.NONE,null,List.of())),Map.of((short)1,0),Map.of(7L,0)):parties);
         }
         IObjectsController objects(){return objects;}

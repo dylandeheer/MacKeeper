@@ -384,7 +384,9 @@ class RoomOwnershipTest {
         damage.setValue(300);
         oldRooms = new PlayerRoomControl(previous, List.of(room));
         newRooms = new PlayerRoomControl(next, List.of(room));
-        world = new GameWorldController(null, level, data, Map.of(
+        var random = new toniarts.openkeeper.game.random.SimulationRandom(731);
+        var gameRandom = proxy(toniarts.openkeeper.game.controller.IGameController.class, (method,args) -> {if (method.equals("getRandom")) return random;throw new AssertionError(method);});
+        world = new GameWorldController(gameRandom, level, data, Map.of(
                 Variable.MiscVariable.MiscType.MAX_GOLD_PER_TREASURY_TILE, capacity,
                 Variable.MiscVariable.MiscType.MAX_GOLD_PILE_OUTSIDE_TREASURY, capacity,
                 Variable.MiscVariable.MiscType.ATTACK_ROOM_HEALTH, damage),

@@ -123,7 +123,7 @@ class CreatureSystemSnapshotsTest {
             var nav=proxy(INavigationService.class,(m,a)->{throw new AssertionError(m);});
             var world=proxy(IGameWorldController.class,(m,a)->switch(m){case "getObjectsController","getShotsController"->null;default->throw new AssertionError(m);});
             var game=proxy(IGameController.class,(m,a)->switch(m){case "getNavigationService"->nav;case "getTaskManager"->tasks;case "getEntityLookupService"->null;case "getGameWorldController"->world;default->throw new AssertionError(m);});
-            factory=CreaturesController.restoreBindings(kwd,data,Map.of(),()->1,game,null,null);
+            factory=CreaturesController.restoreBindings(kwd,data,Map.of(),()->1,game,null,null, new toniarts.openkeeper.game.random.SimulationRandom(731));
         }
         void yieldCheck(){if(system!=null)for(var id:system.captureState().activeControllers()) assertTrue(data.getComponent(id,TaskComponent.class).taskDuration>0);}
         EntityId creature(boolean active){var id=data.createEntity();var c=new CreatureComponent();c.creatureId=2;data.setComponents(id,c,new Position(0,new Vector3f()),new TaskComponent(0,null,null,null,0,true));if(active)data.setComponent(id,new CreatureAi(0,CreatureState.DEAD,(short)2));return id;}

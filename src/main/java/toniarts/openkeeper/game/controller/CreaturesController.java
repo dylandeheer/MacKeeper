@@ -91,6 +91,9 @@ import toniarts.openkeeper.utils.WorldUtils;
  */
 public final class CreaturesController implements ICreaturesController {
 
+    private final java.util.random.RandomGenerator random;
+    @Override public java.util.random.RandomGenerator getRandom() { return random; }
+
     private static final Logger logger = System.getLogger(CreaturesController.class.getName());
 
     private final IKwdFile kwdFile;
@@ -142,19 +145,25 @@ public final class CreaturesController implements ICreaturesController {
      */
     public CreaturesController(IKwdFile kwdFile, EntityData entityData, Map<Variable.MiscVariable.MiscType, Variable.MiscVariable> gameSettings, IGameTimer gameTimer,
             IGameController gameController, IMapController mapController, ILevelInfo levelInfo) {
-        this(kwdFile, entityData, gameSettings, gameTimer, gameController, mapController, levelInfo, false);
+        this(kwdFile, entityData, gameSettings, gameTimer, gameController, mapController, levelInfo, new toniarts.openkeeper.game.random.SimulationRandom());
+    }
+
+    public CreaturesController(IKwdFile kwdFile, EntityData entityData, Map<Variable.MiscVariable.MiscType, Variable.MiscVariable> gameSettings, IGameTimer gameTimer,
+            IGameController gameController, IMapController mapController, ILevelInfo levelInfo, java.util.random.RandomGenerator random) {
+        this(kwdFile, entityData, gameSettings, gameTimer, gameController, mapController, levelInfo, false, random);
     }
 
     /** Stage a factory without spawning authored creatures or initializing runtime parties. */
     public static CreaturesController restoreBindings(IKwdFile kwdFile, EntityData entityData,
             Map<Variable.MiscVariable.MiscType, Variable.MiscVariable> settings, IGameTimer timer,
-            IGameController game, IMapController map, ILevelInfo level) {
-        return new CreaturesController(kwdFile, entityData, settings, timer, game, map, level, true);
+            IGameController game, IMapController map, ILevelInfo level, java.util.random.RandomGenerator random) {
+        return new CreaturesController(kwdFile, entityData, settings, timer, game, map, level, true, random);
     }
 
     private CreaturesController(IKwdFile kwdFile, EntityData entityData,
             Map<Variable.MiscVariable.MiscType, Variable.MiscVariable> gameSettings, IGameTimer gameTimer,
-            IGameController gameController, IMapController mapController, ILevelInfo levelInfo, boolean restoring) {
+            IGameController gameController, IMapController mapController, ILevelInfo levelInfo, boolean restoring, java.util.random.RandomGenerator random) {
+        this.random = java.util.Objects.requireNonNull(random);
         this.restoring = restoring;
         this.kwdFile = kwdFile;
         this.entityData = entityData;
@@ -238,7 +247,7 @@ public final class CreaturesController implements ICreaturesController {
             throw new IllegalStateException("Party registry cannot be rebound");
         var nodes = new java.util.ArrayList<PartyController>();
         for (var state : saved.nodes()) nodes.add(PartyController.restoreState(state, heroParties.get(state.definitionId()),
-                this::allocatePartyId, this::getBoundController));
+                this::allocatePartyId, this::getBoundController, random));
         var current = new HashMap<Short, IPartyController>();
         var spawned = new HashMap<Long, IPartyController>();
         saved.current().forEach((id, index) -> current.put(id, nodes.get(index)));
@@ -285,7 +294,7 @@ public final class CreaturesController implements ICreaturesController {
         for (Thing.HeroParty heroParty : kwdFile.getThings(Thing.HeroParty.class)) {
             try {
                 heroParties.put(heroParty.getId(), heroParty);
-                creaturePartiesByPartyId.put(heroParty.getId(), new PartyController(heroParty, this::allocatePartyId));
+                creaturePartiesByPartyId.put(heroParty.getId(), new PartyController(heroParty, this::allocatePartyId, random));
             } catch (Exception ex) {
                 logger.log(Level.WARNING, "Could not load Thing " + heroParty + "!", ex);
             }
@@ -345,8 +354,8 @@ public final class CreaturesController implements ICreaturesController {
     }
 
     private EntityId loadCreature(EntityId entity, Creature creature, Integer healthPercentage, int money, int level, SpawnType spawnType, float x, float y, short ownerId, float rotation, Thing.HeroParty.Objective objective, short objectiveTargetPlayerId, int objectiveTargetActionPointId, Integer triggerId, boolean diesInstantly) {
-        String name = Utils.generateCreatureName();
-        String bloodType = Utils.generateBloodType();
+        String name = Utils.generateCreatureName(random);
+        String bloodType = Utils.generateBloodType(random);
 
         return loadCreature(entity, creature, name, bloodType, healthPercentage, money, level, spawnType, x, y, ownerId, rotation, objective, objectiveTargetPlayerId, objectiveTargetActionPointId, triggerId, diesInstantly);
     }
@@ -719,7 +728,7 @@ public final class CreaturesController implements ICreaturesController {
          */
         IPartyController partyController = creaturePartiesByPartyId.get(partyId);
         if (partyController.isCreated()) {
-            partyController = new PartyController(heroParties.get(partyId), this::allocatePartyId);
+            partyController = new PartyController(heroParties.get(partyId), this::allocatePartyId, random);
             logger.log(Level.DEBUG, "Re-spawning party {0}!", partyId);
         }
         partyController.setType(partyType);

@@ -149,6 +149,7 @@ class EntityTaskContinuationTest {
     }
     @SuppressWarnings("unchecked") static <T> T proxy(Class<T> type, InvocationHandler call) {return (T)Proxy.newProxyInstance(type.getClassLoader(),new Class<?>[]{type},call);}
     static final class World implements AutoCloseable {
+        final toniarts.openkeeper.game.random.SimulationRandom random=new toniarts.openkeeper.game.random.SimulationRandom(731);
         final GameEntityData data=new GameEntityData();
         final EntityId targetId=data.createEntity(),workerId=data.createEntity(),objectId=data.createEntity(),roomId=data.createEntity(),foodId=data.createEntity();
         TaskIdentityAllocator ids=new TaskIdentityAllocator(new TaskIdentityAllocator.State(0),()->TIME);TaskManager manager;
@@ -171,7 +172,7 @@ class EntityTaskContinuationTest {
                 case "getObjectControl"->storage;case "getRoomInstance"->instance;case "isTileAccessible"->true;
                 case "hashCode"->3;case "equals"->p==a[0];default->throw new AssertionError(m.getName());});
             map=proxy(IMapController.class,(p,m,a)->switch(m.getName()){case "getRoomsByFunction"->List.of(room);case "getMapData"->mapData;default->throw new AssertionError(m.getName());});
-            objects=proxy(IObjectsController.class,(p,m,a)->{if(m.getName().equals("createController"))return new ObjectController((EntityId)a[0],data,type,null,map);throw new AssertionError(m.getName());});
+            objects=proxy(IObjectsController.class,(p,m,a)->{if(m.getName().equals("getRandom"))return random;if(m.getName().equals("createController"))return new ObjectController((EntityId)a[0],data,type,null,map);throw new AssertionError(m.getName());});
             creatures=proxy(ICreaturesController.class,(p,m,a)->{if(m.getName().equals("createController"))return target;throw new AssertionError(m.getName());});
             object=new ObjectController(objectId,data,type,objects,map);
             positions=proxy(IEntityPositionLookup.class,(p,m,a)->switch(m.getName()){case "getEntityLocation"->tile;case "getEntityController"->new ObjectController(foodId,data,type,objects,map);default->throw new AssertionError(m.getName());});

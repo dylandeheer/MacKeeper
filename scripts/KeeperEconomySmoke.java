@@ -14,15 +14,13 @@ import toniarts.openkeeper.utils.Point;
 class KeeperEconomySmoke {
     public static void main(String[] args) throws Exception {
         long seed=args.length>1?Long.parseLong(args[1]):0;
-        ((java.util.Random)toniarts.openkeeper.utils.Utils.getRandom()).setSeed(seed);
-        com.jme3.math.FastMath.rand.setSeed(seed);
         String base=Path.of(args[0]).toAbsolutePath()+"/";
         var kwd=KwdFile.load(base,Path.of(base,"Data/editor/maps/TrapTime.kwd"));
         var data=new DefaultEntityData();
         var service=(GameSessionServerService)Proxy.newProxyInstance(GameSessionServerService.class.getClassLoader(),
                 new Class<?>[]{GameSessionServerService.class},(p,m,a)->m.getName().equals("getEntityData")
                         ?data:m.getReturnType()==boolean.class?false:null);
-        var manager=new GameLoopManager(kwd,service,null);
+        var manager=new GameLoopManager(kwd,service,null,new toniarts.openkeeper.game.random.SimulationRandom(seed));
         var game=manager.getGameController();
         Map<Short,Integer> built=new TreeMap<>();
         game.getGameWorldController().addListener(new PlayerActionListener() {

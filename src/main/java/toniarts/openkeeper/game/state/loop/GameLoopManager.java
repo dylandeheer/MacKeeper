@@ -83,11 +83,16 @@ public final class GameLoopManager {
      * @param players player participating in this game, can be {@code null}
      */
     public GameLoopManager(IKwdFile level, GameSessionServerService gameService, List<Keeper> players) {
+        this(level, gameService, players, new toniarts.openkeeper.game.random.SimulationRandom());
+    }
+
+    public GameLoopManager(IKwdFile level, GameSessionServerService gameService, List<Keeper> players,
+            toniarts.openkeeper.game.random.SimulationRandom random) {
         this.gameService = gameService;
         final EntityData entityData = gameService.getEntityData();
         final Map<Variable.MiscVariable.MiscType, Variable.MiscVariable> gameSettings = level.getVariables();
 
-        gameController = new GameController(level, players, gameService.getEntityData(), gameSettings, gameService);
+        gameController = new GameController(level, players, gameService.getEntityData(), gameSettings, gameService, random);
         final ILevelInfo levelInfo = gameController.getLevelInfo();
         final IGameWorldController gameWorldController = gameController.getGameWorldController();
         final IEntityPositionLookup positionSystem = gameController.getEntityLookupService();

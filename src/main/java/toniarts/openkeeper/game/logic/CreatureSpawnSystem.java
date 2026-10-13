@@ -174,7 +174,7 @@ public final class CreatureSpawnSystem extends GameTimeCounter {
             // Maybe store these under the keeper etc.? For saving purposes
             // The logic classes shouldn't have anything to save
             if (!possibleCreatures.isEmpty()) {
-                short creatureId = Utils.getRandomItem(possibleCreatures).getCreatureId();
+                short creatureId = Utils.getRandomItem(possibleCreatures.stream().sorted(java.util.Comparator.comparingInt(Creature::getCreatureId)).toList(), creaturesController.getRandom()).getCreatureId();
                 Point entranceCoordinate = entrance.getEntranceCoordinate();
                 entityId = creaturesController.spawnCreature(creatureId, player.getKeeper().getId(), 1, new Vector2f(entranceCoordinate.x, entranceCoordinate.y), ICreaturesController.SpawnType.ENTRANCE);
                 spawned = true;

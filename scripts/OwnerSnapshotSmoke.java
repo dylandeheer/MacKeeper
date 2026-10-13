@@ -23,7 +23,7 @@ class OwnerSnapshotSmoke {
             List<toniarts.openkeeper.game.controller.map.FlashTileControl.State> flashes,
             toniarts.openkeeper.game.logic.PlayerCreatureSystem.State creatureIndex,
             toniarts.openkeeper.game.logic.PlayerSpellbookSystem.State spellbookIndex,
-            toniarts.openkeeper.game.logic.ChickenAiSystem.SavedState chickens, List<CreatureControlState> creatureControllers, toniarts.openkeeper.game.logic.CreatureAiSystem.SavedState creatureAi, PartyRegistryState parties, toniarts.openkeeper.game.task.TaskIdentityAllocator.State taskAllocation, List<TileTaskSnapshots.State> tileTasks, RoomTaskSnapshots.Capture roomTasks, EntityTaskSnapshots.Capture entityTasks, TaskGraphSnapshots.State taskGraph, TaskManagerSnapshots.State taskManager, ManaSnapshots.State mana, ExperienceSnapshots.State experience, KeeperEconomySnapshots.State economy, CreatureSpawnSnapshots.State recruitment, ChickenSpawnSnapshots.State chickenSpawning, LifetimeSnapshots.State lifetimes, SlapSnapshots.State slaps, HealthSnapshots.State health, AnimationSnapshots.State animation, LifetimeSnapshots.Clock creatureView, MovementSnapshots.State movement, Map<String,List<TriggerSnapshots.State>> triggerTrees, Map<TriggerRegistrySnapshots.Kind,TriggerRegistrySnapshots.State> triggerRegistries) { }
+            toniarts.openkeeper.game.logic.ChickenAiSystem.SavedState chickens, List<CreatureControlState> creatureControllers, toniarts.openkeeper.game.logic.CreatureAiSystem.SavedState creatureAi, PartyRegistryState parties, toniarts.openkeeper.game.task.TaskIdentityAllocator.State taskAllocation, List<TileTaskSnapshots.State> tileTasks, RoomTaskSnapshots.Capture roomTasks, EntityTaskSnapshots.Capture entityTasks, TaskGraphSnapshots.State taskGraph, TaskManagerSnapshots.State taskManager, ManaSnapshots.State mana, ExperienceSnapshots.State experience, KeeperEconomySnapshots.State economy, CreatureSpawnSnapshots.State recruitment, ChickenSpawnSnapshots.State chickenSpawning, LifetimeSnapshots.State lifetimes, SlapSnapshots.State slaps, HealthSnapshots.State health, AnimationSnapshots.State animation, LifetimeSnapshots.Clock creatureView, MovementSnapshots.State movement, Map<String,List<TriggerSnapshots.State>> triggerTrees, Map<TriggerRegistrySnapshots.Kind,TriggerRegistrySnapshots.State> triggerRegistries, toniarts.openkeeper.game.random.SimulationRandom.State random) { }
 
     public static void main(String[] args) throws Exception {
         String base = Path.of(args[0]).toAbsolutePath().normalize() + "/";
@@ -139,7 +139,7 @@ class OwnerSnapshotSmoke {
                                     new LevelSnapshots.State(LevelState.capture(game.getLevelInfo()), ((GameTimeController) game.getGameTimer()).captureState()), Map.copyOf(statistics),
                                     ((MapController) game.getGameWorldController().getMapController()).captureRoomStates(),
                                     game.getPlayerControllers().values().stream().map(player -> ((PlayerController) player).captureState()).toList(),
-                                    ((MapController) game.getGameWorldController().getMapController()).captureFlashControls(), systems.creatures(), systems.spellbooks(), systems.chickens(), systems.creatureControllers(), systems.creatureAi(), systems.parties(), systems.taskAllocation(), systems.tileTasks(), systems.roomTasks(), systems.entityTasks(), systems.taskGraph(), systems.taskManager(), systems.mana(), systems.experience(), systems.economy(), systems.recruitment(), systems.chickenSpawning(), systems.lifetimes(), systems.slaps(), systems.health(), systems.animation(), systems.creatureView(), systems.movement(), ((GameController) game).captureTriggerTrees(), ((GameController) game).captureTriggerRegistries());
+                                    ((MapController) game.getGameWorldController().getMapController()).captureFlashControls(), systems.creatures(), systems.spellbooks(), systems.chickens(), systems.creatureControllers(), systems.creatureAi(), systems.parties(), systems.taskAllocation(), systems.tileTasks(), systems.roomTasks(), systems.entityTasks(), systems.taskGraph(), systems.taskManager(), systems.mana(), systems.experience(), systems.economy(), systems.recruitment(), systems.chickenSpawning(), systems.lifetimes(), systems.slaps(), systems.health(), systems.animation(), systems.creatureView(), systems.movement(), ((GameController) game).captureTriggerTrees(), ((GameController) game).captureTriggerRegistries(), game.getRandom().captureState());
                         } catch (IOException e) { throw new UncheckedIOException(e); }
                     });
                     var staged = GameEntityData.restore(EntitySnapshots.decode(EntitySnapshots.encode(capture.entities())));
@@ -181,7 +181,9 @@ class OwnerSnapshotSmoke {
                                     if (m.getName().equals("getEntityLookupService")) return null;
                                     throw new AssertionError("Unexpected staged game call: " + m.getName());
                                 });
-                        var objects = ObjectsController.restoreBindings(kwd, staged, kwd.getVariables(), new GameTimeController(capture.clock()), gameRef, level);
+                        var savedRandom = RandomSnapshots.decode(RandomSnapshots.encode(capture.random()));
+                        var random = toniarts.openkeeper.game.random.SimulationRandom.restore(savedRandom);
+                        var objects = ObjectsController.restoreBindings(kwd, staged, kwd.getVariables(), new GameTimeController(capture.clock()), gameRef, level, random);
                         objectRef[0] = objects;
                         byte[] roomBytes = RoomSnapshots.encode(capture.rooms());
                         var map = MapController.restore(kwd, objects, kwd.getVariables(), new GameTimeController(capture.clock()),
@@ -241,7 +243,7 @@ class OwnerSnapshotSmoke {
                         try {require(chickenState.equals(chickenSystem.captureState()), "Chicken FSM or view observations differ");}
                         finally {chickenSystem.stop();}
                         // Build the actual executable task objects first, then close creature/target cycles.
-                        var creatures = CreaturesController.restoreBindings(kwd, staged, kwd.getVariables(), new GameTimeController(capture.clock()), gameRef, map, level);
+                        var creatures = CreaturesController.restoreBindings(kwd, staged, kwd.getVariables(), new GameTimeController(capture.clock()), gameRef, map, level, random);
                         var experienceState = ExperienceSnapshots.decode(ExperienceSnapshots.encode(capture.experience()));
                         var experienceSystem = toniarts.openkeeper.game.logic.CreatureExperienceSystem.restoreState(staged, kwd, creatures, experienceState);
                         try {require(experienceState.equals(experienceSystem.captureState()), "Experience timers/query memberships differ");}
@@ -403,6 +405,11 @@ class OwnerSnapshotSmoke {
                             try (var registries = toniarts.openkeeper.game.trigger.TriggerRegistries.restore(registryStates, gameRef, level,
                                     new GameTimeController(capture.clock()), map, creatures, objects, doors, noDeathCleanup, null, staged)) {
                                 require(registryStates.equals(registries.captureState()), "Concrete trigger owner bindings differ");
+                                require(savedRandom.equals(random.captureState()), "World bindings consumed random draws");
+                                require(objects.getRandom() == random && creatures.getRandom() == random, "Factories do not share restored RNG");
+                                var randomTwin = toniarts.openkeeper.game.random.SimulationRandom.restore(savedRandom);
+                                var randomCopy = toniarts.openkeeper.game.random.SimulationRandom.restore(savedRandom);
+                                for (int draw=0;draw<128;draw++) require(randomTwin.nextLong()==randomCopy.nextLong(), "RNG continuation differs");
                                 registries.start();registries.start();
                                 require(registryStates.equals(registries.captureState()), "Trigger activation changed execution state");
                                 require(beforeTriggerLevel.equals(LevelState.capture(level)), "Trigger binding changed level values");

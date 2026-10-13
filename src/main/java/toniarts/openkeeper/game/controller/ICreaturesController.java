@@ -30,6 +30,8 @@ import toniarts.openkeeper.tools.convert.map.Thing;
  */
 public interface ICreaturesController extends IEntityWrapper<ICreatureController> {
 
+    java.util.random.RandomGenerator getRandom();
+
     public enum SpawnType {
         PLACE,
         ENTRANCE,

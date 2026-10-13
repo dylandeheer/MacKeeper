@@ -44,6 +44,10 @@ public final class MapData implements IMapData {
     private final IMapTileController[][] tiles;
 
     public MapData(IKwdFile kwdFile, EntityData entityData, Collection<Keeper> players) {
+        this(kwdFile, entityData, players, new toniarts.openkeeper.game.random.SimulationRandom());
+    }
+
+    public MapData(IKwdFile kwdFile, EntityData entityData, Collection<Keeper> players, java.util.random.RandomGenerator random) {
         width = kwdFile.getMap().getWidth();
         height = kwdFile.getMap().getHeight();
 
@@ -53,7 +57,7 @@ public final class MapData implements IMapData {
         for (int y = 0; y < height; y++) {
             for (int x = 0; x < width; x++) {
                 Tile tile = kwdFile.getMap().getTile(x, y);
-                tiles[x][y] = createMapTile(entityData, tile, kwdFile, x, y, y * width + x, playersById);
+                tiles[x][y] = createMapTile(entityData, tile, kwdFile, x, y, y * width + x, playersById, random);
             }
         }
     }
@@ -88,7 +92,7 @@ public final class MapData implements IMapData {
     }
 
     private static MapTileController createMapTile(EntityData entityData, Tile tile, IKwdFile kwdFile, int x, int y, int index,
-            Map<Short, Keeper> playersById) {
+            Map<Short, Keeper> playersById, java.util.random.RandomGenerator random) {
         EntityId entityId = entityData.createEntity();
 
         // Create ALL components for the map tile, even things like Gold when it has none, helps to parse the map tile as whole in client
@@ -109,7 +113,7 @@ public final class MapData implements IMapData {
         }
 
         // Set attributes
-        setAttributesFromTerrain(entityData, entityId, mapTileComponent, terrain);
+        setAttributesFromTerrain(entityData, entityId, mapTileComponent, terrain, random);
 
         return new MapTileController(entityId, entityData);
     }

@@ -23,6 +23,11 @@ import toniarts.openkeeper.view.map.MapViewController;
 import static org.junit.jupiter.api.Assertions.*;
 
 class HeroGateCollapseTest {
+    static toniarts.openkeeper.game.controller.IObjectsController randomObjects() {
+        var random=new toniarts.openkeeper.game.random.SimulationRandom(731);
+        return TriggerContinuationTest.proxy(toniarts.openkeeper.game.controller.IObjectsController.class,(n,a)->{if(n.equals("getRandom"))return random;throw new AssertionError(n);});
+    }
+
     @Test void triggerCollapsesWholeGateAndRepeatedRequestsAreHarmless() {
         Fixture f = new Fixture(false);
         var id = f.gate.getEntityId();
@@ -197,7 +202,7 @@ class HeroGateCollapseTest {
                 case "getLevelData" -> kwd;
                 default -> throw new AssertionError(method);
             });
-            map = new MapController(kwd, null, Map.of(), () -> 0, data, level);
+            map = new MapController(kwd, randomObjects(), Map.of(), () -> 0, data, level);
             gate = map.getRoomControllerByCoordinates(new Point(1, 1));
         }
     }

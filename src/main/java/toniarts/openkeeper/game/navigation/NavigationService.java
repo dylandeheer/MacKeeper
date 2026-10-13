@@ -44,6 +44,7 @@ public final class NavigationService implements INavigationService {
     
     private static final Logger logger = System.getLogger(NavigationService.class.getName());
 
+    private final java.util.random.RandomGenerator random;
     private final IMapController mapController;
     private final IEntityPositionLookup entityPositionLookup;
     private final MapIndexedGraph pathFindingMap;
@@ -51,6 +52,11 @@ public final class NavigationService implements INavigationService {
     private final MapDistance heuristic;
 
     public NavigationService(IMapController mapController, IEntityPositionLookup entityPositionLookup) {
+        this(mapController, entityPositionLookup, new toniarts.openkeeper.game.random.SimulationRandom());
+    }
+
+    public NavigationService(IMapController mapController, IEntityPositionLookup entityPositionLookup, java.util.random.RandomGenerator random) {
+        this.random = java.util.Objects.requireNonNull(random);
         this.mapController = mapController;
         this.entityPositionLookup = entityPositionLookup;
 
@@ -86,7 +92,7 @@ public final class NavigationService implements INavigationService {
 
         // Take a random point
         if (!tiles.isEmpty()) {
-            return Utils.getRandomItem(new ArrayList<>(tiles));
+            return Utils.getRandomItem(tiles.stream().sorted(java.util.Comparator.comparingInt((Point p) -> p.y).thenComparingInt(p -> p.x)).toList(), random);
         }
         return null;
     }

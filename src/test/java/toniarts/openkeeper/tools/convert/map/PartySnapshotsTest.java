@@ -22,7 +22,7 @@ class PartySnapshotsTest {
         var original=new PartyController(def,new AtomicLong(4)::getAndIncrement);original.create();original.setType(PartyType.INVASION_PARTY);
         original.addMemberInstance(def.getHeroPartyMembers().get(0),dead.controller);original.addMemberInstance(def.getHeroPartyMembers().get(1),live.controller);
         var state=original.captureState();var deadCopy=new Member(0,true);deadCopy.objective=dead.objective;deadCopy.target=dead.target;var liveCopy=new Member(1,false);
-        var restored=PartyController.restoreState(state,def,()->{throw new AssertionError("Allocated while restoring");},id->id.getId()==0?deadCopy.controller:liveCopy.controller);
+        var restored=PartyController.restoreState(state,def,()->{throw new AssertionError("Allocated while restoring");},id->id.getId()==0?deadCopy.controller:liveCopy.controller, new toniarts.openkeeper.game.random.SimulationRandom(731));
         assertEquals(state,restored.captureState());assertEquals(0,dead.queries+deadCopy.queries+live.queries+liveCopy.queries);
         assertEquals(0,liveCopy.writes);assertSame(deadCopy.controller,restored.getActualMembers().iterator().next());
         // Only an ordinary leader query should select the sole surviving candidate and transfer duties.
@@ -34,7 +34,7 @@ class PartySnapshotsTest {
     @Test void nullableMembersAndAuthoredMemberOrderRoundTripWithoutEnterActions() {
         var def=definition((short)8,3);var creature=new Member(4,false);
         var state=new PartyState(0,(short)8,false,null,null,List.of(new PartyState.Member(2,null),new PartyState.Member(0,new EntityId(4))));
-        var restored=PartyController.restoreState(state,def,()->12,id->creature.controller);
+        var restored=PartyController.restoreState(state,def,()->12,id->creature.controller, new toniarts.openkeeper.game.random.SimulationRandom(731));
         assertEquals(state,restored.captureState());assertEquals(List.of(def.getHeroPartyMembers().get(2),def.getHeroPartyMembers().get(0)),new ArrayList<>(restored.getMembers()));
         assertNull(restored.getActualMembers().iterator().next());restored.setType(PartyType.RANDOM_CREATURE_TYPES);restored.create();
         assertEquals(12,restored.getId());assertTrue(restored.isCreated());assertThrows(IllegalStateException.class,restored::create);
@@ -88,8 +88,8 @@ class PartySnapshotsTest {
             assertEquals(good,((PartyController)f.factory.getParty((short)3)).captureState());
         }
         var member=new Member(0,false);
-        assertThrows(IllegalArgumentException.class,()->PartyController.restoreState(new PartyState(0,(short)3,false,null,null,List.of(new PartyState.Member(1,null))),def,()->1,id->member.controller));
-        assertThrows(IllegalArgumentException.class,()->PartyController.restoreState(new PartyState(0,(short)3,false,null,new EntityId(1),List.of()),def,()->1,id->member.controller));
+        assertThrows(IllegalArgumentException.class,()->PartyController.restoreState(new PartyState(0,(short)3,false,null,null,List.of(new PartyState.Member(1,null))),def,()->1,id->member.controller, new toniarts.openkeeper.game.random.SimulationRandom(731)));
+        assertThrows(IllegalArgumentException.class,()->PartyController.restoreState(new PartyState(0,(short)3,false,null,new EntityId(1),List.of()),def,()->1,id->member.controller, new toniarts.openkeeper.game.random.SimulationRandom(731)));
     }
 
     @Test void codecAndRegistryRejectTruncatedCorruptAliasedAndUnallocatedReferences() throws Exception {
@@ -123,7 +123,7 @@ class PartySnapshotsTest {
         Factory(List<Thing.HeroParty> definitions){var creature=new Creature();creature.setCreatureId((short)2);var kwd=proxy(IKwdFile.class,(m,a)->switch(m){case "getThings"->{assertSame(Thing.HeroParty.class,a[0]);yield definitions;}case "getCreature"->creature;default->throw new AssertionError(m);});
             var map=proxy(IMapController.class,(m,a)->{if(m.equals("getRoomControllerByCoordinates"))return null;throw new AssertionError(m);});
             var world=proxy(IGameWorldController.class,(m,a)->null);var game=proxy(IGameController.class,(m,a)->m.equals("getGameWorldController")?world:null);
-            factory=CreaturesController.restoreBindings(kwd,data,Map.of(),()->0,game,map,null);
+            factory=CreaturesController.restoreBindings(kwd,data,Map.of(),()->0,game,map,null, new toniarts.openkeeper.game.random.SimulationRandom(731));
         }
         EntityId creature(){var id=data.createEntity();states.add(new CreatureControlState(id,(short)2,CreatureState.DEAD,null,null,0,0,null,null,null,0,List.of()));return id;}
         void bindCreatures(){pin=factory.restoreCreatureControllers(states,new TaskNodeReferences.Bindings(Map.of()));}

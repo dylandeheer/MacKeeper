@@ -90,7 +90,7 @@ public final class MapController extends Container implements IMapController {
             IGameTimer gameTimer, EntityData entityData, ILevelInfo levelInfo) {
 
         this(kwdFile, objectsController, gameSettings, gameTimer, entityData, levelInfo,
-                new MapData(kwdFile, entityData, levelInfo.getPlayers().values()));
+                new MapData(kwdFile, entityData, levelInfo.getPlayers().values(), objectsController.getRandom()));
         loadRooms();
     }
 
@@ -804,7 +804,7 @@ public final class MapController extends Container implements IMapController {
     private void changeTerrain(IMapTileController tile, short terrainId) {
         tile.setTerrainId(terrainId);
         Terrain terrain = getTerrain(tile);
-        MapTileController.setAttributesFromTerrain(entityData, tile, terrain);
+        MapTileController.setAttributesFromTerrain(entityData, tile, terrain, objectsController.getRandom());
 
         // If the terrain is not taggable anymore, reset the tagging data
         if (!terrain.getFlags().contains(Terrain.TerrainFlag.TAGGABLE)) {

@@ -438,12 +438,12 @@ public final class CreatureController extends EntityController implements ICreat
         continuation.complete(this, false);
     }
 
-    private static Creature.JobPreference chooseOnWeight(List<Creature.JobPreference> items) {
+    private Creature.JobPreference chooseOnWeight(List<Creature.JobPreference> items) {
         double completeWeight = 0.0;
         for (Creature.JobPreference item : items) {
             completeWeight += item.getChance();
         }
-        double r = FastMath.rand.nextDouble() * completeWeight;
+        double r = creaturesController.getRandom().nextDouble() * completeWeight;
         double countWeight = 0.0;
         for (Creature.JobPreference item : items) {
             countWeight += item.getChance();

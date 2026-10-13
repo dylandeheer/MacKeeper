@@ -34,7 +34,7 @@ class ObjectBindingRestoreTest {
             var level = proxy(ILevelInfo.class, (method,args) -> {throw new AssertionError(method);});
             var clock = new GameTimeController(new GameTimeController.State(30,123.5));
             byte[] before = EntitySnapshots.encode(data.capture());
-            var controller = ObjectsController.restoreBindings(definition,data,Map.of(),clock,game,level);
+            var controller = ObjectsController.restoreBindings(definition,data,Map.of(),clock,game,level, new toniarts.openkeeper.game.random.SimulationRandom(731));
             assertArrayEquals(before,EntitySnapshots.encode(data.capture()));
             var bound = controller.createController(existing);
             assertEquals(existing,bound.getEntityId());assertEquals((short) 3,bound.getOwnerId());assertEquals(ObjectType.GOLD,bound.getType());

@@ -12,6 +12,11 @@ import static org.junit.jupiter.api.Assertions.*;
 import static toniarts.openkeeper.tools.convert.map.ObjectiveDisplayTest.proxy;
 
 class DungeonBreachTest {
+    static toniarts.openkeeper.game.controller.IObjectsController randomObjects() {
+        var random=new toniarts.openkeeper.game.random.SimulationRandom(731);
+        return TriggerContinuationTest.proxy(toniarts.openkeeper.game.controller.IObjectsController.class,(n,a)->{if(n.equals("getRandom"))return random;throw new AssertionError(n);});
+    }
+
     @Test void onlyDestructionOfAnotherPlayersOwnedWallEmitsBothEvents() {
         try (Fixture f=new Fixture()) {
             int[] emitted={0};
@@ -155,7 +160,7 @@ class DungeonBreachTest {
             for(var type:List.of(Variable.MiscVariable.MiscType.DIG_ENEMY_WALL_HEALTH,Variable.MiscVariable.MiscType.DIG_OWN_WALL_HEALTH,Variable.MiscVariable.MiscType.DIG_ROCK_HEALTH,Variable.MiscVariable.MiscType.ATTACK_TILE_HEALTH)) {
                 var v=new Variable.MiscVariable();v.setVariableId(type);v.setValue(50);settings.put(type,v);
             }
-            map=new MapController(kwd,null,settings,()->0,data,info);
+            map=new MapController(kwd,randomObjects(),settings,()->0,data,info);
             logic=new PlayerTriggerLogicController(null,info,()->0,map,null,null);
         }
         void wall(short owner){map.alterTerrain(new Point(1,1),(short)1,owner);}

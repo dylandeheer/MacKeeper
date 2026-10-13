@@ -148,7 +148,7 @@ class ChickenSnapshotsTest {
             map=proxy(IMapController.class,(m,a)->{throw new AssertionError(m);});
             var world=proxy(IGameWorldController.class,(m,a)->{if(m.equals("getMapController"))return map;throw new AssertionError(m);});
             var game=proxy(IGameController.class,(m,a)->switch(m){case "getNavigationService"->navigation;case "getGameWorldController"->world;default->throw new AssertionError(m);});
-            objects=ObjectsController.restoreBindings(definition,data,Map.of(),clock,game,null);
+            objects=ObjectsController.restoreBindings(definition,data,Map.of(),clock,game,null, new toniarts.openkeeper.game.random.SimulationRandom(731));
         }
         Fixture copy(ChickenAiSystem source)throws Exception{
             var copy=new Fixture(GameEntityData.restore(EntitySnapshots.decode(EntitySnapshots.encode(data.capture()))),new GameTimeController(clock.captureState()));

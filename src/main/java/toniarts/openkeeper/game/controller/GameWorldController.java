@@ -150,13 +150,13 @@ public final class GameWorldController implements IGameWorldController, IPlayerA
         this.gameController = gameController;
 
         // Load objects
-        objectsController = new ObjectsController(kwdFile, entityData, gameSettings, gameTimer, gameController, levelInfo);
+        objectsController = new ObjectsController(kwdFile, entityData, gameSettings, gameTimer, gameController, levelInfo, gameController.getRandom());
 
         // Load the map
         mapController = new MapController(kwdFile, objectsController, gameSettings, gameTimer, entityData, levelInfo);
 
         // Load creatures
-        creaturesController = new CreaturesController(kwdFile, entityData, gameSettings, gameTimer, gameController, mapController, levelInfo);
+        creaturesController = new CreaturesController(kwdFile, entityData, gameSettings, gameTimer, gameController, mapController, levelInfo, gameController.getRandom());
 
         // Load the doors
         doorsController = new DoorsController(kwdFile, entityData, gameSettings, mapController, gameController, levelInfo);

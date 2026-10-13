@@ -31,6 +31,8 @@ import toniarts.openkeeper.game.data.ResearchableType;
  */
 public interface IObjectsController extends IEntityWrapper<IObjectController> {
 
+    java.util.random.RandomGenerator getRandom();
+
     public EntityId loadObject(short objectId, short ownerId, int x, int y);
 
     public EntityId loadObject(short objectId, short ownerId, int x, int y, float rotation);

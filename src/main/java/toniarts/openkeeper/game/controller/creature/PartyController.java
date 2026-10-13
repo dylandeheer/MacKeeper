@@ -46,6 +46,7 @@ import toniarts.openkeeper.utils.Utils;
 public final class PartyController implements IPartyController {
 
     private final LongSupplier idAllocator;
+    private final java.util.random.RandomGenerator random;
     private final List<Thing.GoodCreature> authoredMembers;
 
     private long id;
@@ -58,6 +59,11 @@ public final class PartyController implements IPartyController {
     private boolean created = false;
 
     public PartyController(Thing.HeroParty heroParty, LongSupplier idAllocator) {
+        this(heroParty, idAllocator, new toniarts.openkeeper.game.random.SimulationRandom());
+    }
+
+    public PartyController(Thing.HeroParty heroParty, LongSupplier idAllocator, java.util.random.RandomGenerator random) {
+        this.random = java.util.Objects.requireNonNull(random);
         this.idAllocator = java.util.Objects.requireNonNull(idAllocator);
         authoredMembers = List.copyOf(heroParty.getHeroPartyMembers());
         partyId = heroParty.getId();
@@ -80,11 +86,12 @@ public final class PartyController implements IPartyController {
         return new PartyState(id, partyId, created, type, leader == null ? null : leader.getEntityId(), values);
     }
 
+
     public static PartyController restoreState(PartyState saved, Thing.HeroParty definition,
-            LongSupplier allocator, Function<EntityId, ICreatureController> creatures) {
+            LongSupplier allocator, Function<EntityId, ICreatureController> creatures, java.util.random.RandomGenerator random) {
         if (definition == null || definition.getId() != saved.definitionId())
             throw new IllegalArgumentException("Missing party definition");
-        var result = new PartyController(definition, allocator);
+        var result = new PartyController(definition, allocator, random);
         result.members.clear();
         for (var member : saved.members()) {
             if (member.definitionIndex() >= result.authoredMembers.size()) throw new IllegalArgumentException("Missing authored party member");
@@ -207,7 +214,7 @@ public final class PartyController implements IPartyController {
             // See if any left
             if (!leaderCandidates.isEmpty()) {
                 ICreatureController oldLeader = leader;
-                leader = Utils.getRandomItem(leaderCandidates);
+                leader = Utils.getRandomItem(leaderCandidates, random);
 
                 // Swap duties
                 // TODO: this works only when the old leader hasn't already died, so need to signal this somehow (PartySystem?)

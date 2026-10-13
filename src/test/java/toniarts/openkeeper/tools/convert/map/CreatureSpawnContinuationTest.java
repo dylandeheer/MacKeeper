@@ -135,7 +135,7 @@ class CreatureSpawnContinuationTest {
         assertArrayEquals(EntitySnapshots.encode(a.data.capture()),EntitySnapshots.encode(b.data.capture()));
     }
     static final class World implements AutoCloseable {
-        final GameEntityData data=new GameEntityData();final Creature imp=new Creature(),recruit=new Creature();
+        toniarts.openkeeper.game.random.SimulationRandom random=new toniarts.openkeeper.game.random.SimulationRandom(731);final GameEntityData data=new GameEntityData();final Creature imp=new Creature(),recruit=new Creature();
         final Room portal=new Room();final Map<EntityId,ThreeByThreeController> rooms=new LinkedHashMap<>();
         final Map<EntityId,IRoomController> live=new HashMap<>();final Map<Short,List<RoomListener>> listeners=new TreeMap<>();
         final Map<Short,PlayerRoomControl> roomControls=new TreeMap<>();final Map<Short,PlayerCreatureControl> creatureControls=new TreeMap<>();
@@ -163,7 +163,7 @@ class CreatureSpawnContinuationTest {
                 case "removeListener"->{listeners.get((short)args[0]).remove(args[1]);yield null;}
                 default->throw new AssertionError(name);
             });
-            creatures=proxy(ICreaturesController.class,(name,args)->switch(name){
+            creatures=proxy(ICreaturesController.class,(name,args)->switch(name){case "getRandom"->random;
                 case "spawnCreature"->{var id=data.createEntity();short type=(short)args[0],owner=(short)args[1];var p=(Vector2f)args[3];
                     spawned.add(new Spawn(id,type,owner,(int)p.x,(ICreaturesController.SpawnType)args[4]));
                     data.setComponent(id,new Owner(owner,owner));yield id;}

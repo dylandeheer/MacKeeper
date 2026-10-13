@@ -12,15 +12,13 @@ import toniarts.openkeeper.tools.convert.map.KwdFile;
 class NavigationBenchmark {
     public static void main(String[] args) throws Exception {
         if (args.length != 1) throw new IllegalArgumentException("Usage: NavigationBenchmark.java <owned-data-directory>");
-        ((Random)toniarts.openkeeper.utils.Utils.getRandom()).setSeed(0);
-        com.jme3.math.FastMath.rand.setSeed(0);
         String base=Path.of(args[0]).toAbsolutePath()+"/";
         var kwd=KwdFile.load(base,Path.of(base,"Data/editor/maps/Level10.kwd"));
         var data=new DefaultEntityData();
         var service=(GameSessionServerService)Proxy.newProxyInstance(GameSessionServerService.class.getClassLoader(),
                 new Class<?>[]{GameSessionServerService.class},(p,m,a)->m.getName().equals("getEntityData")
                         ?data:m.getReturnType()==boolean.class?false:null);
-        var manager=new GameLoopManager(kwd,service,null);
+        var manager=new GameLoopManager(kwd,service,null,new toniarts.openkeeper.game.random.SimulationRandom(0));
         Field loopsField=GameLoopManager.class.getDeclaredField("loops");loopsField.setAccessible(true);
         Field managerField=toniarts.openkeeper.utils.GameLoop.class.getDeclaredField("gameLoopManager");managerField.setAccessible(true);
         Field systemsField=GameLogicManager.class.getDeclaredField("updatables");systemsField.setAccessible(true);

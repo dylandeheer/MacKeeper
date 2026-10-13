@@ -175,6 +175,7 @@ class TaskManagerContinuationTest {
     static void same(World a,World b)throws Exception{assertEquals(a.capture().manager(),b.capture().manager());assertEquals(a.capture().graph(),b.capture().graph());assertArrayEquals(EntitySnapshots.encode(a.data.capture()),EntitySnapshots.encode(b.data.capture()));}
     @SuppressWarnings("unchecked") static <T>T proxy(Class<T> type,InvocationHandler handler){return (T)Proxy.newProxyInstance(type.getClassLoader(),new Class<?>[]{type},handler);}
     static final class World implements AutoCloseable {
+        final toniarts.openkeeper.game.random.SimulationRandom random=new toniarts.openkeeper.game.random.SimulationRandom(731);
         GameEntityData data;TaskManager manager;TaskIdentityAllocator allocator;
         final Map<EntityId,ICreatureController> creatures=new HashMap<>();final List<String> events=new ArrayList<>();final Set<Object> listeners=Collections.newSetFromMap(new IdentityHashMap<>());
         final EntityId roomId=new EntityId(3);final Point point=new Point(4,4);final Keeper keeper=new Keeper(false,(short)3);
@@ -201,7 +202,7 @@ class TaskManagerContinuationTest {
                 case "getRoomsByFunction"->List.of(room);case "getMapData"->mapData;case "getRoomController"->room;
                 case "addListener"->{listeners.add(a[a.length-1]);yield null;}case "removeListener"->{listeners.remove(a[a.length-1]);yield null;}default->throw new AssertionError(m.getName());});
             world=proxy(IGameWorldController.class,(p,m,a)->switch(m.getName()){case "addListener"->{listeners.add(a[0]);if(failListener)throw new IllegalArgumentException("listener registration failed");yield null;}case "removeListener"->{listeners.remove(a[0]);yield null;}default->throw new AssertionError(m.getName());});
-            objects=proxy(IObjectsController.class,(p,m,a)->{if(m.getName().equals("createController"))return new ObjectController((EntityId)a[0],data,type,null,map);throw new AssertionError(m.getName());});
+            objects=proxy(IObjectsController.class,(p,m,a)->{if(m.getName().equals("getRandom"))return random;if(m.getName().equals("createController"))return new ObjectController((EntityId)a[0],data,type,null,map);throw new AssertionError(m.getName());});
             creatureFactory=proxy(ICreaturesController.class,(p,m,a)->{if(m.getName().equals("createController"))return creature((EntityId)a[0]);throw new AssertionError(m.getName());});
             navigation=proxy(INavigationService.class,(p,m,a)->switch(m.getName()){case "findPath"->new DefaultGraphPath<IMapTileInformation>();case "isAccessible"->true;default->throw new AssertionError(m.getName());});
             player=proxy(IPlayerController.class,(p,m,a)->{if(m.getName().equals("getKeeper"))return keeper;throw new AssertionError(m.getName());});

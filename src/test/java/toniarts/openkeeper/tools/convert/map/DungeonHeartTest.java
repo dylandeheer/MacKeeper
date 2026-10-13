@@ -222,6 +222,7 @@ class DungeonHeartTest {
         players.get(LOSER).getRoomControl().onBuild(portal);
         players.get(LOSER).getCreatureControl().setTypeAvailable(recruit,true);
         var creatures=proxy(ICreaturesController.class,(method,args)-> {
+            if(method.equals("getRandom")) return world.getCreaturesController().getRandom();
             if(method.equals("spawnCreature")) { count[0]++; return data.createEntity(); }
             throw new AssertionError(method);
         });
@@ -447,7 +448,9 @@ class DungeonHeartTest {
                 default -> throw new AssertionError(method);
             }));
         }
+        var random=new toniarts.openkeeper.game.random.SimulationRandom(731);
         var game=proxy(IGameController.class,(method,args)-> {
+            if (method.equals("getRandom")) return random;
             if (method.equals("getGameWorldController")) return world;
             if (method.equals("endGame")) { assertEquals(false,args[1]); defeated.add((short)args[0]); return null; }
             throw new AssertionError(method);

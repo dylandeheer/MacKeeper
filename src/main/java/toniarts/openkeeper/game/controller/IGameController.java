@@ -32,6 +32,8 @@ import toniarts.openkeeper.tools.convert.map.Variable;
  */
 public interface IGameController {
 
+    toniarts.openkeeper.game.random.SimulationRandom getRandom();
+
     /**
      * Breaks alliance between two players
      *

@@ -175,7 +175,7 @@ public final class ChickenSpawnSystem extends GameTimeCounter {
             } else if (freeRangeChickensByPlayer.get(entrance.getOwnerId()).size() < maximumFreerangeChickenCount && freerangeChickenGeneratorsByRoom.get(entrance) != null) {
                 Set<EntityId> generators = freerangeChickenGeneratorsByRoom.get(entrance);
                 if (generators.isEmpty()) return;
-                Optional<EntityId> generator = Utils.getRandomItem(generators);
+                Optional<EntityId> generator = Utils.getRandomItem((java.util.Collection<EntityId>) generators.stream().sorted().toList(), objectsController.getRandom());
 
                 if (generator.isPresent()) {
                     // Spawn a free range chicken

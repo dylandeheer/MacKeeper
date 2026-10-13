@@ -28,7 +28,9 @@ Run `scripts/verify-keeper-profiles.sh` with JDK 25 and a locally owned game-dat
 
 Run `scripts/verify-keeper-economy.sh` for twelve simulated minutes on the shipped TrapTime map with random seeds 0 and 1. It invokes the exact production logic, animation-state and steering systems sequentially without background threads, failing on system exceptions. Both opponents must mine income and construct rooms, while human player 3 must receive no construction commands. In the verified runs, AI player 4 constructed seven 12-tile rooms in each seed; AI player 5 constructed three 25-tile rooms with seed 0 and one with seed 1. All use ordinary mining, excavation, claiming and paid construction. These longer runs also exposed and now cover a null-creature payday task cleanup failure.
 
-Each run took approximately nine seconds on the local M1 Max; this is a headless execution observation, not a gameplay performance benchmark. Seeds control the primary random generators but do not establish whole-engine determinism. The smoke does not prove victory, full strategy, rendering, live network behavior or concurrent execution correctness. Wider map and profile coverage remains required.
+Each run took approximately nine seconds on the local M1 Max; this is a headless execution observation, not a gameplay performance benchmark. Those historical seeds controlled the former global random generators; they did not establish whole-engine determinism. The smoke does not prove victory, full strategy, rendering, live network behavior or concurrent execution correctness. Wider map and profile coverage remains required.
+
+The world-owned SplitMix64 checkpoint reran both twelve-minute seeds successfully: keepers 4/5 constructed 96/100 tiles with seed 0 and 84/50 with seed 1. Ordinary mining, excavation, claiming and paid construction still passed, and the human keeper received no construction commands. These sequences differ from the historical generators, so matching old tile totals is not expected.
 
 ## Remaining strategy and fidelity work
 

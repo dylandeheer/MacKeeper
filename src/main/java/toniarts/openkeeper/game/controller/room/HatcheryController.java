@@ -69,7 +69,7 @@ public final class HatcheryController extends NormalRoomController implements IC
     @Override
     public Point getEntranceCoordinate() {
         // TODO: Should be maybe random available point, where there are no coops
-        return Utils.getRandomItem(roomInstance.getCoordinates());
+        return Utils.getRandomItem(roomInstance.getCoordinates(), objectsController.getRandom());
     }
 
     @Override

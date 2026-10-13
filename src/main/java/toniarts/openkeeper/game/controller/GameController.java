@@ -63,6 +63,9 @@ public final class GameController implements IGameLogicUpdatable, IGameControlle
     private static final Logger logger = System.getLogger(GameController.class.getName());
 
     private final LevelInfo levelInfo;
+    private final toniarts.openkeeper.game.random.SimulationRandom random;
+
+    public toniarts.openkeeper.game.random.SimulationRandom getRandom() { return random; }
 
     private final Map<Short, IPlayerController> playerControllers = HashMap.newHashMap(6);
     private final Map<Variable.MiscVariable.MiscType, Variable.MiscVariable> gameSettings;
@@ -94,7 +97,13 @@ public final class GameController implements IGameLogicUpdatable, IGameControlle
     public GameController(IKwdFile level, List<Keeper> players, EntityData entityData,
             Map<Variable.MiscVariable.MiscType, Variable.MiscVariable> gameSettings,
             PlayerService playerService) {
+        this(level, players, entityData, gameSettings, playerService, new toniarts.openkeeper.game.random.SimulationRandom());
+    }
 
+    public GameController(IKwdFile level, List<Keeper> players, EntityData entityData,
+            Map<Variable.MiscVariable.MiscType, Variable.MiscVariable> gameSettings, PlayerService playerService,
+            toniarts.openkeeper.game.random.SimulationRandom random) {
+        this.random = java.util.Objects.requireNonNull(random);
         levelInfo = new LevelInfo(level);
         this.entityData = entityData;
         this.gameSettings = gameSettings;
@@ -122,7 +131,7 @@ public final class GameController implements IGameLogicUpdatable, IGameControlle
         gameWorldController.setEntityPositionLookup(positionSystem);
 
         // Navigation
-        navigationService = new NavigationService(gameWorldController.getMapController(), positionSystem);
+        navigationService = new NavigationService(gameWorldController.getMapController(), positionSystem, random);
 
         // Initialize tasks
         taskManager = new TaskManager(entityData, gameWorldController, gameWorldController.getMapController(),

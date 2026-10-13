@@ -811,7 +811,7 @@ public final class TaskManager implements ITaskManager, IGameLogicUpdatable {
 
             // Assign
             if (!coordinates.isEmpty()) {
-                Point target = Utils.getRandomItem(coordinates);
+                Point target = Utils.getRandomItem(coordinates, objectsController.getRandom());
                 GraphPath<IMapTileInformation> path = navigationService.findPath(creature.getCreatureCoordinates(), target, creature);
                 if (path != null || target == creature.getCreatureCoordinates()) {
 
