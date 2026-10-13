@@ -203,26 +203,14 @@ public final class CreatureTriggerControl extends AbstractThingTriggerControl<IC
 
             case MAKE_OBJECTIVE: // Game part
                 short targetId = trigger.getUserData("targetId", short.class);
-                if (targetId == 0) {
-                    super.makeObjectiveOff();
-                }
-                if (instanceControl != null) {
-
-                    //0 = Off, 1 = Kill, 2 = Imprison, 3 = Convert;
-                    switch (targetId) {
-                        case 0:
-                            instanceControl.setPlayerObjective(null);
-                            break;
-                        case 1:
-                            instanceControl.setPlayerObjective(ObjectiveType.KILL);
-                            break;
-                        case 2:
-                            instanceControl.setPlayerObjective(ObjectiveType.IMPRISON);
-                            break;
-                        case 3:
-                            instanceControl.setPlayerObjective(ObjectiveType.CONVERT);
-                            break;
-                    }
+                if (instanceControl != null && targetId >= 0 && targetId <= 3) {
+                    ObjectiveType objective = switch (targetId) {
+                        case 1 -> ObjectiveType.KILL;
+                        case 2 -> ObjectiveType.IMPRISON;
+                        case 3 -> ObjectiveType.CONVERT;
+                        default -> null;
+                    };
+                    gameController.markCreatureObjective(instanceControl.getEntityId(), objective);
                 }
                 break;
 

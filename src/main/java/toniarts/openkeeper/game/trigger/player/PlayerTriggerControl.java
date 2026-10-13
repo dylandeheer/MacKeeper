@@ -400,12 +400,9 @@ public class PlayerTriggerControl extends TriggerControl {
     }
 
     private void makeObjective(TriggerActionData trigger) { // Game part
-        short targetId = trigger.getUserData("targetId", short.class);
-        if (targetId == 0) { // 0 = Off
-            makeObjectiveOff();
-        } else {
-            logger.log(Level.WARNING, "Unsupported MAKE_OBJECTIVE target {0}", targetId);
-        }
+        // The player handler ignores the creature-only Off/Kill/Imprison/Convert byte.
+        // It adds this keeper as a defeat target in the shared campaign list.
+        gameController.markPlayerObjective(playerId);
     }
 
     private void flashActionPoint(TriggerActionData trigger) { // AP part
@@ -522,10 +519,6 @@ public class PlayerTriggerControl extends TriggerControl {
         } else {
             return getPlayerController(playerId).getRoomControl().getTypeCount(levelInfo.getLevelData().getRoomById(roomId));
         }
-    }
-
-    protected void makeObjectiveOff() {
-        //TODO this
     }
 
     private void zoomToAP(short actionPointId) {

@@ -120,6 +120,7 @@ public final class PlayerScreenController implements IPlayerScreenController {
     private Integer displayedObjectiveId;
     private final Deque<Integer> pendingObjectives = new ArrayDeque<>();
     private EntityData entityData;
+    private toniarts.openkeeper.view.ObjectiveTargetsView objectiveTargets;
     private CreatureCardManager creatureCardManager;
     private PossessionInteractionState.Action possessionAction = PossessionInteractionState.Action.MELEE;
 
@@ -138,15 +139,19 @@ public final class PlayerScreenController implements IPlayerScreenController {
         lastUpdate += tpf;
 
         if (lastUpdate >= SCREEN_UPDATE_INTERVAL) {
+            if (objectiveTargets != null) objectiveTargets.update();
             if (creatureCardManager != null) {
                 creatureCardManager.update(tpf);
             }
+            var hud = nifty == null ? null : nifty.getScreen(SCREEN_HUD_ID);
+            if (hud != null && entityData != null && hud.findElementById("objective").isVisible()) refreshObjectiveTargets();
             lastUpdate = 0;
         }
     }
 
     @Override
     public void cleanup() {
+        if (objectiveTargets != null) {objectiveTargets.close(); objectiveTargets = null;}
         if (creatureCardManager != null) {
             creatureCardManager.cleanup();
             creatureCardManager = null;
@@ -213,10 +218,13 @@ public final class PlayerScreenController implements IPlayerScreenController {
         Element element = nifty.getScreen(SCREEN_HUD_ID).findElementById("objective");
         if (element.isVisible()) {
             element.hide();
+            if (state != null && state.isPaused()) nifty.getScreen(SCREEN_HUD_ID).findElementById("optionsMenu").show();
         } else {
             showObjectivePanel();
         }
     }
+
+    public void showObjectivesFromPauseMenu() {showObjectivePanel();}
 
     /** Called on the render thread; the latest instruction remains available on reopening. */
     public void showObjective(int objectiveId) {
@@ -256,6 +264,8 @@ public final class PlayerScreenController implements IPlayerScreenController {
     private void showObjectivePanel() {
         if (objectiveLevel == null) return;
         Element element = nifty.getScreen(SCREEN_HUD_ID).findElementById("objective");
+        Element options = nifty.getScreen(SCREEN_HUD_ID).findElementById("optionsMenu");
+        if (options != null) options.hide();
         element.findNiftyControl("mainObjective", Label.class).setText(objectiveLevel.getMainObjective());
         element.findNiftyControl("subObjective1", Label.class).setText(objectiveLevel.getSubObjective1());
         element.findNiftyControl("subObjective2", Label.class).setText(objectiveLevel.getSubObjective2());
@@ -264,8 +274,66 @@ public final class PlayerScreenController implements IPlayerScreenController {
         String text = getObjectiveText(displayedObjectiveId);
         instruction.setVisible(text != null);
         element.findNiftyControl("scriptedObjective", Label.class).setText(text == null ? "" : text);
+        refreshObjectiveTargets();
         element.layoutElements();
         element.show();
+    }
+
+    private void refreshObjectiveTargets() {
+        if (entityData == null) return;
+        var panel = nifty.getScreen(SCREEN_HUD_ID).findElementById("objectiveTargets");
+        if (panel == null) return;
+        var targets = objectiveTargets == null ? java.util.List.<toniarts.openkeeper.view.ObjectiveTargetsView.Observation>of() : objectiveTargets.observations();
+        for (int slot = 0; slot < 6; slot++) panel.findNiftyControl("objectiveTarget" + slot, Label.class).setText("");
+        for (var observation : targets) {
+            var target = observation.target();
+            if (target.slot() < 0 || target.slot() >= 6) continue;
+            String text;
+            if (target.creatureId() == null) {
+                var player = state.getKwdFile().getPlayer(target.playerId());
+                text = "Defeat " + (player == null ? "Keeper " + target.playerId() : player.getName());
+            } else {
+                if (observation.creatureType() == null) continue;
+                var definition = state.getKwdFile().getCreature(observation.creatureType());
+                String creatureName = Utils.getMainTextResourceBundle().getString(Integer.toString(definition.getNameStringId()));
+                text = switch (target.objective()) {
+                    case KILL -> "Kill ";
+                    case IMPRISON -> "Imprison ";
+                    case CONVERT -> "Convert ";
+                } + creatureName;
+            }
+            text += objectivePosition(observation) == null ? " (location unknown)" : " - click to locate";
+            panel.findNiftyControl("objectiveTarget" + target.slot(), Label.class).setText(text);
+        }
+        panel.setVisible(!targets.isEmpty());
+    }
+
+    private com.jme3.math.Vector3f objectivePosition(toniarts.openkeeper.view.ObjectiveTargetsView.Observation observation) {
+        var target = observation.target();
+        var client = state.app.getStateManager().getState(GameClientState.class);
+        if (client == null || client.getFogOfWarInformation() == null) return null;
+        com.jme3.math.Vector3f position;
+        if (target.creatureId() != null) {
+            position = observation.position();
+            if (position == null) return null;
+        } else {
+            var keeper = client.getPlayer(target.playerId());
+            if (keeper == null || keeper.getDungeonHeartLocation() == null) return null;
+            position = toniarts.openkeeper.utils.WorldUtils.pointToVector3f(keeper.getDungeonHeartLocation());
+        }
+        return client.getFogOfWarInformation().isVisible(toniarts.openkeeper.utils.WorldUtils.vectorToPoint(position)) ? position : null;
+    }
+
+    public void zoomToObjective(String slot) {
+        var client = state.app.getStateManager().getState(GameClientState.class);
+        if (client == null || !client.isAcceptingInput() || objectiveTargets == null) return;
+        int selected;
+        try {selected = Integer.parseInt(slot);} catch (NumberFormatException invalid) {return;}
+        for (var observation : objectiveTargets.observations()) if (observation.target().slot() == selected) {
+            var position = objectivePosition(observation);
+            if (position != null) state.zoomToPosition(position, false);
+            return;
+        }
     }
 
     public void saveGame() {SavedGamesState.open(state.app, true);}
@@ -291,6 +359,7 @@ public final class PlayerScreenController implements IPlayerScreenController {
 
         nifty.getScreen(SCREEN_HUD_ID).findElementById("optionsMenu").setVisible(paused);
         if (paused) {
+            nifty.getScreen(SCREEN_HUD_ID).findElementById("objective").hide();
             this.playButtonSound("GUI_BUTTON_OPTIONS");
             pauseMenuNavigate(PauseMenuState.MAIN.name(), null, null, null);
         }
@@ -328,7 +397,7 @@ public final class PlayerScreenController implements IPlayerScreenController {
             case MAIN:
                 optionsMenuTitle.setText("${menu.94}");
 
-                     items.add(new GameMenu("i-objective", "${menu.537}", "pauseMenu()", optionsColumnOne));
+                     items.add(new GameMenu("i-objective", "${menu.537}", "showObjectivesFromPauseMenu()", optionsColumnOne));
                 items.add(new GameMenu("i-game", "${menu.97}", "pauseMenu()", optionsColumnOne));
                 var localClient = state.app.getStateManager().getState(GameClientState.class);
                 if (localClient != null && localClient.getGameClientService() instanceof toniarts.openkeeper.game.state.session.LocalGameSession) {
@@ -587,6 +656,9 @@ public final class PlayerScreenController implements IPlayerScreenController {
         // Load the HUD
         initHud = true;
         this.entityData = entityData;
+        if (objectiveTargets != null) {objectiveTargets.close(); objectiveTargets = null;}
+        objectiveTargets = new toniarts.openkeeper.view.ObjectiveTargetsView(entityData);
+        objectiveTargets.update();
 
         goToScreen(PlayerScreenController.SCREEN_HUD_ID);
 

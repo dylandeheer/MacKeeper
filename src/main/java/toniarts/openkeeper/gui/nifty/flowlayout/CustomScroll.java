@@ -129,6 +129,10 @@ public final class CustomScroll extends AbstractController {
 
         Element el = controlBuilder.build(currentRow);
         elements.add(el);
+        // Nifty's default render order uses the mutable sibling index. A later
+        // setIndex() would corrupt its TreeSet before the next deferred move.
+        // Stable nonzero keys keep both rendering and removal ordered safely.
+        el.setRenderOrder(elements.size());
 
         resizeRowElement(el);
         el.setMarginRight(SizeValue.px(4));

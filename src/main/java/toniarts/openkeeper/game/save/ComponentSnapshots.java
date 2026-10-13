@@ -383,6 +383,12 @@ public final class ComponentSnapshots {
                 .register();
         schema("placeable", 1, Placeable.class, Placeable::new)
                 .register();
+        schema("level-objective", 1, LevelObjective.class, LevelObjective::new)
+                .field("slot", INT, c -> c.slot, (c, v) -> c.slot = v)
+                .field("playerId", SHORT, c -> c.playerId, (c, v) -> c.playerId = v)
+                .field("creatureId", nullable(ENTITY_ID), c -> c.creatureId, (c, v) -> c.creatureId = v)
+                .field("objective", nullable(enumeration(ObjectiveType.class)), c -> c.objective, (c, v) -> c.objective = v)
+                .register();
         schema("player-objective", 1, PlayerObjective.class, PlayerObjective::new)
                 .field("objective", nullable(enumeration(ObjectiveType.class)), c -> c.objective, (c, v) -> c.objective = v)
                 .register();

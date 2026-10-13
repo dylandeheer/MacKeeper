@@ -76,6 +76,10 @@ public interface IGameController {
      */
     void endGame(short playerId, boolean win);
 
+    void markPlayerObjective(short playerId);
+
+    void markCreatureObjective(EntityId creatureId, toniarts.openkeeper.game.data.ObjectiveType objective);
+
     public INavigationService getNavigationService();
 
     public IEntityPositionLookup getEntityLookupService();

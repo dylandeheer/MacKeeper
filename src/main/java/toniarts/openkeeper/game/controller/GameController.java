@@ -133,6 +133,7 @@ public final class GameController implements IGameLogicUpdatable, IGameControlle
         levelInfo = (LevelInfo) restoreLevelInfo(definition, saved.level().level(), keepers);
         gameTimer = new GameTimeController(saved.level().clock());
         gameResults = GameResultController.restoreState(saved.results(), gameTimer, service, levelInfo.players.keySet());
+        LevelObjectives.validate(data, levelInfo.players.keySet());
         try {
             gameWorldController = GameWorldController.restoreBindings(this, levelInfo, data, playerControllers, gameTimer, saved);
             var map = gameWorldController.getMapController();var objects = gameWorldController.getObjectsController();
@@ -393,6 +394,7 @@ public final class GameController implements IGameLogicUpdatable, IGameControlle
             timer.update(tpf);
         }
 
+        LevelObjectives.reconcile(entityData, levelInfo.players);
         paydaySystem.processTick(tpf);
         levelInfo.paydayCycle = paydaySystem.getCycle();
         if (triggerControl != null) {
@@ -410,6 +412,17 @@ public final class GameController implements IGameLogicUpdatable, IGameControlle
     @Override
     public void endGame(short playerId, boolean win) {
         gameResults.endGame(playerId, win);
+    }
+
+    @Override public void markPlayerObjective(short playerId) {
+        if (levelInfo.players.containsKey(playerId)) LevelObjectives.addPlayer(entityData, playerId);
+    }
+
+    @Override public void markCreatureObjective(EntityId creatureId, toniarts.openkeeper.game.data.ObjectiveType objective) {
+        if (creatureId == null) return;
+        if (objective == null) LevelObjectives.removeCreature(entityData, creatureId);
+        else if (entityData.getComponent(creatureId, toniarts.openkeeper.game.component.CreatureComponent.class) != null)
+            LevelObjectives.addCreature(entityData, creatureId, objective);
     }
 
     public toniarts.openkeeper.game.save.ResultSnapshots.State captureResults() {

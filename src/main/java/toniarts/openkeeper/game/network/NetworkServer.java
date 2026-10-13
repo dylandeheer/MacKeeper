@@ -199,6 +199,7 @@ public final class NetworkServer {
             Serializer.registerClass(Party.class, new FieldSerializer());
             Serializer.registerClass(Placeable.class, new FieldSerializer());
             Serializer.registerClass(PlayerObjective.class, new FieldSerializer());
+            Serializer.registerClass(toniarts.openkeeper.game.component.LevelObjective.class, new FieldSerializer());
             Serializer.registerClass(PortalGem.class, new FieldSerializer());
             Serializer.registerClass(Position.class, new FieldSerializer());
             Serializer.registerClass(Regeneration.class, new FieldSerializer());
