@@ -18,8 +18,6 @@ package toniarts.openkeeper.game.state;
 
 import com.jme3.app.Application;
 import com.jme3.app.state.AppStateManager;
-import com.jme3.cinematic.events.CinematicEvent;
-import com.jme3.cinematic.events.CinematicEventListener;
 import com.jme3.math.Vector3f;
 import com.simsilica.es.EntityId;
 import toniarts.openkeeper.game.data.CampaignLevel;
@@ -545,11 +543,7 @@ public final class GameClientState extends AbstractPauseAwareState {
                 // Terminal screens can remove the camera while the session continues.
                 gameClientService.transitionEnd();return;
             }
-            camera.doTransition(pathId, start, new CinematicEventListener() {
-                @Override public void onPlay(CinematicEvent cinematic) {}
-                @Override public void onPause(CinematicEvent cinematic) {}
-                @Override public void onStop(CinematicEvent cinematic) {gameClientService.transitionEnd();}
-            });
+            camera.doTransition(pathId, start, true);
         }
 
         @Override

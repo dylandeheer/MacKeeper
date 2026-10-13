@@ -52,6 +52,17 @@ public final class PlayerCameraRotateControl extends Control {
         this.time = time;
     }
 
+    public CameraState.Rotate captureState() {
+        if (camera == null || parent == null) throw new IllegalStateException("Unbound camera rotation");
+        return new CameraState.Rotate(isEnabled(), time, angle, relative);
+    }
+
+    public static PlayerCameraRotateControl restore(CameraState.Rotate state, PlayerCamera camera) {
+        var result = new PlayerCameraRotateControl();result.camera = java.util.Objects.requireNonNull(camera);
+        result.time = state.remainingTime();result.angle = state.angle();result.relative = state.relative();
+        result.setEnabled(state.enabled());return result;
+    }
+
     public PlayerCamera getCamera() {
         return camera;
     }

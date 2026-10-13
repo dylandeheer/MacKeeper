@@ -44,7 +44,19 @@ public final class PlayerCameraControl extends Control {
     public PlayerCameraControl(PlayerCamera camera, Vector3f to) {
         this.camera = camera;
         this.from = this.camera.getLookAt();
-        this.to = to;
+        this.to = to.clone();
+    }
+
+    public CameraState.Zoom captureState() {
+        if (camera == null || parent == null) throw new IllegalStateException("Unbound camera movement");
+        return new CameraState.Zoom(isEnabled(), toniarts.openkeeper.game.state.session.PresentationEvent.Vec3.of(from),
+                toniarts.openkeeper.game.state.session.PresentationEvent.Vec3.of(to), tick);
+    }
+
+    public static PlayerCameraControl restore(CameraState.Zoom state, PlayerCamera camera) {
+        var result = new PlayerCameraControl();result.camera = java.util.Objects.requireNonNull(camera);
+        result.from = state.from().vector();result.to = state.to().vector();result.tick = state.tick();
+        result.setEnabled(state.enabled());return result;
     }
 
     public PlayerCamera getCamera() {

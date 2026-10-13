@@ -44,6 +44,9 @@ import toniarts.openkeeper.utils.WorldUtils;
 public final class Cinematic extends com.jme3.cinematic.Cinematic {
 
     private final CameraSweepData cameraSweepData;
+    private final String sweepFile;
+    private final AppStateManager ownerManager;
+    private boolean skipInitializationSample;
     private final Camera cam;
     private final Vector3f start;
     private final Listener audioListener;
@@ -95,6 +98,8 @@ public final class Cinematic extends com.jme3.cinematic.Cinematic {
 
         super(scene);
 
+        this.sweepFile = cameraSweepFile;
+        this.ownerManager = stateManager;
         this.audioListener = audioListener;
         this.start = start.clone();
         this.cam = cam;
@@ -128,6 +133,63 @@ public final class Cinematic extends com.jme3.cinematic.Cinematic {
         });
     }
 
+    /** Only an active one-shot sweep is persistent; engine timelines are a different owner. */
+    public record State(String sweepFile, toniarts.openkeeper.game.state.session.PresentationEvent.Vec3 start,
+            float time, float speed, PlayState playState, boolean initialized, int samples, String sampleHash) {
+        public State {
+            if (sweepFile == null || !sweepFile.matches("[A-Za-z0-9_-]{1,128}")
+                    || sampleHash == null || !sampleHash.matches("[0-9a-f]{64}")) throw new IllegalArgumentException("Invalid camera sweep identity");
+            java.util.Objects.requireNonNull(start);
+            if (samples < 1 || samples > 1_000_000 || !Float.isFinite(time) || time < 0 || time >= samples / 30f
+                    || !Float.isFinite(speed) || speed < 0 || (playState != PlayState.Playing && playState != PlayState.Paused)
+                    || (!initialized && time != 0)) throw new IllegalArgumentException("Invalid active sweep playback");
+        }
+    }
+
+    public State captureState() {
+        if (completed || cancelled || getLoopMode() != com.jme3.animation.LoopMode.DontLoop || !timeLine.isEmpty()
+                || getInitialDuration() != cameraSweepData.getEntries().size() / getFramesPerSecond()) {
+            throw new IllegalStateException("Only active unmodified camera sweeps can be saved");
+        }
+        return new State(sweepFile, toniarts.openkeeper.game.state.session.PresentationEvent.Vec3.of(start),
+                getTime(), getSpeed(), getPlayState(), isInitialized() || skipInitializationSample,
+                cameraSweepData.getEntries().size(), sampleHash());
+    }
+
+    /** Load and validate data, then bind playback without play/stop/seek callbacks or camera writes. */
+    public static Cinematic restore(State state, AssetManager assets, Camera camera, Listener listener,
+            Node scene, AppStateManager manager) {
+        var result = new Cinematic(assets, camera, listener, state.start().vector(), state.sweepFile(), scene, manager);
+        if (result.cameraSweepData.getEntries().size() != state.samples() || !result.sampleHash().equals(state.sampleHash())) {
+            throw new IllegalArgumentException("Installed camera sweep differs from save: " + state.sweepFile());
+        }
+        result.time = state.time();result.speed = state.speed();result.playState = state.playState();
+        result.skipInitializationSample = state.initialized();
+        return result;
+    }
+
+    /** Discard a replaced/staged sweep without completion effects or script acknowledgements. */
+    public void discard() {
+        cancelled = true;completed = true;playState = PlayState.Stopped;
+        ownerManager.detach(this);
+    }
+
+    private String sampleHash() {
+        try {
+            var digest = java.security.MessageDigest.getInstance("SHA-256");
+            try (var out = new java.io.DataOutputStream(new java.security.DigestOutputStream(java.io.OutputStream.nullOutputStream(), digest))) {
+                out.writeInt(cameraSweepData.getEntries().size());
+                for (var entry : cameraSweepData.getEntries()) {
+                    var p = entry.getPosition();var q = entry.getRotation();
+                    out.writeFloat(p.x);out.writeFloat(p.y);out.writeFloat(p.z);
+                    out.writeFloat(q.getX());out.writeFloat(q.getY());out.writeFloat(q.getZ());out.writeFloat(q.getW());
+                    out.writeFloat(entry.getFov());out.writeFloat(entry.getNear());
+                }
+            }
+            return java.util.HexFormat.of().formatHex(digest.digest());
+        } catch (java.io.IOException | java.security.NoSuchAlgorithmException impossible) {throw new IllegalStateException(impossible);}
+    }
+
     @Override
     public void stop() {
         // Detaching a cinematic invokes stop again. This one-shot sweep must notify
@@ -151,7 +213,8 @@ public final class Cinematic extends com.jme3.cinematic.Cinematic {
     @Override
     public void initialize(AppStateManager stateManager, Application app) {
         super.initialize(stateManager, app);
-        if (!cancelled && getPlayState() == PlayState.Playing) applySample(getTime());
+        if (!skipInitializationSample && !cancelled && getPlayState() == PlayState.Playing) applySample(getTime());
+        skipInitializationSample = false;
     }
 
     @Override
@@ -162,7 +225,9 @@ public final class Cinematic extends com.jme3.cinematic.Cinematic {
 
     @Override
     public void onUpdate(float tpf) {
-        super.onUpdate(tpf);
+        // A camera-only sweep has no timeline events. Avoid scanning every empty
+        // keyframe up to a restored time (or overflowing that scan on a delayed frame).
+        if (!timeLine.isEmpty()) super.onUpdate(tpf);
         if (!cancelled && getPlayState() == PlayState.Playing) applySample(getTime());
     }
 

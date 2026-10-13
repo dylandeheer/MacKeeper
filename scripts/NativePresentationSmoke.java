@@ -6,6 +6,9 @@ import java.util.*;
 import java.util.concurrent.*;
 import toniarts.openkeeper.Main;
 import toniarts.openkeeper.game.save.PresentationSnapshots;
+import toniarts.openkeeper.game.save.CameraSnapshots;
+import toniarts.openkeeper.view.PlayerCameraState;
+import toniarts.openkeeper.view.camera.CameraState;
 import toniarts.openkeeper.game.state.*;
 import toniarts.openkeeper.game.state.loop.GameLoopManager;
 import toniarts.openkeeper.game.state.session.*;
@@ -30,6 +33,28 @@ class NativePresentationSmoke {
         LocalGameSession session;GameClientState client;
         @Override public void initialize(AppStateManager states, Application app) {
             super.initialize(states, app);this.states = states;this.app = (Main) app;
+        }
+        private void restoreActiveCamera() throws Exception {
+            var camera = states.getState(PlayerCameraState.class);
+            var saved = loop.captureSnapshot(game -> camera.captureState());
+            if (saved.sweeps().size() != 1 || saved.sweeps().getFirst().playback().time() <= 0) throw new AssertionError("Missing active camera playback");
+            var playback = saved.sweeps().getFirst().playback();
+            var changed = new toniarts.openkeeper.cinematics.Cinematic.State(playback.sweepFile(), playback.start(), playback.time(), playback.speed(),
+                    playback.playState(), playback.initialized(), playback.samples(), "0".repeat(64));
+            var bad = new CameraState(saved.playerId(), saved.enabled(), saved.view(), saved.storedView(), saved.audioListener(), saved.cursorVisible(),
+                    saved.transitionEnd(), saved.movements(), List.of(new CameraState.Sweep(changed, true)));
+            try {camera.restoreState(bad);throw new AssertionError("Changed installed sweep accepted");}
+            catch (IllegalArgumentException expected) {}
+            if (!saved.equals(camera.captureState()) || !session.isInTransition()) throw new AssertionError("Failed camera restore changed active state");
+            Path file = Files.createTempFile(Path.of("work"), "active-camera-", ".bin");
+            try {
+                for (int i = 0; i < 3; i++) {
+                    Files.write(file, CameraSnapshots.encode(saved));var decoded = CameraSnapshots.decode(Files.readAllBytes(file));
+                    camera.restoreState(decoded);
+                    if (!saved.equals(loop.captureSnapshot(game -> camera.captureState())) || !session.isInTransition()) throw new AssertionError("Active camera staging replayed effects or lost state");
+                }
+            } finally {Files.delete(file);}
+            System.out.println("CAMERA active EnginePath67 restored through 3 disk round trips without start/stop/ack effects; failed binding preserves live owner");
         }
         @Override public void update(float tpf) {
             try {
@@ -74,7 +99,8 @@ class NativePresentationSmoke {
                     if (!mana.equals("321")) throw new AssertionError("Rendered mana label did not apply: " + mana);
                     if (!session.isInTransition() || player.isTransitionEnd()) throw new AssertionError("Restored cinematic never played");
                     if (!client.capturePendingPresentation().events().isEmpty()) throw new AssertionError("Delivered events stayed queued");
-                    System.out.println("PRESENTATION restored HUD notifications rendered and EnginePath67 is playing");stage = 3;
+                    System.out.println("PRESENTATION restored HUD notifications rendered and EnginePath67 is playing");
+                    restoreActiveCamera();stage = 3;
                 }
                 if (stage == 3 && (delay += tpf) > 7) {
                     if (session.isInTransition() || !player.isTransitionEnd()) throw new AssertionError("Restored cinematic did not acknowledge completion");
@@ -82,7 +108,7 @@ class NativePresentationSmoke {
                     loop.resume();stage = 4;delay = 0;
                 }
                 if (stage == 4 && !player.isPaused()) {
-                    System.out.println("PRESENTATION PASS rendered pending event restore, cinematic acknowledgement and pause/resume");
+                    System.out.println("PRESENTATION PASS pending and active camera restore, cinematic acknowledgement and pause/resume");
                     successful = true;app.stop();stage = 5;
                 }
             } catch (Throwable failure) {failure.printStackTrace();app.stop();stage = 5;}
