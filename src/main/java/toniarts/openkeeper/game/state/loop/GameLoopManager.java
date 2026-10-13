@@ -54,11 +54,13 @@ public final class GameLoopManager {
     private final PlayerSpellbookSystem playerSpellbookSystem;
     private final ChickenAiSystem chickenAiSystem;
     private final CreatureAiSystem creatureAiSystem;
+    private final ManaCalculatorLogic manaSystem;
+    private final CreatureExperienceSystem experienceSystem;
 
     /** Implemented system sections; not yet the complete simulation state. */
     public record SystemState(PlayerCreatureSystem.State creatures, PlayerSpellbookSystem.State spellbooks, ChickenAiSystem.SavedState chickens,
             List<toniarts.openkeeper.game.data.CreatureControlState> creatureControllers, CreatureAiSystem.SavedState creatureAi, toniarts.openkeeper.game.data.PartyRegistryState parties, toniarts.openkeeper.game.task.TaskIdentityAllocator.State taskAllocation,
-            List<toniarts.openkeeper.game.save.TileTaskSnapshots.State> tileTasks, toniarts.openkeeper.game.save.RoomTaskSnapshots.Capture roomTasks, toniarts.openkeeper.game.save.EntityTaskSnapshots.Capture entityTasks, toniarts.openkeeper.game.save.TaskGraphSnapshots.State taskGraph, toniarts.openkeeper.game.save.TaskManagerSnapshots.State taskManager) {
+            List<toniarts.openkeeper.game.save.TileTaskSnapshots.State> tileTasks, toniarts.openkeeper.game.save.RoomTaskSnapshots.Capture roomTasks, toniarts.openkeeper.game.save.EntityTaskSnapshots.Capture entityTasks, toniarts.openkeeper.game.save.TaskGraphSnapshots.State taskGraph, toniarts.openkeeper.game.save.TaskManagerSnapshots.State taskManager, toniarts.openkeeper.game.save.ManaSnapshots.State mana, toniarts.openkeeper.game.save.ExperienceSnapshots.State experience) {
         public SystemState {creatureControllers = List.copyOf(creatureControllers);tileTasks = List.copyOf(tileTasks);}
     }
 
@@ -88,7 +90,7 @@ public final class GameLoopManager {
                 new WoodenBridgeDecaySystem(entityData, gameController.getGameTimer(), gameWorldController,
                         level, gameWorldController.getMapController(),
                         gameController.getLevelVariable(Variable.MiscVariable.MiscType.WOOD_BRIDGE_LIFE_ON_LAVA_SECONDS)),
-                new CreatureExperienceSystem(entityData, levelInfo.getLevelData(), gameSettings,
+                experienceSystem = new CreatureExperienceSystem(entityData, levelInfo.getLevelData(), gameSettings,
                         gameWorldController.getCreaturesController()),
                 new CreatureMoodSystem(entityData, levelInfo.getLevelData(), playerControllers.values()),
                 new SlapSystem(entityData, levelInfo.getLevelData(), playerControllers.values(), gameSettings),
@@ -104,7 +106,7 @@ public final class GameLoopManager {
                         gameSettings, levelInfo, gameWorldController.getMapController()),
                 new ChickenSpawnSystem(entityData, gameWorldController.getObjectsController(),
                         playerControllers.values(), gameSettings, levelInfo, gameWorldController.getMapController()),
-                new ManaCalculatorLogic(playerControllers.values(), entityData),
+                manaSystem = new ManaCalculatorLogic(playerControllers.values(), entityData),
                 creatureAiSystem = new CreatureAiSystem(entityData, gameWorldController.getCreaturesController(), taskManager),
                 chickenAiSystem = new ChickenAiSystem(entityData, gameWorldController.getObjectsController()),
                 new CreatureViewSystem(entityData),
@@ -164,7 +166,7 @@ public final class GameLoopManager {
             var managerState = tasks.captureState(references);
             return capture.apply(game, new SystemState(playerCreatureSystem.captureState(), playerSpellbookSystem.captureState(),
                     chickenAiSystem.captureState(), controllers, creatureAiSystem.captureState(), creatures.captureParties(),
-                    tasks.captureAllocationState(), tasks.captureTileTaskStates(), tasks.captureRoomTaskStates(references.nodes()), tasks.captureEntityTaskStates(references.nodes()), tasks.captureTaskGraph(references), managerState));
+                    tasks.captureAllocationState(), tasks.captureTileTaskStates(), tasks.captureRoomTaskStates(references.nodes()), tasks.captureEntityTaskStates(references.nodes()), tasks.captureTaskGraph(references), managerState, manaSystem.captureState(), experienceSystem.captureState()));
         });
     }
 

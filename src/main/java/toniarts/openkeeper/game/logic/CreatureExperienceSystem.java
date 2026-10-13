@@ -27,6 +27,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
+import toniarts.openkeeper.game.save.*;
 import java.util.function.Supplier;
 import toniarts.openkeeper.game.component.CreatureAi;
 import toniarts.openkeeper.game.component.CreatureComponent;
@@ -56,6 +57,7 @@ public final class CreatureExperienceSystem implements IGameLogicUpdatable {
         TRAINING
     }
 
+    private boolean reconcileOnNextTick;
     private final IKwdFile kwdFile;
     private final EntitySet experienceEntities;
     private final EntitySet trainingEntities;
@@ -66,37 +68,60 @@ public final class CreatureExperienceSystem implements IGameLogicUpdatable {
     private final ICreaturesController creaturesController;
     private final Map<EntityId, Double> timeWorkingByEntityId = new HashMap<>();
 
+    public ExperienceSnapshots.State captureState() {
+        return new ExperienceSnapshots.State(impExperienceGainPerSecond, java.util.List.copyOf(experienceEntityIds),
+                java.util.List.copyOf(trainingEntityIds), timeWorkingByEntityId);
+    }
+
+    public static CreatureExperienceSystem restoreState(GameEntityData data, IKwdFile definition,
+            ICreaturesController creatures, ExperienceSnapshots.State saved) {
+        for (var group : java.util.List.of(saved.experience(), saved.training())) for (var id : group)
+            if (!data.wasAllocated(id)) throw new IllegalArgumentException("Unallocated experience entity");
+        return new CreatureExperienceSystem(data, definition, creatures, saved.impGain(), saved);
+    }
+
     public CreatureExperienceSystem(EntityData entityData, IKwdFile kwdFile,
             Map<Variable.MiscVariable.MiscType, Variable.MiscVariable> gameSettings,
             ICreaturesController creaturesController) {
+        this(entityData, kwdFile, creaturesController,
+                (int) gameSettings.get(Variable.MiscVariable.MiscType.IMP_EXPERIENCE_GAIN_PER_SECOND).getValue(), null);
+    }
+
+    private CreatureExperienceSystem(EntityData entityData, IKwdFile kwdFile,
+            ICreaturesController creaturesController, int impGain, ExperienceSnapshots.State saved) {
         this.kwdFile = kwdFile;
         this.entityData = entityData;
         this.creaturesController = creaturesController;
         experienceEntityIds = new SafeArrayList<>(EntityId.class);
         trainingEntityIds = new SafeArrayList<>(EntityId.class);
 
-        impExperienceGainPerSecond = (int) gameSettings.get(Variable.MiscVariable.MiscType.IMP_EXPERIENCE_GAIN_PER_SECOND).getValue();
+        impExperienceGainPerSecond = impGain;
 
         experienceEntities = entityData.getEntities(CreatureComponent.class, CreatureExperience.class, CreatureAi.class);
         trainingEntities = entityData.getEntities(new AndFilter(TaskComponent.class, new FieldFilter(TaskComponent.class, "taskStarted", true), new FieldFilter(TaskComponent.class, "taskType", TaskType.TRAIN)), CreatureComponent.class, CreatureExperience.class, CreatureAi.class, TaskComponent.class);
-        processAddedEntities(experienceEntities, experienceEntityIds);
-        processAddedEntities(trainingEntities, trainingEntityIds);
+        if (saved == null) {
+            processAddedEntities(experienceEntities, experienceEntityIds);
+            processAddedEntities(trainingEntities, trainingEntityIds);
+        } else {
+            experienceEntityIds.addAll(saved.experience());trainingEntityIds.addAll(saved.training());
+            timeWorkingByEntityId.putAll(saved.workingTime());reconcileOnNextTick = true;
+        }
     }
 
     @Override
     public void processTick(float tpf) {
-        if (experienceEntities.applyChanges()) {
-
-            processAddedEntities(experienceEntities.getAddedEntities(), experienceEntityIds);
-
-            processDeletedEntities(experienceEntities.getRemovedEntities(), experienceEntityIds);
-        }
-
-        if (trainingEntities.applyChanges()) {
-
-            processAddedEntities(trainingEntities.getAddedEntities(), trainingEntityIds);
-
-            processDeletedEntities(trainingEntities.getRemovedEntities(), trainingEntityIds);
+        if (reconcileOnNextTick) {
+            reconcile(experienceEntities, experienceEntityIds);reconcile(trainingEntities, trainingEntityIds);
+            reconcileOnNextTick = false;
+        } else {
+            if (experienceEntities.applyChanges()) {
+                processAddedEntities(experienceEntities.getAddedEntities(), experienceEntityIds);
+                processDeletedEntities(experienceEntities.getRemovedEntities().stream().map(Entity::getId).toList(), experienceEntityIds);
+            }
+            if (trainingEntities.applyChanges()) {
+                processAddedEntities(trainingEntities.getAddedEntities(), trainingEntityIds);
+                processDeletedEntities(trainingEntities.getRemovedEntities().stream().map(Entity::getId).toList(), trainingEntityIds);
+            }
         }
 
         // Increase the experience level of those who are worthy
@@ -112,6 +137,12 @@ public final class CreatureExperienceSystem implements IGameLogicUpdatable {
                 return ExperienceGainReason.TRAINING;
             });
         }
+    }
+
+    private void reconcile(EntitySet query, SafeArrayList<EntityId> ids) {
+        var observed = new java.util.HashSet<>(ids);query.applyChanges();
+        processAddedEntities(query.stream().filter(e -> !observed.contains(e.getId())).toList(), ids);
+        processDeletedEntities(observed.stream().filter(id -> !query.containsId(id)).toList(), ids);
     }
 
     private void handleEntity(Entity entity, EntityId entityId, float tpf, Supplier<ExperienceGainReason> reasonSupplier) {
@@ -150,20 +181,20 @@ public final class CreatureExperienceSystem implements IGameLogicUpdatable {
         }
     }
 
-    private void processAddedEntities(Set<Entity> entities, SafeArrayList<EntityId> entityIds) {
+    private void processAddedEntities(java.util.Collection<Entity> entities, SafeArrayList<EntityId> entityIds) {
         for (Entity entity : entities) {
             int index = Collections.binarySearch(entityIds, entity.getId());
             entityIds.add(~index, entity.getId());
         }
     }
 
-    private void processDeletedEntities(Set<Entity> entities, SafeArrayList<EntityId> entityIds) {
-        for (Entity entity : entities) {
-            int index = Collections.binarySearch(entityIds, entity.getId());
+    private void processDeletedEntities(java.util.Collection<EntityId> entities, SafeArrayList<EntityId> entityIds) {
+        for (EntityId id : entities) {
+            int index = Collections.binarySearch(entityIds, id);
             entityIds.remove(index);
 
-            // Logically it can't be on the two lists at the same time
-            timeWorkingByEntityId.remove(entity.getId());
+            // Leaving either observed query resets accumulated work, as in ordinary processing.
+            timeWorkingByEntityId.remove(id);
         }
     }
 

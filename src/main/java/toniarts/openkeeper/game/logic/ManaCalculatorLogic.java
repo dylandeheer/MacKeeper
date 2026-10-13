@@ -24,6 +24,7 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
+import toniarts.openkeeper.game.save.*;
 import toniarts.openkeeper.game.component.Mana;
 import toniarts.openkeeper.game.component.Owner;
 import toniarts.openkeeper.game.controller.IPlayerController;
@@ -37,14 +38,33 @@ import toniarts.openkeeper.game.controller.player.PlayerManaControl;
 public final class ManaCalculatorLogic implements IGameLogicUpdatable {
 
     private float tick = 0;
-    private final EntitySet manaEntities;
+    private final SnapshotEntitySet manaEntities;
+    private java.util.List<EntityId> restoredDirty;
     private final Map<EntityId, Short> ownerIdsByEntityId = new HashMap<>();
     private final Map<EntityId, Integer> manaGenerationByEntityId = new HashMap<>();
     private final Map<Short, PlayerManaControl> manaControls;
     private final Map<Short, Integer> manaGains;
     private final Map<Short, Integer> manaLosses;
 
+    public ManaSnapshots.State captureState() {
+        var sources = new java.util.TreeMap<EntityId, ManaSnapshots.Source>();
+        ownerIdsByEntityId.forEach((id, owner) -> sources.put(id, new ManaSnapshots.Source(owner, manaGenerationByEntityId.get(id))));
+        var dirty = new java.util.TreeSet<>(manaEntities.pendingChanges(sources.keySet()));
+        if (restoredDirty != null) dirty.addAll(restoredDirty);
+        return new ManaSnapshots.State(tick, manaControls.keySet().stream().sorted().toList(), sources, manaGains, manaLosses, java.util.List.copyOf(dirty));
+    }
+
+    public static ManaCalculatorLogic restoreState(Collection<IPlayerController> players, GameEntityData data, ManaSnapshots.State saved) {
+        for (var id : saved.sources().keySet()) if (!data.wasAllocated(id)) throw new IllegalArgumentException("Unallocated mana source");
+        return new ManaCalculatorLogic(players, data, saved);
+    }
+
     public ManaCalculatorLogic(Collection<IPlayerController> playerControllers, EntityData entityData) {
+        this(playerControllers, entityData, null);
+    }
+
+    private ManaCalculatorLogic(Collection<IPlayerController> playerControllers, EntityData entityData, ManaSnapshots.State saved) {
+
         manaControls = HashMap.newHashMap(playerControllers.size());
         for (IPlayerController playerController : playerControllers) {
             PlayerManaControl manaControl = playerController.getManaControl();
@@ -56,8 +76,15 @@ public final class ManaCalculatorLogic implements IGameLogicUpdatable {
         manaLosses = HashMap.newHashMap(manaControls.size());
 
         // Listen for mana entities
-        manaEntities = entityData.getEntities(Mana.class, Owner.class);
-        processAddedEntities(manaEntities);
+        if (saved != null && !manaControls.keySet().equals(new java.util.HashSet<>(saved.players())))
+            throw new IllegalArgumentException("Mana control owners differ");
+        manaEntities = new SnapshotEntitySet(entityData, Mana.class, Owner.class);
+        if (saved == null) processAddedEntities(manaEntities);
+        else {
+            tick = saved.tick();restoredDirty = saved.dirty();
+            saved.sources().forEach((id, source) -> {ownerIdsByEntityId.put(id, source.player());manaGenerationByEntityId.put(id, source.generation());});
+            manaGains.putAll(saved.gains());manaLosses.putAll(saved.losses());
+        }
     }
 
     @Override
@@ -87,17 +114,25 @@ public final class ManaCalculatorLogic implements IGameLogicUpdatable {
     }
 
     private void updateManaSources() {
-        if (manaEntities.applyChanges()) {
+        if (restoredDirty != null) {
+            var observed = new java.util.HashSet<>(ownerIdsByEntityId.keySet());
+            var dirty = new java.util.HashSet<>(manaEntities.pendingChanges(observed));dirty.addAll(restoredDirty);
+            manaEntities.applyChanges();
+            processAddedEntities(manaEntities.stream().filter(e -> !observed.contains(e.getId())).toList());
+            processDeletedEntities(observed.stream().filter(id -> !manaEntities.containsId(id)).toList());
+            processChangedEntities(manaEntities.stream().filter(e -> observed.contains(e.getId()) && dirty.contains(e.getId())).toList());
+            restoredDirty = null;
+        } else if (manaEntities.applyChanges()) {
 
             processAddedEntities(manaEntities.getAddedEntities());
 
-            processDeletedEntities(manaEntities.getRemovedEntities());
+            processDeletedEntities(manaEntities.getRemovedEntities().stream().map(Entity::getId).toList());
 
             processChangedEntities(manaEntities.getChangedEntities());
         }
     }
 
-    private void processAddedEntities(Set<Entity> entities) {
+    private void processAddedEntities(Collection<Entity> entities) {
         for (Entity entity : entities) {
             short ownerId = entity.get(Owner.class).ownerId;
             int manaGeneration = entity.get(Mana.class).manaGeneration;
@@ -108,16 +143,16 @@ public final class ManaCalculatorLogic implements IGameLogicUpdatable {
         }
     }
 
-    private void processDeletedEntities(Set<Entity> entities) {
-        for (Entity entity : entities) {
-            short ownerId = ownerIdsByEntityId.remove(entity.getId());
-            int manaGeneration = manaGenerationByEntityId.remove(entity.getId());
+    private void processDeletedEntities(Collection<EntityId> entities) {
+        for (EntityId id : entities) {
+            short ownerId = ownerIdsByEntityId.remove(id);
+            int manaGeneration = manaGenerationByEntityId.remove(id);
 
             removeManaGenerationFromPlayer(ownerId, manaGeneration);
         }
     }
 
-    private void processChangedEntities(Set<Entity> entities) {
+    private void processChangedEntities(Collection<Entity> entities) {
         for (Entity entity : entities) {
             short newOwnerId = entity.get(Owner.class).ownerId;
             int newManaGeneration = entity.get(Mana.class).manaGeneration;
