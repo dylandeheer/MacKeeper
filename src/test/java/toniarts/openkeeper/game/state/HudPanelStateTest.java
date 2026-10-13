@@ -64,6 +64,23 @@ class HudPanelStateTest {
         assertEquals(saved, f.controller.captureHudState());f.controller.cleanup();
         assertThrows(IllegalStateException.class, () -> f.controller.captureHudState());
     }
+    @Test void completedPlayerStillOffersAndRestoresDebriefingAfterEndListenerIsGone() throws Exception {
+        var f=new Fixture();
+        PlayerState player=(PlayerState)ObjectivePanelTest.field("state").get(f.controller);
+        var result=PlayerState.class.getDeclaredField("gameResult");result.setAccessible(true);
+        result.set(player,toniarts.openkeeper.game.data.GameResult.completed(true,5));
+        assertNull(player.stateManager.getState(EndGameState.class));
+        f.controller.pauseMenuNavigate("QUIT","MAIN",null,null);f.nifty.update();
+        var column=f.nifty.getScreen("hud").findElementById("optionsMenu").findElementById("#columnOne");
+        assertTrue(column.getChildren().stream().anyMatch(element->element.getElementType().toString().contains("quitToDebriefing")));
+        var base=f.controller.captureHudState();
+        var saved=copy(base,base.selectedTab(),base.objectiveId(),new HudPanelState.Menu(true,
+                HudPanelState.Page.CONFIRMATION,HudPanelState.Page.QUIT,"Debrief",HudPanelState.Destination.DEBRIEFING));
+        f.controller.restoreHudState(saved);assertEquals(saved,f.controller.captureHudState());
+        result.set(player,null);
+        assertThrows(IllegalArgumentException.class,()->f.controller.restoreHudState(saved));
+    }
+
     static HudPanelState copy(HudPanelState s, int tab, Integer objective, HudPanelState.Menu menu) {
         return new HudPanelState(s.updateRemainder(), s.cinematicText(), objective, s.pendingObjectives(), s.objectiveVisible(), s.bottomCollapsed(), tab, menu);
     }

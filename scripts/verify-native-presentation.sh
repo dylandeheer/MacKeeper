@@ -22,4 +22,4 @@ if grep -Eq 'SEVERE:|AssertionError|Uncaught exception' "$log"; then
   echo "Native presentation failed; see $log" >&2
   exit 1
 fi
-grep -E '^(CLIENTMODEL|PRESENTATION|CAMERA|MESSAGES|HUD|INTERACTION|FOG|CARDS|HAND)' "$log"
+grep -E '^(SCREEN|CLIENTMODEL|PRESENTATION|CAMERA|MESSAGES|HUD|INTERACTION|FOG|CARDS|HAND)' "$log"

@@ -27,7 +27,7 @@ class NativeResultSmoke {
  static class Probe extends AbstractAppState {
   Main app;AppStateManager states;long began=System.nanoTime();float delay;int stage=-1;double expectedTime;
   final toniarts.openkeeper.game.data.CampaignLevel campaign=new toniarts.openkeeper.game.data.CampaignLevel(toniarts.openkeeper.game.data.CampaignLevel.LevelType.Level,1);
-  toniarts.openkeeper.game.state.session.PlayerProgressState progress;int attemptsBefore;toniarts.openkeeper.game.state.session.PlayerService service;ScreenshotAppState capture;GameLoopManager cameraLoop;com.jme3.math.Vector3f stationaryPosition;
+  toniarts.openkeeper.game.state.session.PlayerProgressState progress;int attemptsBefore;boolean rebuiltEnd;toniarts.openkeeper.game.state.session.PlayerScreenState terminalScreen;toniarts.openkeeper.game.state.session.PlayerService service;ScreenshotAppState capture;GameLoopManager cameraLoop;com.jme3.math.Vector3f stationaryPosition;
   @Override public void initialize(AppStateManager states,Application application){super.initialize(states,application);this.states=states;app=(Main)application;capture=new ScreenshotAppState(Path.of("work").toAbsolutePath()+"/","result-flow-"+win+"-"+continuePlaying);capture.setIsNumbered(false);states.attach(capture);}
   @Override public void update(float tpf){try{
    if((System.nanoTime()-began)/1e9>180)throw new AssertionError("Timed out at stage "+stage);
@@ -82,7 +82,26 @@ class NativeResultSmoke {
     finishGame((GameLoopManager)field.get(server));
    }
    if(stage==1){var end=states.getState(EndGameState.class);if(end!=null&&end.isInitialized()){
-    if((delay+=tpf)<2)return;
+    if((delay+=tpf)<2||!player.isScreenReady())return;
+    if(!rebuiltEnd){
+     terminalScreen=player.captureScreenState();
+     states.detach(end);states.attach(EndGameState.restored(player));rebuiltEnd=true;delay=0;return;
+    }
+    if(!terminalScreen.equals(player.captureScreenState()))throw new AssertionError("Restored end listener replayed screen actions");
+    byte[] profileBefore=Files.readAllBytes(toniarts.openkeeper.utils.AppPaths.dataDirectory().resolve("settings.properties"));
+    for(int i=0;i<3;i++){
+     Path path=Path.of("work/native-terminal-screen.mkui");
+     Files.write(path,toniarts.openkeeper.game.save.PlayerScreenSnapshots.encode(terminalScreen));
+     player.restoreScreenState(toniarts.openkeeper.game.save.PlayerScreenSnapshots.decode(Files.readAllBytes(path)));
+     if(!terminalScreen.equals(player.captureScreenState()))throw new AssertionError("Terminal screen changed on restore");
+    }
+    if(!java.util.Arrays.equals(profileBefore,Files.readAllBytes(toniarts.openkeeper.utils.AppPaths.dataDirectory().resolve("settings.properties"))))throw new AssertionError("Screen restore wrote campaign profile");
+    int exitKey=continuePlaying?KeyInput.KEY_ESCAPE:KeyInput.KEY_SPACE;
+    var stale=new KeyInputEvent(exitKey,' ',false,false);end.onKeyEvent(stale);
+    var repeat=new KeyInputEvent(exitKey,' ',true,true);end.onKeyEvent(repeat);end.onKeyEvent(new KeyInputEvent(exitKey,' ',false,false));
+    if(!stale.isConsumed()||states.getState(EndGameState.class)!=end||!terminalScreen.equals(player.captureScreenState()))throw new AssertionError("Stale result input escaped boundary");
+    end.onKeyEvent(new KeyInputEvent(exitKey,' ',true,false));
+    System.out.println("FLOW screen: restored result listener and three disk restores preserve caption/profile; stale releases rejected, fresh key accepted");
     if(continuePlaying&&service.isInTransition())throw new AssertionError("Cancelled transition was not acknowledged");
     var completed=player.captureProgressState();
     if(!completed.attemptId().equals(progress.attemptId())||completed.result()==null)throw new AssertionError("Lost terminal playthrough identity");
@@ -99,7 +118,16 @@ class NativeResultSmoke {
    }}
    if(stage==4&&(delay+=tpf)>3){
     if(player==null||!player.isEnabled()||player.isPaused()||states.getState(EndGameState.class)!=null)throw new AssertionError("Continue did not restore one active HUD");
-    player.quitToDebriefing();stage=2;delay=0;System.out.println("FLOW continued after outcome and then requested debriefing");
+    player.getScreen().pauseMenuNavigate("QUIT","MAIN",null,null);
+    var column=app.getNifty().getScreen("hud").findElementById("optionsMenu").findElementById("#columnOne");
+    if(column.getChildren().stream().noneMatch(element->element.getElementType().toString().contains("quitToDebriefing")))throw new AssertionError("Continue lost debriefing menu action");
+    var panels=player.getScreen().captureHudState();
+    var saved=new toniarts.openkeeper.view.HudPanelState(panels.updateRemainder(),panels.cinematicText(),panels.objectiveId(),panels.pendingObjectives(),
+      panels.objectiveVisible(),panels.bottomCollapsed(),panels.selectedTab(),new toniarts.openkeeper.view.HudPanelState.Menu(true,
+      toniarts.openkeeper.view.HudPanelState.Page.CONFIRMATION,toniarts.openkeeper.view.HudPanelState.Page.QUIT,"Debrief",toniarts.openkeeper.view.HudPanelState.Destination.DEBRIEFING));
+    player.getScreen().restoreHudState(saved);
+    if(!saved.equals(player.getScreen().captureHudState()))throw new AssertionError("Post-continue debriefing confirmation did not restore");
+    player.getScreen().quitToDebriefing();stage=2;delay=0;System.out.println("FLOW continued after outcome and then requested debriefing");
    }
    if(stage==2&&app.getNifty().getCurrentScreen()!=null&&app.getNifty().getCurrentScreen().getScreenId().equals("debriefing")){
     if((delay+=tpf)<3)return;

@@ -111,6 +111,9 @@ public final class PlayerScreenController implements IPlayerScreenController {
     private Label tooltip;
     private boolean initHud = false;
     private String cinematicText;
+    private toniarts.openkeeper.game.state.session.PlayerScreenState.Route requestedRoute =
+            toniarts.openkeeper.game.state.session.PlayerScreenState.Route.EMPTY;
+    private String routeInFlight;
     private Thread hudThread;
     private HudPanelState.Menu menuState = HudPanelState.Menu.main(false);
     private GameLevel objectiveLevel;
@@ -157,6 +160,7 @@ public final class PlayerScreenController implements IPlayerScreenController {
         state = null;
         objectiveLevel = null;
         hudThread = null;
+        initHud = false;
         entityData = null;
         screen = null;
     }
@@ -181,10 +185,8 @@ public final class PlayerScreenController implements IPlayerScreenController {
     }
 
     public void toggleGui() {
-        if (!nifty.getCurrentScreen().getScreenId().equals(SCREEN_EMPTY_ID))
-            nifty.gotoScreen(SCREEN_EMPTY_ID);
-        else
-            nifty.gotoScreen(SCREEN_HUD_ID);
+        goToScreen(requestedRoute == toniarts.openkeeper.game.state.session.PlayerScreenState.Route.EMPTY
+                ? SCREEN_HUD_ID : SCREEN_EMPTY_ID);
     }
 
     @Override
@@ -337,7 +339,7 @@ public final class PlayerScreenController implements IPlayerScreenController {
             case QUIT:
                 optionsMenuTitle.setText("${menu.1266}");
 
-                if (state.stateManager.getState(EndGameState.class) != null) {
+                if (state.hasGameResult()) {
                     items.add(new GameMenu("i-quit", "${menu.2913}", String.format("pauseMenuNavigate(%s,%s,${menu.2913},quitToDebriefing())",
                             PauseMenuState.CONFIRMATION.name(), PauseMenuState.QUIT.name()), optionsColumnOne));
                 } else {
@@ -580,7 +582,7 @@ public final class PlayerScreenController implements IPlayerScreenController {
         initHud = true;
         this.entityData = entityData;
 
-        nifty.gotoScreen(PlayerScreenController.SCREEN_HUD_ID);
+        goToScreen(PlayerScreenController.SCREEN_HUD_ID);
 
         restoreObjectives();
         hud.layoutLayers();
@@ -608,7 +610,7 @@ public final class PlayerScreenController implements IPlayerScreenController {
             throw new IllegalArgumentException("Saved objective text is not installed");
         var menu = saved.menu();
         if (menu.destination() == HudPanelState.Destination.DEBRIEFING
-                && (state == null || state.stateManager.getState(EndGameState.class) == null))
+                && (state == null || !state.hasGameResult()))
             throw new IllegalArgumentException("Debriefing confirmation requires a completed game");
         lastUpdate = saved.updateRemainder();cinematicText = saved.cinematicText();
         nifty.getScreen(SCREEN_CINEMATIC_ID).findNiftyControl("speechText", Label.class).setText(cinematicText == null ? "" : cinematicText);
@@ -699,7 +701,66 @@ public final class PlayerScreenController implements IPlayerScreenController {
     }
 
     public void goToScreen(String screen) {
-        nifty.gotoScreen(screen);
+        var route = toniarts.openkeeper.game.state.session.PlayerScreenState.Route.fromScreenId(screen);
+        if (nifty.getScreen(screen) == null) throw new IllegalArgumentException("Player screen is not installed");
+        requestedRoute = route;
+        applyRequestedRoute();
+    }
+
+    /** Pump once per render frame, after Nifty has processed the preceding frame's transitions. */
+    void updateScreenRouting() {
+        Screen current = nifty.getCurrentScreen();
+        if (current != null && current.isRunning() && !current.isEffectActive(EffectEventId.onEndScreen)) {
+            // A previous gotoScreen can have been silently rejected by another owner's transition.
+            // Once Nifty is settled again, retry the desired route even if that attempt never arrived.
+            routeInFlight = null;
+        }
+        applyRequestedRoute();
+    }
+
+    private void applyRequestedRoute() {
+        if (routeInFlight != null) return;
+        Screen current = nifty.getCurrentScreen();
+        if (current != null && (!current.isRunning() || current.isEffectActive(EffectEventId.onEndScreen))) return;
+        String destination = requestedRoute.screenId();
+        if (current != null && destination.equals(current.getScreenId())) {
+            if (initHud && destination.equals(SCREEN_HUD_ID)) onStartScreen();
+            return;
+        }
+        routeInFlight = destination;
+        nifty.gotoScreen(destination);
+    }
+
+    boolean isRouteReady() {
+        Screen current = nifty.getCurrentScreen();
+        return routeInFlight == null && current != null && current.isRunning()
+                && !current.isEffectActive(EffectEventId.onEndScreen)
+                && requestedRoute.screenId().equals(current.getScreenId()) && !initHud;
+    }
+
+    toniarts.openkeeper.game.state.session.PlayerScreenState.Route getRequestedRoute() { return requestedRoute; }
+    String getCinematicText() { return cinematicText; }
+
+    void validateScreenRestore(toniarts.openkeeper.game.state.session.PlayerScreenState saved) {
+        if (nifty.getScreen(saved.route().screenId()) == null
+                || nifty.getScreen(SCREEN_CINEMATIC_ID) == null)
+            throw new IllegalArgumentException("Saved player screen is not installed");
+        if (saved.playerEnabled()) requireHudOwner();
+        if (saved.route() == toniarts.openkeeper.game.state.session.PlayerScreenState.Route.POSSESSION
+                && (state == null || state.getPossessionCreature() == null))
+            throw new IllegalArgumentException("Possession target is not prepared");
+    }
+
+    void restoreScreenRouting(toniarts.openkeeper.game.state.session.PlayerScreenState saved) {
+        cinematicText = saved.cinematicText();
+        nifty.getScreen(SCREEN_CINEMATIC_ID).findNiftyControl("speechText", Label.class)
+                .setText(cinematicText == null ? "" : cinematicText);
+        if (saved.playerEnabled()) {
+            Element button = nifty.getScreen(SCREEN_HUD_ID).findElementById("menuButton");
+            if (saved.paused()) button.startEffect(EffectEventId.onCustom, null, "select");
+            else button.stopEffect(EffectEventId.onCustom);
+        }
+        requestedRoute = saved.route();applyRequestedRoute();
     }
 
     /**

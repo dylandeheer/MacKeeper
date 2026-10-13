@@ -48,6 +48,7 @@ import javax.annotation.Nullable;
 import toniarts.openkeeper.game.data.CampaignLevel;
 import toniarts.openkeeper.game.data.Settings;
 import toniarts.openkeeper.game.state.session.PlayerProgressState;
+import toniarts.openkeeper.game.state.session.PlayerScreenState;
 import java.util.UUID;
 
 /**
@@ -118,12 +119,50 @@ public final class PlayerState extends AbstractAppState implements PlayerListene
 
     /** Capture only observes local result delivery; it neither reads server results nor writes the profile. */
     public PlayerProgressState captureProgressState() {
-        if (!isInitialized() || Thread.currentThread() != renderThread
-                || stateManager.getState(PlayerState.class) != this)
-            throw new IllegalStateException("Player progress belongs to the active render-thread owner");
+        requireActiveOwner();
         return new PlayerProgressState(playerId, attemptId, PlayerProgressState.Campaign.of(campaignLevel),
                 gameResult == null ? null : gameResult.captureState());
     }
+
+    private void requireActiveOwner() {
+        if (!isInitialized() || Thread.currentThread() != renderThread
+                || stateManager.getState(PlayerState.class) != this)
+            throw new IllegalStateException("Player state belongs to the active render-thread owner");
+    }
+
+    public boolean hasGameResult() { return gameResult != null; }
+
+    public PlayerScreenState captureScreenState() {
+        requireActiveOwner();
+        EndGameState end = stateManager.getState(EndGameState.class);
+        boolean awaiting = end != null && end.isAwaitingInputFor(this);
+        if (!isEnabled() && !awaiting || isEnabled() && end != null)
+            throw new IllegalStateException("Player screen lifecycle is still changing");
+        return new PlayerScreenState(playerId, isEnabled(), paused, transitionEnd,
+                screen.getRequestedRoute(), screen.getCinematicText(), awaiting);
+    }
+
+    /**
+     * Restore into an already prepared matching lifecycle. Other owners retain their own enabled
+     * flags; this does not pause/resume the server, rebuild controls or replay result delivery.
+     * Wait for isScreenReady() before admitting input to a replaced session.
+     */
+    public void restoreScreenState(PlayerScreenState saved) {
+        requireActiveOwner();
+        if (saved.playerId() != playerId || saved.playerEnabled() != isEnabled())
+            throw new IllegalArgumentException("Player screen requires a matching prepared owner");
+        EndGameState end = stateManager.getState(EndGameState.class);
+        if (saved.awaitingEndInput() ? !hasGameResult() || end == null || !end.isAwaitingInputFor(this) : end != null)
+            throw new IllegalArgumentException("Player result screen is not prepared");
+        screen.validateScreenRestore(saved);
+        paused = saved.paused();transitionEnd = saved.transitionEnd();
+        screen.restoreScreenRouting(saved);
+        if (saved.awaitingEndInput()) end.restoreAwaitingInput();
+    }
+
+    public boolean isScreenReady() { requireActiveOwner();return screen.isRouteReady(); }
+
+    void updateScreenRouting() { if (screen != null) screen.updateScreenRouting(); }
 
     @Override
     public void cleanup() {
@@ -332,7 +371,7 @@ public final class PlayerState extends AbstractAppState implements PlayerListene
     }
 
     public void setWideScreen(boolean enable) {
-        if (interactionState.isInitialized()) {
+        if (interactionState != null && interactionState.isInitialized()) {
             interactionState.setEnabled(!enable);
         }
 

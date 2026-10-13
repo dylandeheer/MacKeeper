@@ -14,6 +14,7 @@ import toniarts.openkeeper.game.save.FogSnapshots;
 import toniarts.openkeeper.game.save.CreatureCardSnapshots;
 import toniarts.openkeeper.game.save.HandViewSnapshots;
 import toniarts.openkeeper.game.save.ClientModelSnapshots;
+import toniarts.openkeeper.game.save.PlayerScreenSnapshots;
 import toniarts.openkeeper.view.HandViewState;
 import toniarts.openkeeper.view.KeeperHandState;
 import toniarts.openkeeper.view.creature.CreatureCardsState;
@@ -54,7 +55,7 @@ class NativePresentationSmoke {
     }
     static class Probe extends AbstractAppState {
         Main app;AppStateManager states;int stage;float delay;GameLoopManager loop;long gold;
-        LocalGameSession session;GameClientState client;MessageState pausedMessages;
+        LocalGameSession session;GameClientState client;MessageState pausedMessages;PlayerScreenState originalScreen,savedScreen;
         @Override public void initialize(AppStateManager states, Application app) {
             super.initialize(states, app);this.states = states;this.app = (Main) app;
         }
@@ -89,6 +90,40 @@ class NativePresentationSmoke {
         }
         private static java.lang.reflect.Field interactionField(String name) throws Exception {
             var field = PlayerInteractionState.class.getDeclaredField(name);field.setAccessible(true);return field;
+        }
+        private void restoreScreenRouting(PlayerState player) throws Exception {
+            originalScreen=player.captureScreenState();
+            savedScreen=new PlayerScreenState(originalScreen.playerId(),true,true,originalScreen.transitionEnd(),
+                    PlayerScreenState.Route.CINEMATIC,originalScreen.cinematicText(),false);
+            var panels=player.getScreen().captureHudState();
+            var camera=states.getState(PlayerCameraState.class).captureState();
+            var tool=states.getState(PlayerInteractionState.class).captureSelection();
+            var messages=states.getState(SystemMessageState.class).captureState();
+            var events=client.capturePendingPresentation();
+            double time=loop.captureSnapshot(game->game.getGameTimer().getGameTime());
+            Path file=Files.createTempFile(Path.of("work"),"screen-state-",".bin");
+            try {
+                for(int i=0;i<3;i++){
+                    Files.write(file,PlayerScreenSnapshots.encode(savedScreen));
+                    var decoded=PlayerScreenSnapshots.decode(Files.readAllBytes(file));
+                    player.restoreScreenState(new PlayerScreenState(originalScreen.playerId(),true,false,!originalScreen.transitionEnd(),
+                            PlayerScreenState.Route.EMPTY,originalScreen.cinematicText(),false));
+                    loop.captureSnapshot(game->{player.restoreScreenState(decoded);return null;});
+                    if(!savedScreen.equals(player.captureScreenState()) || !panels.equals(player.getScreen().captureHudState())
+                            || !camera.equals(states.getState(PlayerCameraState.class).captureState())
+                            || !tool.equals(states.getState(PlayerInteractionState.class).captureSelection())
+                            || !messages.equals(states.getState(SystemMessageState.class).captureState())
+                            || !events.equals(client.capturePendingPresentation())
+                            || time!=loop.captureSnapshot(game->game.getGameTimer().getGameTime()))
+                        throw new AssertionError("Screen restore changed other owners or replayed commands");
+                }
+            }finally{Files.delete(file);}
+            try{player.restoreScreenState(new PlayerScreenState((short)4,true,true,true,PlayerScreenState.Route.HUD,null,false));
+                throw new AssertionError("Foreign screen accepted");}catch(IllegalArgumentException expected){}
+            try(var worker=Executors.newSingleThreadExecutor()){
+                worker.submit(()->{try{player.captureScreenState();throw new AssertionError("Off-render screen capture accepted");}catch(IllegalStateException expected){}}).get(5,TimeUnit.SECONDS);
+            }
+            System.out.println("SCREEN three disk restores preserve pause, caption and logical route without changing panels, camera, tool, messages, queue or server time");
         }
         private void restoreClientModel() throws Exception {
             var saved=loop.captureSnapshot(game -> client.captureClientModel());
@@ -396,9 +431,17 @@ class NativePresentationSmoke {
                 if (stage == 3 && (delay += tpf) > 7) {
                     if (session.isInTransition() || !player.isTransitionEnd()) throw new AssertionError("Restored cinematic did not acknowledge completion");
                     if (!player.isPaused()) throw new AssertionError("Pending event delivery changed pause state");
-                    restoreMessages();restoreHudPanels(player);restoreInteraction();restoreFog();restoreCreatureCards(player);restoreHandView(player);stage = 4;delay = 0;
+                    restoreMessages();restoreHudPanels(player);restoreInteraction();restoreFog();restoreCreatureCards(player);restoreHandView(player);restoreScreenRouting(player);stage = 10;delay = 0;
+                }
+                if(stage==10 && (delay+=tpf)>2){
+                    if(!player.isScreenReady() || !app.getNifty().getCurrentScreen().getScreenId().equals("cinematic")
+                            || !savedScreen.equals(player.captureScreenState()))throw new AssertionError("Restored screen did not settle");
+                    player.restoreScreenState(originalScreen);stage=4;delay=0;
                 }
                 if (stage == 4 && (delay += tpf) > 2) {
+                    if(!player.isScreenReady()||!app.getNifty().getCurrentScreen().getScreenId().equals(originalScreen.route().screenId()))
+                        throw new AssertionError("Screen did not return before resume");
+                    System.out.println("SCREEN PASS rendered restored cinematic and returned to original route before ordinary resume");
                     if (!pausedMessages.equals(states.getState(SystemMessageState.class).captureState())) throw new AssertionError("Paused messages aged");
                     loop.resume();stage = 5;delay = 0;
                 }
@@ -421,7 +464,7 @@ class NativePresentationSmoke {
                 if (stage == 6 && states.getState(PlayerInteractionState.class).isEnabled()
                         && !interactionField("refreshAfterRestore").getBoolean(states.getState(PlayerInteractionState.class))) {
                     verifyInteractionResume();
-                    System.out.println("PRESENTATION PASS client models, pending events, active camera, messages, HUD panels, interaction, fog, creature-card and hand-view owners, cinematic acknowledgement and pause/resume");
+                    System.out.println("PRESENTATION PASS client models, pending events, active camera, messages, HUD panels, screen routing, interaction, fog, creature-card and hand-view owners, cinematic acknowledgement and pause/resume");
                     successful = true;app.stop();stage = 7;
                 }
             } catch (Throwable failure) {failure.printStackTrace();app.stop();stage = 7;}

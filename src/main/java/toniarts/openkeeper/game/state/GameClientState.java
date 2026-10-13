@@ -98,6 +98,7 @@ public final class GameClientState extends AbstractPauseAwareState {
     @Override
     public void update(float tpf) {
         if (!gameStarted || playerState == null || stateManager.getState(GameClientState.class) != this) return;
+        playerState.updateScreenRouting();
         pendingPresentation.drain(() -> {
             PlayerCameraState camera = stateManager.getState(PlayerCameraState.class);
             return !playerState.isEnabled() || camera == null || camera.isInitialized();
