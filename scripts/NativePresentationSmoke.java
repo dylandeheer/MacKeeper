@@ -8,6 +8,8 @@ import toniarts.openkeeper.Main;
 import toniarts.openkeeper.game.save.PresentationSnapshots;
 import toniarts.openkeeper.game.save.CameraSnapshots;
 import toniarts.openkeeper.game.save.MessageSnapshots;
+import toniarts.openkeeper.game.save.HudPanelSnapshots;
+import toniarts.openkeeper.gui.nifty.CustomTabGroupControl;
 import toniarts.openkeeper.view.MessageState;
 import toniarts.openkeeper.view.SystemMessageState;
 import toniarts.openkeeper.gui.nifty.message.MessageBoxControl;
@@ -67,6 +69,36 @@ class NativePresentationSmoke {
         }
         private MessageBoxControl box() {
             return app.getNifty().getScreen("hud").findControl("messageBox", MessageBoxControl.class);
+        }
+        private void restoreHudPanels(PlayerState player) throws Exception {
+            var controller = player.getScreen();var hud = app.getNifty().getScreen("hud");
+            var tabs = hud.findControl("tabs-hud", CustomTabGroupControl.class);
+            controller.showObjective(1);controller.toggleObjective();controller.togglePanel();
+            controller.setCinematicText(2, false, 0);tabs.setSelectedTabIndex(1);controller.lastUpdate = .125f;
+            controller.pauseMenuNavigate("CONFIRMATION", "QUIT", "Saved quit confirmation", "quitToOS()");
+            var saved = controller.captureHudState();
+            var messageState = states.getState(SystemMessageState.class).captureState();
+            String objective = hud.findNiftyControl("scriptedObjective", de.lessvoid.nifty.controls.Label.class).getText();
+            String caption = app.getNifty().getScreen("cinematic").findNiftyControl("speechText", de.lessvoid.nifty.controls.Label.class).getText();
+            var events = new int[1];
+            app.getNifty().subscribe(hud, "tabs-hud", de.lessvoid.nifty.controls.TabSelectedEvent.class, (topic, event) -> events[0]++);
+            Path file = Files.createTempFile(Path.of("work"), "hud-panels-", ".bin");
+            try {
+                for (int i = 0; i < 3; i++) {
+                    Files.write(file, HudPanelSnapshots.encode(saved));
+                    controller.togglePanel();controller.toggleObjective();tabs.restoreSelectedTabIndex(0);
+                    controller.pauseMenuNavigate("MAIN", null, null, null);
+                    controller.restoreHudState(HudPanelSnapshots.decode(Files.readAllBytes(file)));
+                    if (!saved.equals(controller.captureHudState()) || events[0] != 0 || !player.isPaused())
+                        throw new AssertionError("HUD panels failed quiet restoration");
+                    if (!objective.equals(hud.findNiftyControl("scriptedObjective", de.lessvoid.nifty.controls.Label.class).getText())
+                            || !caption.equals(app.getNifty().getScreen("cinematic").findNiftyControl("speechText", de.lessvoid.nifty.controls.Label.class).getText())
+                            || !hud.findElementById("optionsMenu").findNiftyControl("#title", de.lessvoid.nifty.controls.Label.class).getText().equals("Saved quit confirmation"))
+                        throw new AssertionError("Restored HUD labels changed");
+                    if (!messageState.equals(states.getState(SystemMessageState.class).captureState())) throw new AssertionError("Panel restoration changed message owner");
+                }
+            } finally {Files.delete(file);}
+            System.out.println("HUD PASS objective/subtitle/tab/collapsed panel/confirmation restored through 3 disk round trips without tab callbacks or pause/message changes");
         }
         private void restoreMessages() throws Exception {
             var owner = states.getState(SystemMessageState.class);
@@ -139,7 +171,7 @@ class NativePresentationSmoke {
                 if (stage == 3 && (delay += tpf) > 7) {
                     if (session.isInTransition() || !player.isTransitionEnd()) throw new AssertionError("Restored cinematic did not acknowledge completion");
                     if (!player.isPaused()) throw new AssertionError("Pending event delivery changed pause state");
-                    restoreMessages();stage = 4;delay = 0;
+                    restoreMessages();restoreHudPanels(player);stage = 4;delay = 0;
                 }
                 if (stage == 4 && (delay += tpf) > 2) {
                     if (!pausedMessages.equals(states.getState(SystemMessageState.class).captureState())) throw new AssertionError("Paused messages aged");

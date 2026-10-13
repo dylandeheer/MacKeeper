@@ -67,6 +67,7 @@ import toniarts.openkeeper.tools.convert.map.*;
 import toniarts.openkeeper.tools.convert.map.CreatureSpell;
 import toniarts.openkeeper.utils.AssetUtils;
 import toniarts.openkeeper.utils.Utils;
+import toniarts.openkeeper.view.HudPanelState;
 import toniarts.openkeeper.view.PlayerInteractionState;
 import toniarts.openkeeper.view.PlayerInteractionState.InteractionState.Type;
 import toniarts.openkeeper.view.PossessionInteractionState;
@@ -110,6 +111,8 @@ public final class PlayerScreenController implements IPlayerScreenController {
     private Label tooltip;
     private boolean initHud = false;
     private String cinematicText;
+    private Thread hudThread;
+    private HudPanelState.Menu menuState = HudPanelState.Menu.main(false);
     private GameLevel objectiveLevel;
     private Integer displayedObjectiveId;
     private final Deque<Integer> pendingObjectives = new ArrayDeque<>();
@@ -153,6 +156,7 @@ public final class PlayerScreenController implements IPlayerScreenController {
         // So make sure we clean these up or we end up cumulating a lot of uncollectable garbage (memory-leak)
         state = null;
         objectiveLevel = null;
+        hudThread = null;
         entityData = null;
         screen = null;
     }
@@ -289,6 +293,10 @@ public final class PlayerScreenController implements IPlayerScreenController {
 
     @Override
     public void pauseMenuNavigate(String menu, String backMenu, String confirmationTitle, String confirmMethod) {
+        var page = HudPanelState.Page.valueOf(menu);
+        var requested = page == HudPanelState.Page.CONFIRMATION
+                ? new HudPanelState.Menu(false, page, HudPanelState.Page.valueOf(backMenu), confirmationTitle, HudPanelState.Destination.fromAction(confirmMethod))
+                : new HudPanelState.Menu(false, page, null, null, null);
         Element optionsMenu = nifty.getScreen(SCREEN_HUD_ID).findElementById("optionsMenu");
         Label optionsMenuTitle = optionsMenu.findNiftyControl("#title", Label.class);
         Element optionsColumnOne = optionsMenu.findElementById("#columnOne");
@@ -308,6 +316,7 @@ public final class PlayerScreenController implements IPlayerScreenController {
             element.markForRemoval();
         }
 
+        menuState = requested.visible(optionsMenu.isVisible());
         // TODO: @ArchDemon: I think we need to do modern (not original) game menu
         List<GameMenu> items = new ArrayList<>();
         switch (PauseMenuState.valueOf(menu)) {
@@ -555,6 +564,7 @@ public final class PlayerScreenController implements IPlayerScreenController {
     }
 
     protected void initHud(GameLevel gameLevel, EntityData entityData) {
+        hudThread = Thread.currentThread();
         objectiveLevel = gameLevel;
         String resource = gameLevel.getTextTableId() == null ? null : gameLevel.getTextTableId().getLevelDictFile();
         Screen hud = nifty.getScreen(SCREEN_HUD_ID);
@@ -577,6 +587,50 @@ public final class PlayerScreenController implements IPlayerScreenController {
 
         restoreObjectives();
         hud.layoutLayers();
+    }
+
+    /** Capture panel state after HUD construction, on its owning render thread. */
+    public HudPanelState captureHudState() {
+        requireHudOwner();
+        var hud = nifty.getScreen(SCREEN_HUD_ID);
+        var bottom = hud.findElementById("bottomPanel");
+        boolean collapsed = bottom.getUserDataKeys().contains("toggle") && Boolean.TRUE.equals(bottom.getUserData("toggle"));
+        return new HudPanelState(lastUpdate, cinematicText, displayedObjectiveId, List.copyOf(pendingObjectives),
+                hud.findElementById("objective").isVisible(), collapsed,
+                hud.findControl("tabs-hud", CustomTabGroupControl.class).getSelectedTabIndex(),
+                menuState.visible(hud.findElementById("optionsMenu").isVisible()));
+    }
+
+    /** Restore panel values quietly; the session owns screen routing, pause and interaction state. */
+    public void restoreHudState(HudPanelState saved) {
+        requireHudOwner();Objects.requireNonNull(saved);
+        var hud = nifty.getScreen(SCREEN_HUD_ID);
+        var tabs = hud.findControl("tabs-hud", CustomTabGroupControl.class);
+        if (saved.selectedTab() >= tabs.getTabCount()) throw new IllegalArgumentException("Saved HUD tab is not installed");
+        if (saved.objectiveId() != null && getObjectiveText(saved.objectiveId()) == null)
+            throw new IllegalArgumentException("Saved objective text is not installed");
+        var menu = saved.menu();
+        if (menu.destination() == HudPanelState.Destination.DEBRIEFING
+                && (state == null || state.stateManager.getState(EndGameState.class) == null))
+            throw new IllegalArgumentException("Debriefing confirmation requires a completed game");
+        lastUpdate = saved.updateRemainder();cinematicText = saved.cinematicText();
+        nifty.getScreen(SCREEN_CINEMATIC_ID).findNiftyControl("speechText", Label.class).setText(cinematicText == null ? "" : cinematicText);
+        displayedObjectiveId = saved.objectiveId();pendingObjectives.clear();pendingObjectives.addAll(saved.pendingObjectives());
+        showObjectivePanel();hud.findElementById("objective").setVisible(saved.objectiveVisible());
+        var bottom = hud.findElementById("bottomPanel");bottom.setUserData("toggle", saved.bottomCollapsed());
+        bottom.setMarginTop(new SizeValue(saved.bottomCollapsed() ? 156 : 0, SizeValueType.Pixel));bottom.getParent().layoutElements();
+        tabs.restoreSelectedTabIndex(saved.selectedTab());
+        if (state != null && state.interactionState != null) updateSelectedItem(state.getInteractionState());
+        pauseMenuNavigate(menu.page().name(), menu.back() == null ? null : menu.back().name(), menu.title(),
+                menu.destination() == null ? null : menu.destination().action());
+        hud.findElementById("optionsMenu").setVisible(menu.visible());menuState = menu;
+        // Hover text belongs to the current pointer, not the saved world.
+        if (tooltip != null) tooltip.setText("");
+    }
+
+    private void requireHudOwner() {
+        if (hudThread != Thread.currentThread() || objectiveLevel == null || initHud)
+            throw new IllegalStateException("HUD panels require the initialized render-thread owner");
     }
 
     public void setPause(boolean paused) {
