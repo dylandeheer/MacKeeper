@@ -50,6 +50,7 @@ public final class LocalGameSession implements GameSessionServerService, GameSes
     private final EntityData entityData;
     private volatile boolean commandsEnabled = true;
 
+    public boolean isCommandAdmissionEnabled() {return commandsEnabled;}
     public void setCommandAdmission(boolean enabled) {commandsEnabled = enabled;}
     private final SafeArrayList<GameSessionListener> listeners = new SafeArrayList<>(GameSessionListener.class);
     private final SafeArrayList<GameSessionServiceListener> serverListeners = new SafeArrayList<>(GameSessionServiceListener.class);
@@ -114,32 +115,62 @@ public final class LocalGameSession implements GameSessionServerService, GameSes
         stateManager.attach(gameServerState);
     }
 
-    /** Load a validated local archive after the previous client has been retired. */
-    public static GameClientState restoreLocalGame(toniarts.openkeeper.game.save.LocalSessionArchive archive,
-            IKwdFile definition, AppStateManager states, Main app) throws IOException {
-        if (states.getState(GameClientState.class) != null || states.getState(GameServerState.class) != null
-                || states.getState(toniarts.openkeeper.game.state.PlayerState.class) != null || app.getNifty().getScreen("hud") != null)
-            throw new IllegalStateException("Retire the previous game before installing a restored session");
+    /** Independent world preparation may run off the render thread while the old game remains live. */
+    public static PreparedRestore prepareLocalGame(toniarts.openkeeper.game.save.LocalSessionArchive archive,
+            IKwdFile definition) throws IOException {
         archive.validateDefinition(definition);
         LocalGameSession[] receiving = new LocalGameSession[1];
         var loop = archive.server().restore(definition, data -> {
             var service = new LocalGameSession(data);service.setCommandAdmission(false);receiving[0] = service;return service;
         });
-        GameClientState client = null;GameServerState server = null;
-        var menu = states.getState(toniarts.openkeeper.game.state.MainMenuState.class);
-        boolean menuWasEnabled = menu != null && menu.isEnabled();
-        try {
-            client = GameClientState.restored(definition, receiving[0], app, archive.client());
-            var branch = archive.client().progress().campaign();
-            server = GameServerState.restored(definition, archive.campaign(), receiving[0], branch == null ? null : branch.bind(), loop);
-            if (menuWasEnabled) menu.setEnabled(false);
-            states.attach(client);states.attach(server);return client;
-        } catch (RuntimeException | Error failure) {
-            if (client != null) client.detach();
-            if (server != null) server.detach();else loop.stop();
-            if (menuWasEnabled) menu.setEnabled(true);
-            throw failure;
+        return new PreparedRestore(archive, definition, receiving[0], loop);
+    }
+
+    /** Exactly one owner either installs this prepared world or disposes it. */
+    public static final class PreparedRestore implements AutoCloseable {
+        private final toniarts.openkeeper.game.save.LocalSessionArchive archive;
+        private final IKwdFile definition;
+        private final LocalGameSession service;
+        private final toniarts.openkeeper.game.state.loop.GameLoopManager loop;
+        private boolean consumed;
+        private PreparedRestore(toniarts.openkeeper.game.save.LocalSessionArchive archive, IKwdFile definition,
+                LocalGameSession service, toniarts.openkeeper.game.state.loop.GameLoopManager loop) {
+            this.archive = archive;this.definition = definition;this.service = service;this.loop = loop;
         }
+        /** Render thread only, after deferred cleanup has removed the previous HUD. */
+        public synchronized GameClientState install(AppStateManager states, Main app) {
+            if (consumed) throw new IllegalStateException("Prepared session has already been consumed");
+            if (states.getState(GameClientState.class) != null || states.getState(GameServerState.class) != null
+                    || states.getState(toniarts.openkeeper.game.state.PlayerState.class) != null || app.getNifty().getScreen("hud") != null)
+                throw new IllegalStateException("Retire the previous game before installing a restored session");
+            consumed = true;
+            GameClientState client = null;GameServerState server = null;
+            var menu = states.getState(toniarts.openkeeper.game.state.MainMenuState.class);
+            boolean menuWasEnabled = menu != null && menu.isEnabled();
+            try {
+                client = GameClientState.restored(definition, service, app, archive.client());
+                var branch = archive.client().progress().campaign();
+                server = GameServerState.restored(definition, archive.campaign(), service, branch == null ? null : branch.bind(), loop);
+                if (menuWasEnabled) menu.setEnabled(false);
+                states.attach(client);states.attach(server);return client;
+            } catch (RuntimeException | Error failure) {
+                if (client != null) client.detach();
+                if (server != null) server.detach();else loop.stop();
+                if (menuWasEnabled) menu.setEnabled(true);
+                throw failure;
+            }
+        }
+        @Override public synchronized void close() {if (!consumed) {consumed = true;loop.stop();}}
+    }
+
+    /** Load a validated local archive after the previous client has been retired. */
+    public static GameClientState restoreLocalGame(toniarts.openkeeper.game.save.LocalSessionArchive archive,
+            IKwdFile definition, AppStateManager states, Main app) throws IOException {
+        // Fail before allocating a staged world when the legacy caller still owns an active session.
+        if (states.getState(GameClientState.class) != null || states.getState(GameServerState.class) != null
+                || states.getState(toniarts.openkeeper.game.state.PlayerState.class) != null || app.getNifty().getScreen("hud") != null)
+            throw new IllegalStateException("Retire the previous game before installing a restored session");
+        try (var prepared = prepareLocalGame(archive, definition)) {return prepared.install(states, app);}
     }
 
     /** Preparation failure is a lifecycle signal, not a saved gameplay notification. */

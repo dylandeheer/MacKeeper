@@ -98,6 +98,7 @@ public final class GameClientState extends AbstractPauseAwareState {
     private final GameSessionListenerImpl presentationTarget = new GameSessionListenerImpl();
     private final QueuedGameSessionListener gameSessionListener = new QueuedGameSessionListener(pendingPresentation, presentationTarget);
     private Thread renderThread;
+    private boolean transferBlocked;
     private IMapInformation mapInformation;
     private IFogOfWarInformation fogOfWarInformation;
     private PlayerState playerState;
@@ -109,7 +110,7 @@ public final class GameClientState extends AbstractPauseAwareState {
     private TextParser textParser;
     @Override
     public void update(float tpf) {
-        if (closing || stateManager.getState(GameClientState.class) != this) return;
+        if (closing || transferBlocked || stateManager.getState(GameClientState.class) != this) return;
         if (loadFailure != null) {
             logger.log(Level.ERROR, "Failed to load the game", loadFailure);
             detach();
@@ -389,7 +390,21 @@ public final class GameClientState extends AbstractPauseAwareState {
     }
 
     /** Input stays unavailable until the replacement client has all owners and its requested screen. */
-    public boolean isAcceptingInput() {return gameStarted && !closing;}
+    public boolean isAcceptingInput() {return gameStarted && !closing && !transferBlocked;}
+
+    /** Temporary transfer ownership suppresses raw input and pending-event delivery without retiring the client. */
+    public void setTransferBlocked(boolean blocked) {
+        requireRenderThread();
+        if (closing || stateManager.getState(GameClientState.class) != this)
+            throw new IllegalStateException("Transfer belongs to the current client");
+        var camera = stateManager.getState(PlayerCameraState.class);
+        if (camera != null && camera.isInitialized()) camera.resetTransferInput();
+        var interaction = stateManager.getState(toniarts.openkeeper.view.PlayerInteractionState.class);
+        if (interaction != null && interaction.isInitialized()) interaction.resetTransferInput();
+        var end = stateManager.getState(EndGameState.class);
+        if (end != null && end.isInitialized() && end.belongsTo(playerState)) end.restoreAwaitingInput();
+        transferBlocked = blocked;
+    }
 
     private void restoreInputPolicy() {
         if (!inputSuppressed) return;

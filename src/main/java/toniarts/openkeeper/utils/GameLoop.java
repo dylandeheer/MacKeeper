@@ -121,6 +121,11 @@ public final class GameLoop {
         return clock.capture(simulationGate.snapshotTime());
     }
 
+    /** Freeze scheduling at the shared capture timestamp without publishing a gameplay pause event. */
+    public void holdAtSnapshot() {
+        synchronized (clock) {clock.pause(simulationGate.snapshotTime());}
+    }
+
     /** The gate protects suspended time; the clock monitor keeps timestamp sampling ordered with mutations. */
     private long simulationTime() {
         if (!Thread.holdsLock(clock)) throw new IllegalStateException("Clock time must be sampled under its monitor");

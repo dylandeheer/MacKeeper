@@ -79,6 +79,29 @@ class LoopPhaseIntegrationTest {
         assertNull(failure.get());
     }
 
+    @Test void transferHoldFreezesAtCaptureAndResumeExcludesFileWriteDelay() throws Exception {
+        var gate = new SimulationGate();var ticked = new CountDownLatch(1);var count = new AtomicInteger();
+        var delta = new AtomicReference<Float>();
+        var loop = new GameLoop(new IGameLogicUpdatable() {
+            public void start() {} public void stop() {}
+            public void processTick(float tpf) {delta.set(tpf);count.incrementAndGet();ticked.countDown();}
+        },10_000_000,"Transfer",gate);
+        loop.start();
+        try {
+            SimulationGateTest.await(ticked);
+            assertThrows(IllegalStateException.class, loop::holdAtSnapshot);
+            var saved = gate.snapshot(() -> {var phase=loop.capturePhase();loop.holdAtSnapshot();return phase;});
+            int heldCount=count.get();Thread.sleep(150);
+            var held=gate.snapshot(loop::capturePhase);
+            assertEquals(heldCount,count.get());assertTrue(held.paused());
+            assertEquals(saved.pendingNanos(),held.pendingNanos());assertEquals(saved.remainderNanos(),held.remainderNanos());
+            loop.resume();
+            long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(2);
+            while(count.get()==heldCount&&System.nanoTime()<deadline) Thread.sleep(1);
+            assertTrue(count.get()>heldCount);assertTrue(delta.get()<.1f,"Transfer wait leaked into simulation time");
+        } finally {loop.stop();}
+    }
+
     private static IGameLogicUpdatable system(CountDownLatch ticked) {
         return new IGameLogicUpdatable(){public void start(){}public void stop(){}public void processTick(float delta){ticked.countDown();}};
     }

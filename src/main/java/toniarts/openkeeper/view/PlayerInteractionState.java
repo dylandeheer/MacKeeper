@@ -190,6 +190,9 @@ public abstract class PlayerInteractionState extends AbstractPauseAwareState {
         }
     }
 
+    /** Cancel held gestures without executing their pending command. */
+    public void resetTransferInput() {requireOwner();resetInputBoundary();}
+
     private void resetInputBoundary() {
         keys.clear();inputBarrier.reset();refreshAfterRestore = true;
         if (selectionHandler != null) selectionHandler.resetForRestore();

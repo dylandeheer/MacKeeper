@@ -227,9 +227,12 @@ public final class GameLoopManager {
     public EntityData getEntityData() { return gameService.getEntityData(); }
 
     /** Run a complete player command under the same capture boundary as all loops. */
+    private boolean heldForReplacement;
+
     public void runPlayerCommand(Runnable command) {
         simulationGate.mutate(() -> {
             if (closed) throw new IllegalStateException("Game is closed");
+            if (heldForReplacement) throw new IllegalStateException("Game is held for saved-session replacement");
             command.run();
         });
     }
@@ -270,6 +273,22 @@ public final class GameLoopManager {
                     chickenAiSystem.captureState(), controllers, creatureAiSystem.captureState(), creatures.captureParties(),
                     tasks.captureAllocationState(), tasks.captureTileTaskStates(), tasks.captureRoomTaskStates(references.nodes()), tasks.captureEntityTaskStates(references.nodes()), tasks.captureTaskGraph(references), managerState, manaSystem.captureState(), experienceSystem.captureState(), ((GameController) game).captureEconomyState(), creatureSpawnSystem.captureState(), chickenSpawnSystem.captureState(), new toniarts.openkeeper.game.save.LifetimeSnapshots.State(decaySystem.captureTime(), tortureSystem.captureTime(), deathSystem.captureState()), slapSystem.captureState(), healthSystem.captureState(), new toniarts.openkeeper.game.save.AnimationSnapshots.State(fallSystem.captureTime(), heartConstruction.captureState()), creatureViewSystem.captureTime(), movementSystem.captureState(), ((PositionSystem) game.getEntityLookupService()).captureState()));
         });
+    }
+
+    /** Called inside the joined snapshot boundary; release preserves each loop's original pause state. */
+    public Runnable holdAtSnapshot() {
+        var phases = captureLoopPhases();
+        if (heldForReplacement) throw new IllegalStateException("Game already held for replacement");
+        loops.forEach(GameLoop::holdAtSnapshot);heldForReplacement = true;
+        var released = new java.util.concurrent.atomic.AtomicBoolean();
+        return () -> {
+            if (!released.compareAndSet(false, true)) return;
+            simulationGate.mutate(() -> {
+                if (closed) return;
+                heldForReplacement = false;
+                for (int i = 0; i < loops.size(); i++) if (!phases.get(i).paused()) loops.get(i).resume();
+            });
+        };
     }
 
     public void pause() {

@@ -154,6 +154,29 @@ public final class GameServerState extends AbstractAppState {
         });
     }
 
+    public record HeldSession(toniarts.openkeeper.game.save.LocalSessionArchive archive, Runnable release) {}
+
+    /** Capture and hold at one boundary so asynchronous recovery-file I/O cannot lose subsequent game ticks. */
+    public HeldSession holdLocalSession(GameClientState client) {
+        if (!(gameService instanceof toniarts.openkeeper.game.state.session.LocalGameSession local)
+                || client.getGameClientService() != gameService || !gameLoaded || game == null
+                || stateManager == null || stateManager.getState(GameServerState.class) != this)
+            throw new IllegalStateException("The local session is not ready for replacement");
+        boolean admitted = local.isCommandAdmissionEnabled();
+        local.setCommandAdmission(false);
+        try {
+            return toniarts.openkeeper.game.save.SimulationState.capture(game, simulation -> {
+                var observed = client.captureClientState();
+                observed.progress().validateBinding(toniarts.openkeeper.tools.convert.map.Player.KEEPER1_ID, levelObject);
+                var archive = new toniarts.openkeeper.game.save.LocalSessionArchive(campaign,
+                        new toniarts.openkeeper.game.save.SimulationArchive(
+                                toniarts.openkeeper.game.save.SimulationArchive.Definition.capture(kwdFile), simulation), observed);
+                Runnable release = game.holdAtSnapshot();
+                return new HeldSession(archive, () -> {release.run();local.setCommandAdmission(admitted);});
+            });
+        } catch (RuntimeException | Error failure) {local.setCommandAdmission(admitted);throw failure;}
+    }
+
     private void loadGame(List<Keeper> players) {
         loader = new GameLoader(players);
         loader.start();

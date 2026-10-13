@@ -24,6 +24,15 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class LocalSessionArchivesTest {
     @TempDir Path directory;
+    @Test void recoveryCreatesNestedDirectoriesAndRetainsCompleteArchive() throws Exception {
+        var path=directory.resolve("new/profile/Saves/Recovery/current.mkls");var saved=fixture(false);
+        LocalSessionArchives.writeRecovery(path,saved);
+        assertArrayEquals(LocalSessionArchives.encode(saved),LocalSessionArchives.encode(LocalSessionArchives.read(path)));
+        var blocked=directory.resolve("blocked");Files.write(blocked,new byte[]{3});
+        assertThrows(IOException.class,()->LocalSessionArchives.writeRecovery(blocked.resolve("recovery.mkls"),saved));
+        assertArrayEquals(new byte[]{3},Files.readAllBytes(blocked));
+        assertArrayEquals(LocalSessionArchives.encode(saved),Files.readAllBytes(path));
+    }
     @Test void diskRetainsIndependentClientObservationsPendingActionsAndAllLifecycleVariants() throws Exception {
         for (boolean terminal : new boolean[]{false,true}) {
             var expected = fixture(terminal);var saved = expected;var bytes = LocalSessionArchives.encode(saved);

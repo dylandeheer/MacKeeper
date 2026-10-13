@@ -308,6 +308,9 @@ public final class PlayerCameraState extends AbstractPauseAwareState implements 
         });
     }
 
+    /** A temporary transfer must not retain modifiers whose releases arrived while input was blocked. */
+    public void resetTransferInput() {requireSnapshotOwner();keys.clear();}
+
     private void requireSnapshotOwner() {
         if (!isInitialized() || closing || Thread.currentThread() != renderThread
                 || stateManager.getState(PlayerCameraState.class) != this

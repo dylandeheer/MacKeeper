@@ -104,6 +104,15 @@ public final class LocalSessionArchives {
             var buffer = ByteBuffer.wrap(bytes);while (buffer.hasRemaining()) channel.write(buffer);
         });
     }
+    /** A recovery checkpoint must sync its directory entries before the live game can be retired. */
+    public static void writeRecovery(Path path, LocalSessionArchive archive) throws IOException {
+        write(path, archive);
+        // Include ancestors: Saves/Recovery and even a newly created profile may not have existed yet.
+        for (Path directory = path.toAbsolutePath().normalize().getParent(); directory != null; directory = directory.getParent()) {
+            try (var channel = java.nio.channels.FileChannel.open(directory, StandardOpenOption.READ)) {channel.force(true);}
+            catch (IOException failure) {throw new IOException("Cannot sync recovery directory; current game must be retained", failure);}
+        }
+    }
     private static void section(DataOutputStream out, byte[] bytes) throws IOException {out.writeInt(bytes.length);out.write(bytes);}
     private static byte[] section(DataInputStream in, int maximum) throws IOException {
         int size = count(in.readInt(), maximum);
