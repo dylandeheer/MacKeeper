@@ -129,6 +129,16 @@ public final class GameClientState extends AbstractPauseAwareState {
 
     private boolean activePresentation() {return playerState != null && playerState.isEnabled();}
 
+    /** Audio start effects are typed data, delivered only by this live session's render-thread owner. */
+    public void onSpeechStarted(int speechId, toniarts.openkeeper.game.sound.SoundSnapshot.StartAction action) {
+        requireRenderThread();
+        if (!activePresentation() || stateManager.getState(GameClientState.class) != this) return;
+        SystemMessageState messages = stateManager.getState(SystemMessageState.class);
+        if (messages != null) messages.addMessage(SystemMessageState.MessageType.INFO, String.format("${level.%d}", speechId - 1));
+        if (action.showText()) playerState.setText(speechId, action.introduction(), action.pathId());
+    }
+
+
     /**
      * Single use game states
      *
@@ -210,6 +220,8 @@ public final class GameClientState extends AbstractPauseAwareState {
         stateManager.detach(this);
         detachRelatedAppStates();
 
+        SoundState sound = stateManager.getState(SoundState.class);
+        if (sound != null && sound.isInitialized()) sound.unbindSession(this);
         pendingPresentation.close();
         playerState = null;
         playerMapViewState = null;
@@ -442,10 +454,11 @@ public final class GameClientState extends AbstractPauseAwareState {
             // Release loading state from memory
             loadingState = null;
 
-            stateManager.getState(SoundState.class).setKwdFile(kwdFile);
-            stateManager.getState(SoundState.class).setEnabled(true);
-
             app.enqueue(() -> {
+                if (stateManager.getState(GameClientState.class) != GameClientState.this || playerState == null) return;
+                SoundState sound = stateManager.getState(SoundState.class);
+                sound.bindSession(GameClientState.this, kwdFile, playerId);
+                sound.setEnabled(true);
                 playerState.setEnabled(true);
 
                 // Release the lock and enter to the game phase
@@ -524,16 +537,9 @@ public final class GameClientState extends AbstractPauseAwareState {
 
         @Override
         public void onPlaySpeech(int speechId, boolean showText, boolean introduction, int pathId) {
-            PlayerState owner = playerState;
             SoundState sound = stateManager.getState(SoundState.class);
             if (!activePresentation() || sound == null) return;
-            sound.attachLevelSpeech(speechId, () -> {
-                if (playerState != owner || !owner.isEnabled()
-                        || stateManager.getState(GameClientState.class) != GameClientState.this) return;
-                SystemMessageState messages = stateManager.getState(SystemMessageState.class);
-                if (messages != null) messages.addMessage(SystemMessageState.MessageType.INFO, String.format("${level.%d}", speechId - 1));
-                if (showText) owner.setText(speechId, introduction, pathId);
-            });
+            sound.attachLevelSpeech(speechId, new toniarts.openkeeper.game.sound.SoundSnapshot.StartAction(showText, introduction, pathId));
         }
 
         @Override

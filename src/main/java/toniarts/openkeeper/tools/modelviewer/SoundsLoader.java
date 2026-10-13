@@ -62,14 +62,14 @@ public final class SoundsLoader {
 
         if (category == null || category.isEmpty()) {
             return null;
-        } else if (CACHE.containsKey(category)) {
-            return CACHE.get(category);
+        } else if (CACHE.containsKey(useGlobal + ":" + category)) {
+            return CACHE.get(useGlobal + ":" + category);
         }
 
         SoundCategory result = null;
         try {
             result = new SoundCategory(category, useGlobal);
-            CACHE.put(category, result);
+            CACHE.put(useGlobal + ":" + category, result);
 //            temp(category, useGlobal);
         } catch (Exception e) {
             logger.log(Level.WARNING, "Sound category {0} does not exist", category);
