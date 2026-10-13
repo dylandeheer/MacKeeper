@@ -10,7 +10,7 @@ import toniarts.openkeeper.view.fogofwar.FogSnapshot;
 
 /** Joined logical client owners. Active HUD owners cease to exist on the terminal screen. */
 public record ClientState(ClientModelState model, PlayerProgressState progress, PlayerScreenState screen,
-        FogSnapshot fog, SoundSnapshot sound, Active active) {
+        FogSnapshot fog, SoundSnapshot sound, WorldViewState worldView, Active active) {
     public record Active(CameraState camera, MessageState messages, HudPanelState hud,
             InteractionSelection interaction, CreatureCardsState cards, HandViewState hand, boolean consoleEnabled) {
         public Active {
@@ -23,10 +23,11 @@ public record ClientState(ClientModelState model, PlayerProgressState progress, 
     }
     public ClientState {
         Objects.requireNonNull(model);Objects.requireNonNull(progress);Objects.requireNonNull(screen);
-        Objects.requireNonNull(fog);Objects.requireNonNull(sound);
+        Objects.requireNonNull(fog);Objects.requireNonNull(sound);Objects.requireNonNull(worldView);
         short player = model.playerId();
         if (progress.playerId() != player || screen.playerId() != player
-                || fog.knowledge().viewerId() != player || sound.playerId() != player
+                || fog.knowledge().viewerId() != player || sound.playerId() != player || worldView.playerId() != player
+                || worldView.width() != fog.knowledge().width() || worldView.height() != fog.knowledge().height()
                 || active != null && active.camera().playerId() != player)
             throw new IllegalArgumentException("Client owners belong to different players");
         if (screen.playerEnabled() != (active != null) || screen.awaitingEndInput() && progress.result() == null)

@@ -54,7 +54,7 @@ class LocalSessionArchivesTest {
         var booleanBad=bytes.clone();booleanBad[12]=2;SimulationArchivesTest.resign(booleanBad);
         assertThrows(IOException.class,()->LocalSessionArchives.decode(booleanBad));
         for(byte[] part:List.of(ClientModelSnapshots.encode(archive.client().model()),PlayerScreenSnapshots.encode(archive.client().screen()),
-                FogSnapshots.encode(archive.client().fog()),SoundSnapshots.encode(archive.client().sound()),HandViewSnapshots.encode(archive.client().active().hand()))) {
+                FogSnapshots.encode(archive.client().fog()),SoundSnapshots.encode(archive.client().sound()),HandViewSnapshots.encode(archive.client().active().hand()),WorldViewSnapshots.encode(archive.client().worldView()))) {
             int offset=SimulationArchivesTest.find(bytes,part);assertTrue(offset>0);
             for(int field:new int[]{-4,4}) {
                 var bad=bytes.clone();ByteBuffer.wrap(bad).putInt(offset+field,Integer.MAX_VALUE);SimulationArchivesTest.resign(bad);
@@ -94,6 +94,17 @@ class LocalSessionArchivesTest {
         assertDoesNotThrow(()->new LocalSessionArchive(false,server,queued));
         assertDoesNotThrow(()->new LocalSessionArchive(false,archive.server(),queued));
     }
+    @Test void joinedViewRejectsForeignMapAndUnallocatedIndicatorsIncludingTerminalSaves() {
+        for(boolean terminal:new boolean[]{false,true}) {
+            var archive=fixture(terminal);var c=archive.client();var view=c.worldView();
+            var foreign=new WorldViewState((short)4,2,3,view.flash(),view.flowers());
+            assertThrows(IllegalArgumentException.class,()->new ClientState(c.model(),c.progress(),c.screen(),c.fog(),c.sound(),foreign,c.active()));
+            var unallocated=new WorldViewState((short)3,2,3,view.flash(),Map.of(new EntityId(2),view.flowers().get(new EntityId(1))));
+            var client=new ClientState(c.model(),c.progress(),c.screen(),c.fog(),c.sound(),unallocated,c.active());
+            assertThrows(IllegalArgumentException.class,()->new LocalSessionArchive(false,archive.server(),client));
+        }
+    }
+
     @Test void ownerLifecycleCaptionAndBranchMustAgree() {
         var archive=fixture(false);var c=archive.client();
         assertThrows(IllegalArgumentException.class,()->copy(c,c.model(),c.progress(),c.screen(),null));
@@ -105,7 +116,7 @@ class LocalSessionArchivesTest {
         assertThrows(IllegalArgumentException.class,()->new LocalSessionArchive(true,archive.server(),branch));
     }
     private static ClientState copy(ClientState c,ClientModelState model,PlayerProgressState progress,PlayerScreenState screen,ClientState.Active active) {
-        return new ClientState(model,progress,screen,c.fog(),c.sound(),active);
+        return new ClientState(model,progress,screen,c.fog(),c.sound(),c.worldView(),active);
     }
     private static LocalSessionArchive fixture(boolean terminal) {
         var base=SimulationArchivesTest.fixture();var s=base.simulation();
@@ -132,6 +143,6 @@ class LocalSessionArchivesTest {
                     new CreatureCardsState((short)3,(short)1,List.of(),List.of(),List.of(),Map.of(),WorkerAmountControl.State.TOTAL,0),
                     new HandViewState((short)3,8,false,false,List.of()),true);
         }
-        return new LocalSessionArchive(false,new SimulationArchive(base.definition(),world),new ClientState(model,progress,screen,fog,sound,active));
+        return new LocalSessionArchive(false,new SimulationArchive(base.definition(),world),new ClientState(model,progress,screen,fog,sound,new WorldViewState((short)3,2,3,new WorldViewState.Flash(true,.7f,true,Set.of(new Point(1,2)),Set.of(new Point(1,2))),Map.of(new EntityId(1),new WorldViewState.Flower(WorldViewState.Kind.CREATURE,(short)1,true,.75f,2.5f,new WorldViewState.Cycle(WorldViewState.Status.MOOD,.2f,.03f)))),active));
     }
 }

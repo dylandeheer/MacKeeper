@@ -311,6 +311,19 @@ public abstract class PlayerMapViewState extends AbstractAppState implements Map
         return mapInformation;
     }
 
+    public toniarts.openkeeper.view.WorldViewState.Flash captureFlashes() {
+        requireFogOwner();return flashTileControl.captureState();
+    }
+
+    public void restoreFlashes(toniarts.openkeeper.view.WorldViewState.Flash saved) {
+        requireFogOwner();
+        for (Point point : saved.points()) {
+            if (point.x < 0 || point.y < 0 || point.x >= kwdFile.getMap().getWidth() || point.y >= kwdFile.getMap().getHeight())
+                throw new IllegalArgumentException("Flashing tile outside map");
+        }
+        flashTileControl.restoreState(saved);
+    }
+
     public toniarts.openkeeper.view.fogofwar.FogSnapshot captureFogState() {
         requireFogOwner();return fogOfWarController.captureState();
     }

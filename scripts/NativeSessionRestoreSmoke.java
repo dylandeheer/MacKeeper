@@ -14,6 +14,10 @@ import toniarts.openkeeper.game.state.loop.GameLoopManager;
 import toniarts.openkeeper.game.state.session.*;
 import toniarts.openkeeper.tools.convert.map.IKwdFile;
 import toniarts.openkeeper.view.PlayerInteractionState;
+import toniarts.openkeeper.view.WorldViewState;
+import toniarts.openkeeper.view.PlayerMapViewState;
+import toniarts.openkeeper.view.PlayerEntityViewState;
+import toniarts.openkeeper.utils.Point;
 /** Actual fresh local-session restoration using privately installed assets. No campaign-completion claim. */
 class NativeSessionRestoreSmoke {
  static boolean successful;
@@ -48,6 +52,8 @@ class NativeSessionRestoreSmoke {
    if(stage==0){
     if(client==null||!client.loadingCompletion().toCompletableFuture().isDone()||player==null||!player.isEnabled()||delay<8)return;
     client.loadingCompletion().toCompletableFuture().join();
+    var rendered=states.getState("3",PlayerEntityViewState.class);
+    if(rendered==null||!rendered.isInitialized()||rendered.captureFlowers().isEmpty())return;
     definition=client.getLevelData();loop(states.getState(GameServerState.class)).pause();next(1);return;
    }
    if(stage==1){
@@ -97,6 +103,7 @@ class NativeSessionRestoreSmoke {
     }
     check(saved.client().progress().equals(actual.client().progress()),"Playthrough identity/result changed");
     check(saved.client().screen().equals(actual.client().screen()),"Logical screen changed");
+    check(saved.client().worldView().equals(actual.client().worldView()),"Frozen world presentation changed across fresh restore");
     check(Arrays.equals(profile,Files.readAllBytes(toniarts.openkeeper.utils.AppPaths.dataDirectory().resolve("settings.properties"))),"Restore credited profile again");
     check(player.isScreenReady(),"Restored screen unsettled");
     if(!terminal){
@@ -138,11 +145,40 @@ class NativeSessionRestoreSmoke {
    }
   }catch(Exception e){throw new RuntimeException(e);}}
   void next(int value){stage=value;delay=0;System.out.println("RESTORE stage="+value);}
+  void verifyWorldView()throws Exception {
+   var map=states.getState(PlayerMapViewState.class);var entities=states.getState("3",PlayerEntityViewState.class);
+   var flowers=new TreeMap<com.simsilica.es.EntityId,WorldViewState.Flower>();
+   entities.captureFlowers().forEach((id,f)->flowers.put(id,new WorldViewState.Flower(f.kind(),f.definitionId(),false,.75f,4,
+     f.cycle()==null?null:new WorldViewState.Cycle(WorldViewState.Status.MOOD,.25f,.05f))));
+   check(!flowers.isEmpty(),"No real unit indicators for restoration check");
+   var a=new Point(1,1);var b=new Point(2,1);
+   var flash=new WorldViewState.Flash(false,.7f,true,Set.of(a,b),Set.of(a));
+   var expected=new WorldViewState((short)3,definition.getMap().getWidth(),definition.getMap().getHeight(),flash,flowers);
+   for(int i=0;i<3;i++) {
+    var path=Path.of("work/native-world-view.mkwv");Files.write(path,WorldViewSnapshots.encode(expected));
+    var saved=WorldViewSnapshots.decode(Files.readAllBytes(path));map.restoreFlashes(saved.flash());entities.restoreFlowers(saved.flowers());
+    check(saved.flash().equals(map.captureFlashes())&&saved.flowers().equals(entities.captureFlowers()),"Rendered owner clocks changed during quiet restore");
+    Object controller=field(map,PlayerMapViewState.class,"mapLoader");
+    check(((Set<?>)field(controller,toniarts.openkeeper.view.map.MapViewController.class,"flashedTiles")).equals(Set.of(a)),"Map painted the unlit addition");
+   }
+   var controls=(Map<?,?>)field(entities,PlayerEntityViewState.class,"flowerControls");
+   var first=flowers.entrySet().stream().filter(e->e.getValue().kind()==WorldViewState.Kind.CREATURE).findFirst().orElseThrow();
+   var control=(toniarts.openkeeper.view.control.IUnitFlowerControl<?>)controls.get(first.getKey());var hidden=first.getValue();
+   var visible=new WorldViewState.Flower(hidden.kind(),hidden.definitionId(),true,.75f,4,hidden.cycle());
+   control.restoreDisplay(visible);check(visible.equals(control.captureDisplay()),"Actual creature indicator reset its cycle");
+   control.update(.1f);var advanced=control.captureDisplay();
+   check(Math.abs(advanced.elapsed()-.85f)<.00001f&&Math.abs(advanced.cycle().statusTime()-.35f)<.00001f
+     &&advanced.cycle().redrawTime()==0&&advanced.cycle().status()==WorldViewState.Status.MOOD,"Actual indicator clocks did not continue");
+   control.restoreDisplay(hidden);
+   System.out.println("RESTORE world-view: three exact clock/membership disk bindings, real indicator clock continuation and independent lit tile subset");
+  }
+
   void captureAndRetire(GameClientState client,PlayerState player)throws Exception {
    if(!terminal){
     states.getState(toniarts.openkeeper.view.SystemMessageState.class).setEnabled(true);
     var service=(LocalGameSession)client.getGameClientService();service.showMessage(0,(short)3);service.showMessage(1,(short)3);
    }
+   verifyWorldView();
    saved=states.getState(GameServerState.class).captureLocalSession(client);saved.validateDefinition(definition);
    Path path=Path.of("work/native-session-restore.mkls");LocalSessionArchives.write(path,saved);saved=LocalSessionArchives.read(path);
    expectedServer=SimulationArchives.encode(saved.server());

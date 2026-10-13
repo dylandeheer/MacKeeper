@@ -8,9 +8,9 @@ import java.security.*;
 import toniarts.openkeeper.game.state.session.ClientState;
 import static toniarts.openkeeper.game.save.SaveValues.*;
 
-/** MKLS v1: bounded joined local save, with a checksum over the header and all owner sections. */
+/** MKLS v2: bounded joined local save, with a checksum over the header and all owner sections. */
 public final class LocalSessionArchives {
-    private static final int MAGIC = 0x4d4b4c53, VERSION = 1;
+    private static final int MAGIC = 0x4d4b4c53, VERSION = 2;
     private static final int HEADER = 12, DIGEST = 32;
     public static final int MAX_BYTES = 384 * 1024 * 1024;
     private static final int MAX_PAYLOAD = MAX_BYTES - HEADER - DIGEST;
@@ -34,6 +34,7 @@ public final class LocalSessionArchives {
             section(out, PlayerScreenSnapshots.encode(client.screen()));
             section(out, FogSnapshots.encode(client.fog()));
             section(out, SoundSnapshots.encode(client.sound()));
+            section(out, WorldViewSnapshots.encode(client.worldView()));
             BOOLEAN.write(out, client.active() != null);
             if (client.active() != null) {
                 var active = client.active();
@@ -72,6 +73,7 @@ public final class LocalSessionArchives {
                 var screen = PlayerScreenSnapshots.decode(section(in, PlayerScreenSnapshots.MAX_BYTES));
                 var fog = FogSnapshots.decode(section(in, FogSnapshots.MAX_BYTES));
                 var sound = SoundSnapshots.decode(section(in, SoundSnapshots.MAX_BYTES));
+                var worldView = WorldViewSnapshots.decode(section(in, WorldViewSnapshots.MAX_BYTES));
                 ClientState.Active active = null;
                 if (BOOLEAN.read(in)) active = new ClientState.Active(
                         CameraSnapshots.decode(section(in, CameraSnapshots.MAX_BYTES)),
@@ -81,7 +83,7 @@ public final class LocalSessionArchives {
                         CreatureCardSnapshots.decode(section(in, CreatureCardSnapshots.MAX_BYTES)),
                         HandViewSnapshots.decode(section(in, HandViewSnapshots.MAX_BYTES)), BOOLEAN.read(in));
                 if (in.read() != -1) throw new IOException("Trailing local save payload");
-                return new LocalSessionArchive(campaign, server, new ClientState(model, progress, screen, fog, sound, active));
+                return new LocalSessionArchive(campaign, server, new ClientState(model, progress, screen, fog, sound, worldView, active));
             }
         } catch (IllegalArgumentException | NullPointerException failure) {throw new IOException("Invalid local save", failure);}
     }

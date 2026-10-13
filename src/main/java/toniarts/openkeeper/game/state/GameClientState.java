@@ -177,7 +177,9 @@ public final class GameClientState extends AbstractPauseAwareState {
                     playerState.getScreen().captureCreatureCards(), interaction.captureHandView(), console.isEnabled());
         }
         return new toniarts.openkeeper.game.state.session.ClientState(captureClientModel(), playerState.captureProgressState(),
-                screen, playerMapViewState.captureFogState(), stateManager.getState(SoundState.class).captureState(), active);
+                screen, playerMapViewState.captureFogState(), stateManager.getState(SoundState.class).captureState(),
+                new toniarts.openkeeper.view.WorldViewState(playerId, kwdFile.getMap().getWidth(), kwdFile.getMap().getHeight(),
+                        playerMapViewState.captureFlashes(), playerModelViewState.captureFlowers()), active);
     }
 
     private void requireReadyClient() {
@@ -421,6 +423,8 @@ public final class GameClientState extends AbstractPauseAwareState {
         // Bind every owner before starting server threads or admitting pending notifications/input.
         restored.model().restore(players, pendingPresentation, kwdFile);
         playerMapViewState.restoreFogState(restored.fog());
+        playerMapViewState.restoreFlashes(restored.worldView().flash());
+        playerModelViewState.restoreFlowers(restored.worldView().flowers());
         var active = restored.active();
         if (active != null) {
             playerState.getScreen().restoreHudState(active.hud());

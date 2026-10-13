@@ -22,6 +22,8 @@ import com.simsilica.es.EntityComponent;
 import com.simsilica.es.EntityData;
 import com.simsilica.es.EntityId;
 import java.util.Collection;
+import toniarts.openkeeper.view.WorldViewState.Status;
+import toniarts.openkeeper.view.WorldViewState.Cycle;
 import toniarts.openkeeper.game.component.CreatureAi;
 import toniarts.openkeeper.game.component.CreatureComponent;
 import toniarts.openkeeper.game.component.CreatureExperience;
@@ -40,10 +42,6 @@ import toniarts.openkeeper.tools.convert.map.Player;
  */
 public final class CreatureFlowerControl extends UnitFlowerControl<Creature> {
 
-    private enum Status {
-
-        LEVEL, ACTIVITY, MOOD, REASON
-    }
 
     private static final float CHANGE_STATUS_INTERVAL = 0.5f;
     private static final float REDRAW_INTERVAL = 0.1f;
@@ -57,6 +55,14 @@ public final class CreatureFlowerControl extends UnitFlowerControl<Creature> {
         super(entityId, entityData, data, assetManager);
 
         currentDrawnOwnerId = getOwnerId();
+    }
+
+    @Override
+    protected Cycle captureCycle() {return new Cycle(currentStatus, timeCurrentStatusVisible, timeCurrentVisible);}
+
+    @Override
+    protected void restoreCycle(Cycle cycle) {
+        currentStatus = cycle.status();timeCurrentStatusVisible = cycle.statusTime();timeCurrentVisible = cycle.redrawTime();
     }
 
     @Override

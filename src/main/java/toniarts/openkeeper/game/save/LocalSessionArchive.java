@@ -38,6 +38,7 @@ public record LocalSessionArchive(boolean campaign, SimulationArchive server, Cl
         if (map.width() != fog.width() || map.height() != fog.height())
             throw new IllegalArgumentException("Client and server map dimensions differ");
         long next = world.entities().nextEntityId();
+        client.worldView().flowers().keySet().forEach(id -> entity(id, next));
         client.fog().seenEnemies().forEach(id -> entity(id, next));
         client.fog().observedHearts().forEach(id -> entity(id, next));
         entity(client.fog().possessedCreature(), next);
@@ -76,6 +77,7 @@ public record LocalSessionArchive(boolean campaign, SimulationArchive server, Cl
         if (!server.definition().equals(SimulationArchive.Definition.capture(definition)))
             throw new IllegalArgumentException("Saved session requires different map data or settings");
         client.model().bind(definition);
+        client.worldView().flowers().values().forEach(flower -> flower.validateDefinition(definition));
         if (!client.sound().levelCategory().equals(Objects.requireNonNullElse(definition.getGameLevel().getSoundCategory(), "")))
             throw new IllegalArgumentException("Saved audio belongs to another level");
         var active = client.active();
