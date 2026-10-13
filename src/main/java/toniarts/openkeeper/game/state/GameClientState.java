@@ -47,6 +47,9 @@ import toniarts.openkeeper.game.state.loading.SingleBarLoadingState;
 import toniarts.openkeeper.game.state.lobby.ClientInfo;
 import toniarts.openkeeper.game.state.session.GameSessionClientService;
 import toniarts.openkeeper.game.state.session.GameSessionListener;
+import toniarts.openkeeper.game.state.session.PresentationEvent;
+import toniarts.openkeeper.game.state.session.PresentationQueue;
+import toniarts.openkeeper.game.state.session.QueuedGameSessionListener;
 import toniarts.openkeeper.tools.convert.map.IKwdFile;
 import toniarts.openkeeper.tools.convert.map.TriggerAction;
 import toniarts.openkeeper.tools.convert.map.Variable;
@@ -84,7 +87,10 @@ public final class GameClientState extends AbstractPauseAwareState {
     private final boolean multiplayer;
     private IPlayerLoadingProgress loadingState;
     private final GameSessionClientService gameClientService;
-    private final GameSessionListenerImpl gameSessionListener = new GameSessionListenerImpl();
+    private final PresentationQueue pendingPresentation = new PresentationQueue();
+    private final GameSessionListenerImpl presentationTarget = new GameSessionListenerImpl();
+    private final QueuedGameSessionListener gameSessionListener = new QueuedGameSessionListener(pendingPresentation, presentationTarget);
+    private Thread renderThread;
     private IMapInformation mapInformation;
     private IFogOfWarInformation fogOfWarInformation;
     private PlayerState playerState;
@@ -94,19 +100,36 @@ public final class GameClientState extends AbstractPauseAwareState {
     private PlayerMapViewState playerMapViewState;
     private PlayerEntityViewState playerModelViewState;
     private TextParser textParser;
-    // Preserve callback order and wait for freshly attached camera states to initialize.
-    private final java.util.Deque<java.util.function.Consumer<PlayerCameraState>> pendingPresentation = new java.util.ArrayDeque<>();
-
     @Override
     public void update(float tpf) {
-        if (playerState == null || stateManager.getState(GameClientState.class) != this) {
-            pendingPresentation.clear();
-            return;
-        }
-        PlayerCameraState camera = stateManager.getState(PlayerCameraState.class);
-        if (playerState.isEnabled() && camera != null && !camera.isInitialized()) return;
-        while (!pendingPresentation.isEmpty()) pendingPresentation.removeFirst().accept(camera);
+        if (!gameStarted || playerState == null || stateManager.getState(GameClientState.class) != this) return;
+        pendingPresentation.drain(() -> {
+            PlayerCameraState camera = stateManager.getState(PlayerCameraState.class);
+            return !playerState.isEnabled() || camera == null || camera.isInitialized();
+        }, event -> {
+            try {event.deliver(presentationTarget);}
+            catch (RuntimeException failure) {logger.log(Level.ERROR, "Failed to apply client presentation event " + event.kind(), failure);}
+        });
     }
+
+    /** Call on the render thread inside the server snapshot boundary for a complete local capture. */
+    public PresentationQueue.State capturePendingPresentation() {
+        requireRenderThread();
+        if (!gameStarted || !isInitialized()) throw new IllegalStateException("Client is not ready for capture");
+        return pendingPresentation.capture();
+    }
+
+    /** Stage pending notifications without rendering or acknowledging them. */
+    public void restorePendingPresentation(PresentationQueue.State state) {
+        requireRenderThread();pendingPresentation.restore(state);
+    }
+
+    private void requireRenderThread() {
+        if (renderThread == null || Thread.currentThread() != renderThread)
+            throw new IllegalStateException("Client presentation state belongs to the render thread");
+    }
+
+    private boolean activePresentation() {return playerState != null && playerState.isEnabled();}
 
     /**
      * Single use game states
@@ -150,6 +173,7 @@ public final class GameClientState extends AbstractPauseAwareState {
     @Override
     public void initialize(final AppStateManager stateManager, final Application app) {
         this.stateManager = stateManager;
+        renderThread = Thread.currentThread();
 
         // Attach the loading state finally
         if (!gameStarted) {
@@ -188,7 +212,7 @@ public final class GameClientState extends AbstractPauseAwareState {
         stateManager.detach(this);
         detachRelatedAppStates();
 
-        pendingPresentation.clear();
+        pendingPresentation.close();
         playerState = null;
         playerMapViewState = null;
         playerModelViewState = null;
@@ -324,18 +348,7 @@ public final class GameClientState extends AbstractPauseAwareState {
         return textParser;
     }
 
-    private void enqueueHudAction(java.util.function.Consumer<PlayerState> action) {
-        app.enqueue(() -> {
-            if (playerState != null && playerState.isEnabled()
-                    && stateManager.getState(GameClientState.class) == this) {
-                pendingPresentation.addLast(camera -> {
-                    if (playerState.isEnabled()) action.accept(playerState);
-                });
-            }
-        });
-    }
-
-    private final class GameSessionListenerImpl implements GameSessionListener {
+    private final class GameSessionListenerImpl implements PresentationEvent.Target {
 
         private final Object mapDataLoadingObject = new Object();
         private volatile boolean mapDataLoaded = false;
@@ -361,14 +374,7 @@ public final class GameClientState extends AbstractPauseAwareState {
                                 mapDataLoaded = true;
                                 mapDataLoadingObject.notifyAll();
                             }
-                        }, (entityId) -> {
-                            app.enqueue(() -> {
-                                SystemMessageState systemMessageState = stateManager.getState(SystemMessageState.class);
-                                if (systemMessageState != null) {
-                                    systemMessageState.addMessage(SystemMessageState.MessageType.FIGHT, "Enemy creature sighted!");
-                                }
-                            });
-                        }) {
+                        }, gameSessionListener::onEnemySighted) {
 
                     private float lastProgress = 0;
 
@@ -474,32 +480,18 @@ public final class GameClientState extends AbstractPauseAwareState {
 
         @Override
         public void onGoldChange(short keeperId, long gold, int goldReserve) {
-            app.enqueue(() -> {
-                Keeper keeper = getPlayer(keeperId);
-                if (keeper == null) return;
-                keeper.setGold(gold);
-                keeper.setGoldReserve(goldReserve);
-                if (playerState != null && playerState.getPlayerId() == keeperId) {
-                    playerState.onGoldChange(keeperId, gold, goldReserve);
-                }
-            });
+            Keeper keeper = getPlayer(keeperId);
+            if (keeper == null) return;
+            keeper.setGold(gold);keeper.setGoldReserve(goldReserve);
+            if (playerState != null && playerState.getPlayerId() == keeperId) playerState.onGoldChange(keeperId, gold, goldReserve);
         }
 
         @Override
         public void onManaChange(short keeperId, int mana, int manaLoose, int manaGain) {
             Keeper keeper = getPlayer(keeperId);
-            keeper.setMana(mana);
-            keeper.setManaGain(manaGain);
-            keeper.setManaLoose(manaLoose);
-
-            // FIXME: See in what thread we are
-            if (playerState != null && playerState.getPlayerId() == keeperId) {
-                app.enqueue(() -> {
-                    if (playerState != null && playerState.getPlayerId() == keeperId) {
-                        playerState.onManaChange(keeperId, mana, manaLoose, manaGain);
-                    }
-                });
-            }
+            if (keeper == null) return;
+            keeper.setMana(mana);keeper.setManaGain(manaGain);keeper.setManaLoose(manaLoose);
+            if (playerState != null && playerState.getPlayerId() == keeperId) playerState.onManaChange(keeperId, mana, manaLoose, manaGain);
         }
 
         @Override
@@ -514,93 +506,75 @@ public final class GameClientState extends AbstractPauseAwareState {
 
         @Override
         public void onGamePaused() {
-            enqueueHudAction(player -> player.onPaused(true));
+            if (activePresentation()) playerState.onPaused(true);
         }
 
         @Override
         public void onGameResumed() {
-            enqueueHudAction(player -> player.onPaused(false));
+            if (activePresentation()) playerState.onPaused(false);
         }
 
         @Override
         public void onSetWidescreen(boolean enable) {
-            enqueueHudAction(player -> player.setWideScreen(enable));
+            if (activePresentation()) playerState.setWideScreen(enable);
         }
 
         @Override
         public void onGameEnded(boolean win, double elapsedSeconds) {
-            app.enqueue(() -> {
-                if (playerState != null) playerState.endGame(win, elapsedSeconds);
-            });
+            if (playerState != null) playerState.endGame(win, elapsedSeconds);
         }
 
         @Override
         public void onPlaySpeech(int speechId, boolean showText, boolean introduction, int pathId) {
-            app.enqueue(() -> {
-                PlayerState owner = playerState;
-                SoundState sound = stateManager.getState(SoundState.class);
-                if (owner == null || sound == null || !owner.isEnabled()
+            PlayerState owner = playerState;
+            SoundState sound = stateManager.getState(SoundState.class);
+            if (!activePresentation() || sound == null) return;
+            sound.attachLevelSpeech(speechId, () -> {
+                if (playerState != owner || !owner.isEnabled()
                         || stateManager.getState(GameClientState.class) != GameClientState.this) return;
-                sound.attachLevelSpeech(speechId, () -> {
-                    if (playerState != owner || !owner.isEnabled()
-                            || stateManager.getState(GameClientState.class) != GameClientState.this) return;
-                    SystemMessageState messages = stateManager.getState(SystemMessageState.class);
-                    if (messages != null) {
-                        messages.addMessage(SystemMessageState.MessageType.INFO, String.format("${level.%d}", speechId - 1));
-                    }
-                    if (showText) owner.setText(speechId, introduction, pathId);
-                });
+                SystemMessageState messages = stateManager.getState(SystemMessageState.class);
+                if (messages != null) messages.addMessage(SystemMessageState.MessageType.INFO, String.format("${level.%d}", speechId - 1));
+                if (showText) owner.setText(speechId, introduction, pathId);
             });
         }
 
         @Override
         public void onDoTransition(short pathId, Vector3f start) {
-            Vector3f transitionStart = start.clone();
-            app.enqueue(() -> {
-                if (playerState == null || stateManager.getState(GameClientState.class) != GameClientState.this) return;
-                pendingPresentation.addLast(camera -> {
-                    if (!playerState.isEnabled() || camera == null) {
-                        // The result screen removes the camera while the session can continue.
-                        gameClientService.transitionEnd();
-                        return;
-                    }
-                    camera.doTransition(pathId, transitionStart, new CinematicEventListener() {
-                        @Override public void onPlay(CinematicEvent cinematic) {}
-                        @Override public void onPause(CinematicEvent cinematic) {}
-                        @Override public void onStop(CinematicEvent cinematic) {
-                            gameClientService.transitionEnd();
-                        }
-                    });
-                });
+            PlayerCameraState camera = stateManager.getState(PlayerCameraState.class);
+            if (!activePresentation() || camera == null) {
+                // Terminal screens can remove the camera while the session continues.
+                gameClientService.transitionEnd();return;
+            }
+            camera.doTransition(pathId, start, new CinematicEventListener() {
+                @Override public void onPlay(CinematicEvent cinematic) {}
+                @Override public void onPause(CinematicEvent cinematic) {}
+                @Override public void onStop(CinematicEvent cinematic) {gameClientService.transitionEnd();}
             });
         }
 
         @Override
         public void onFlashButton(TriggerAction.MakeType buttonType, short targetId, TriggerAction.ButtonType targetButtonType, boolean enabled, int time) {
-            enqueueHudAction(player -> player.flashButton(buttonType, targetId, targetButtonType, enabled, time));
+            if (activePresentation()) playerState.flashButton(buttonType, targetId, targetButtonType, enabled, time);
         }
 
         @Override
         public void onRotateViewAroundPoint(Vector3f point, boolean relative, int angle, int time) {
-            enqueueHudAction(player -> player.rotateViewAroundPoint(point, relative, angle, time));
+            if (activePresentation()) playerState.rotateViewAroundPoint(point, relative, angle, time);
         }
 
         @Override
         public void onShowMessage(int textId) {
-            enqueueHudAction(player -> player.showMessage(textId));
+            if (activePresentation()) playerState.showMessage(textId);
         }
 
         @Override
         public void onShowObjective(int objectiveId) {
-            // Session callbacks may race level teardown and run off the render thread.
-            app.enqueue(() -> {
-                if (playerState != null) playerState.showObjective(objectiveId);
-            });
+            if (playerState != null) playerState.showObjective(objectiveId);
         }
 
         @Override
         public void onZoomViewToPoint(Vector3f point) {
-            enqueueHudAction(player -> player.zoomToPoint(point));
+            if (activePresentation()) playerState.zoomToPoint(point);
         }
 
         @Override
@@ -610,7 +584,7 @@ public final class GameClientState extends AbstractPauseAwareState {
 
         @Override
         public void onZoomViewToEntity(EntityId entityId) {
-            enqueueHudAction(player -> player.zoomToEntity(entityId, true));
+            if (activePresentation()) playerState.zoomToEntity(entityId, true);
         }
 
         @Override
@@ -629,9 +603,8 @@ public final class GameClientState extends AbstractPauseAwareState {
             Keeper keeper = getPlayer(keeperId);
             setResearchableEntity(researchableEntity, getResearchableEntitiesList(keeper, researchableEntity));
 
-            // FIXME: See in what thread we are
             if (notifier != null && playerState != null && playerState.getPlayerId() == keeperId) {
-                app.enqueue(notifier);
+                notifier.run();
             }
         }
 
@@ -704,8 +677,14 @@ public final class GameClientState extends AbstractPauseAwareState {
         }
 
         @Override
+        public void onEnemySighted(EntityId entityId) {
+            SystemMessageState messages = stateManager.getState(SystemMessageState.class);
+            if (messages != null) messages.addMessage(SystemMessageState.MessageType.FIGHT, "Enemy creature sighted!");
+        }
+
+        @Override
         public void setPossession(EntityId target) {
-            enqueueHudAction(player -> player.setPossession(target));
+            if (activePresentation()) playerState.setPossession(target);
             setPossessedCreature(target);
         }
     }
