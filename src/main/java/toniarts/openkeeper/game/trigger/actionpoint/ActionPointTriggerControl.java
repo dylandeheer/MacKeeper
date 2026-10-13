@@ -52,6 +52,8 @@ public final class ActionPointTriggerControl extends TriggerControl {
         this.entityPositionLookup = entityPositionLookup;
     }
 
+    public int getActionPointId() { return ap.getId(); }
+
     @Override
     protected boolean isActive(TriggerGenericData trigger) {
         boolean result = false;

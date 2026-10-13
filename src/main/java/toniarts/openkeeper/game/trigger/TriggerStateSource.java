@@ -7,4 +7,5 @@ import toniarts.openkeeper.game.save.TriggerSnapshots;
 /** Ordered execution-tree capture; controller ownership/binding is a separate section. */
 public interface TriggerStateSource {
     List<TriggerSnapshots.State> captureTrees();
+    toniarts.openkeeper.game.save.TriggerRegistrySnapshots.State captureRegistry();
 }

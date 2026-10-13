@@ -44,10 +44,25 @@ public final class ObjectTriggerLogicController extends AbstractThingTriggerLogi
     public ObjectTriggerLogicController(final IGameController gameController, final ILevelInfo levelInfo, final IGameTimer gameTimer, final IMapController mapController,
             final ICreaturesController creaturesController, final PlayerService playerService, final EntityData entityData,
             final IObjectsController objectsController) {
+        this(gameController, levelInfo, gameTimer, mapController, creaturesController, playerService, entityData, objectsController, null);
+    }
+
+    public static ObjectTriggerLogicController restoreState(IGameController gameController, ILevelInfo levelInfo, IGameTimer gameTimer,
+            IMapController mapController, ICreaturesController creaturesController, PlayerService playerService,
+            toniarts.openkeeper.game.save.GameEntityData entityData, IObjectsController objectsController, toniarts.openkeeper.game.save.TriggerRegistrySnapshots.State saved) {
+        java.util.Objects.requireNonNull(saved);
+        return new ObjectTriggerLogicController(gameController, levelInfo, gameTimer, mapController, creaturesController, playerService, entityData, objectsController, saved);
+    }
+
+    private ObjectTriggerLogicController(final IGameController gameController, final ILevelInfo levelInfo, final IGameTimer gameTimer, final IMapController mapController,
+            final ICreaturesController creaturesController, final PlayerService playerService, final EntityData entityData,
+            final IObjectsController objectsController, toniarts.openkeeper.game.save.TriggerRegistrySnapshots.State saved) {
         super(initTriggers(levelInfo.getLevelData().getThings(Thing.Object.class), gameController, levelInfo, gameTimer, mapController,
                 creaturesController, playerService),
-                entityData.getEntities(ObjectComponent.class, Trigger.class),
-                objectsController);
+                entityData, ObjectComponent.class, objectsController, toniarts.openkeeper.game.save.TriggerRegistrySnapshots.Kind.OBJECT, saved,
+                entry -> toniarts.openkeeper.game.controller.object.ObjectController.restoreState(
+                        new toniarts.openkeeper.game.data.ObjectControlState(entry.entity(), entry.definition()),
+                        (toniarts.openkeeper.game.save.GameEntityData) entityData, levelInfo.getLevelData(), objectsController, mapController));
     }
 
     private static Map<Integer, AbstractThingTriggerControl<IObjectController>> initTriggers(List<Thing.Object> things, final IGameController gameController, final ILevelInfo levelInfo, final IGameTimer gameTimer, final IMapController mapController,

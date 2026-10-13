@@ -55,12 +55,14 @@ public final class DoorsController implements IDoorsController {
 
     private IKwdFile kwdFile;
     private EntityData entityData;
+    private final IObjectsController restoredObjects;
     private Map<Variable.MiscVariable.MiscType, Variable.MiscVariable> gameSettings;
     private IMapController mapController;
     private IGameController gameController;
     private ILevelInfo levelInfo;
 
     public DoorsController() {
+        restoredObjects = null;
         // For serialization
     }
 
@@ -76,6 +78,19 @@ public final class DoorsController implements IDoorsController {
      */
     public DoorsController(IKwdFile kwdFile, EntityData entityData, Map<Variable.MiscVariable.MiscType, Variable.MiscVariable> gameSettings,
             IMapController mapController, IGameController gameController, ILevelInfo levelInfo) {
+        this(kwdFile, entityData, gameSettings, mapController, gameController, levelInfo, false, null);
+    }
+
+    public static DoorsController restoreBindings(IKwdFile kwdFile, EntityData data,
+            Map<Variable.MiscVariable.MiscType, Variable.MiscVariable> settings, IMapController map,
+            IGameController game, ILevelInfo level, IObjectsController objects) {
+        return new DoorsController(kwdFile, data, settings, map, game, level, true, java.util.Objects.requireNonNull(objects));
+    }
+
+    private DoorsController(IKwdFile kwdFile, EntityData entityData,
+            Map<Variable.MiscVariable.MiscType, Variable.MiscVariable> gameSettings,
+            IMapController mapController, IGameController gameController, ILevelInfo levelInfo, boolean restoring, IObjectsController restoredObjects) {
+        this.restoredObjects = restoredObjects;
         this.kwdFile = kwdFile;
         this.entityData = entityData;
         this.gameSettings = gameSettings;
@@ -84,7 +99,7 @@ public final class DoorsController implements IDoorsController {
         this.levelInfo = levelInfo;
 
         // Load doors
-        loadDoors();
+        if (!restoring) loadDoors();
     }
 
     private void loadDoors() {
@@ -161,7 +176,7 @@ public final class DoorsController implements IDoorsController {
         if (doorComponent == null) {
             throw new RuntimeException("Entity " + entityId + " doesn't represent a door!");
         }
-        return new DoorController(entityId, entityData, kwdFile.getDoorById(doorComponent.doorId), gameController.getGameWorldController().getObjectsController(), gameController.getGameWorldController().getMapController()
+        return new DoorController(entityId, entityData, kwdFile.getDoorById(doorComponent.doorId), (restoredObjects != null ? restoredObjects : gameController.getGameWorldController().getObjectsController()), mapController
         );
     }
 

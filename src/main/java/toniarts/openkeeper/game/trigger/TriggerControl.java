@@ -86,6 +86,8 @@ public class TriggerControl extends Control {
         return tree.capture(isEnabled(), initialPaydayCycle, observedPaydays, trigger);
     }
 
+    public final void validateState(toniarts.openkeeper.game.save.TriggerSnapshots.State saved) { tree.validate(saved); }
+
     /** Bind progress on a newly constructed control; no action or condition is evaluated. */
     public final void restoreState(toniarts.openkeeper.game.save.TriggerSnapshots.State saved) {
         tree.validate(saved);

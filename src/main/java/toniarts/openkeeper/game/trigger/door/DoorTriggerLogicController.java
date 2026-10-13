@@ -44,10 +44,25 @@ public final class DoorTriggerLogicController extends AbstractThingTriggerLogicC
     public DoorTriggerLogicController(final IGameController gameController, final ILevelInfo levelInfo, final IGameTimer gameTimer, final IMapController mapController,
             final ICreaturesController creaturesController, final PlayerService playerService, final EntityData entityData,
             final IDoorsController doorsController) {
+        this(gameController, levelInfo, gameTimer, mapController, creaturesController, playerService, entityData, doorsController, null, null);
+    }
+
+    public static DoorTriggerLogicController restoreState(IGameController gameController, ILevelInfo levelInfo, IGameTimer gameTimer,
+            IMapController mapController, ICreaturesController creaturesController, PlayerService playerService,
+            toniarts.openkeeper.game.save.GameEntityData entityData, IDoorsController doorsController, toniarts.openkeeper.game.controller.IObjectsController restoredObjects, toniarts.openkeeper.game.save.TriggerRegistrySnapshots.State saved) {
+        java.util.Objects.requireNonNull(saved);
+        return new DoorTriggerLogicController(gameController, levelInfo, gameTimer, mapController, creaturesController, playerService, entityData, doorsController, restoredObjects, saved);
+    }
+
+    private DoorTriggerLogicController(final IGameController gameController, final ILevelInfo levelInfo, final IGameTimer gameTimer, final IMapController mapController,
+            final ICreaturesController creaturesController, final PlayerService playerService, final EntityData entityData,
+            final IDoorsController doorsController, toniarts.openkeeper.game.controller.IObjectsController restoredObjects, toniarts.openkeeper.game.save.TriggerRegistrySnapshots.State saved) {
         super(initTriggers(levelInfo.getLevelData().getThings(Thing.Door.class), gameController, levelInfo, gameTimer, mapController,
                 creaturesController, playerService),
-                entityData.getEntities(DoorComponent.class, Trigger.class),
-                doorsController);
+                entityData, DoorComponent.class, doorsController, toniarts.openkeeper.game.save.TriggerRegistrySnapshots.Kind.DOOR, saved,
+                entry -> toniarts.openkeeper.game.controller.door.DoorController.restoreBinding(entry.entity(), entry.definition(),
+                        (toniarts.openkeeper.game.save.GameEntityData) entityData, levelInfo.getLevelData(),
+                        restoredObjects, mapController));
     }
 
     private static Map<Integer, AbstractThingTriggerControl<IDoorController>> initTriggers(List<Thing.Door> things, final IGameController gameController, final ILevelInfo levelInfo, final IGameTimer gameTimer, final IMapController mapController,

@@ -162,6 +162,17 @@ public final class GameController implements IGameLogicUpdatable, IGameControlle
 
     }
 
+    public Map<toniarts.openkeeper.game.save.TriggerRegistrySnapshots.Kind, toniarts.openkeeper.game.save.TriggerRegistrySnapshots.State> captureTriggerRegistries() {
+        var result = new java.util.EnumMap<toniarts.openkeeper.game.save.TriggerRegistrySnapshots.Kind, toniarts.openkeeper.game.save.TriggerRegistrySnapshots.State>(toniarts.openkeeper.game.save.TriggerRegistrySnapshots.Kind.class);
+        result.put(toniarts.openkeeper.game.save.TriggerRegistrySnapshots.Kind.LEVEL,
+                new toniarts.openkeeper.game.save.TriggerRegistrySnapshots.State(toniarts.openkeeper.game.save.TriggerRegistrySnapshots.Kind.LEVEL,
+                        triggerControl == null ? List.of() : List.of(toniarts.openkeeper.game.save.TriggerRegistrySnapshots.Entry.level(triggerControl.captureState())), List.of()));
+        for (var controller : controllers) if (controller instanceof toniarts.openkeeper.game.trigger.TriggerStateSource source) {
+            var state = source.captureRegistry();result.put(state.kind(), state);
+        }
+        return Map.copyOf(result);
+    }
+
     /** Trees only; registry owner references still require a separate snapshot. */
     public Map<String, List<toniarts.openkeeper.game.save.TriggerSnapshots.State>> captureTriggerTrees() {
         var result = new java.util.TreeMap<String, List<toniarts.openkeeper.game.save.TriggerSnapshots.State>>();

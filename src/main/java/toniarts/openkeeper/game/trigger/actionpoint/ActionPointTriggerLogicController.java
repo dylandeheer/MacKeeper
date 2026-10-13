@@ -45,6 +45,28 @@ public final class ActionPointTriggerLogicController implements IGameLogicUpdata
         }
     }
 
+    private ActionPointTriggerLogicController(java.util.List<ActionPointTriggerControl> controls) { triggers.addAll(controls); }
+    public static ActionPointTriggerLogicController restoreState(IGameController game, ILevelInfo level, IGameTimer timer, IMapController map,
+            ICreaturesController creatures, IEntityPositionLookup positions,
+            toniarts.openkeeper.game.save.TriggerRegistrySnapshots.State saved) {
+        if (saved.kind() != toniarts.openkeeper.game.save.TriggerRegistrySnapshots.Kind.ACTION_POINT) throw new IllegalArgumentException("Wrong action-point registry");
+        var points = new java.util.HashMap<Integer,ActionPoint>();
+        for (var point : level.getActionPoints()) if (point.getTriggerId() != 0) points.put(point.getId(),point);
+        if (!points.keySet().equals(saved.entries().stream().map(e -> e.ownerId()).collect(java.util.stream.Collectors.toSet()))) throw new IllegalArgumentException("Action-point owners differ");
+        var controls = new java.util.ArrayList<ActionPointTriggerControl>();
+        for (var entry : saved.entries()) {
+            var point = points.get(entry.ownerId());
+            if (point.getTriggerId() != entry.tree().triggerId()) throw new IllegalArgumentException("Action-point definition differs");
+            var control = new ActionPointTriggerControl(game,level,timer,map,creatures,point.getTriggerId(),point,positions);
+            control.restoreState(entry.tree());controls.add(control);
+        }
+        return new ActionPointTriggerLogicController(controls);
+    }
+    @Override public toniarts.openkeeper.game.save.TriggerRegistrySnapshots.State captureRegistry() {
+        return new toniarts.openkeeper.game.save.TriggerRegistrySnapshots.State(toniarts.openkeeper.game.save.TriggerRegistrySnapshots.Kind.ACTION_POINT,
+                triggers.stream().map(c -> toniarts.openkeeper.game.save.TriggerRegistrySnapshots.Entry.actionPoint(c.captureState(),c.getActionPointId())).toList(), java.util.List.of());
+    }
+
     @Override
     public java.util.List<toniarts.openkeeper.game.save.TriggerSnapshots.State> captureTrees() {
         return triggers.stream().map(control -> control.captureState()).toList();

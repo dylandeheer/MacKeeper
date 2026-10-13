@@ -23,11 +23,11 @@ class OwnerSnapshotSmoke {
             List<toniarts.openkeeper.game.controller.map.FlashTileControl.State> flashes,
             toniarts.openkeeper.game.logic.PlayerCreatureSystem.State creatureIndex,
             toniarts.openkeeper.game.logic.PlayerSpellbookSystem.State spellbookIndex,
-            toniarts.openkeeper.game.logic.ChickenAiSystem.SavedState chickens, List<CreatureControlState> creatureControllers, toniarts.openkeeper.game.logic.CreatureAiSystem.SavedState creatureAi, PartyRegistryState parties, toniarts.openkeeper.game.task.TaskIdentityAllocator.State taskAllocation, List<TileTaskSnapshots.State> tileTasks, RoomTaskSnapshots.Capture roomTasks, EntityTaskSnapshots.Capture entityTasks, TaskGraphSnapshots.State taskGraph, TaskManagerSnapshots.State taskManager, ManaSnapshots.State mana, ExperienceSnapshots.State experience, KeeperEconomySnapshots.State economy, CreatureSpawnSnapshots.State recruitment, ChickenSpawnSnapshots.State chickenSpawning, LifetimeSnapshots.State lifetimes, SlapSnapshots.State slaps, HealthSnapshots.State health, AnimationSnapshots.State animation, LifetimeSnapshots.Clock creatureView, MovementSnapshots.State movement, Map<String,List<TriggerSnapshots.State>> triggerTrees) { }
+            toniarts.openkeeper.game.logic.ChickenAiSystem.SavedState chickens, List<CreatureControlState> creatureControllers, toniarts.openkeeper.game.logic.CreatureAiSystem.SavedState creatureAi, PartyRegistryState parties, toniarts.openkeeper.game.task.TaskIdentityAllocator.State taskAllocation, List<TileTaskSnapshots.State> tileTasks, RoomTaskSnapshots.Capture roomTasks, EntityTaskSnapshots.Capture entityTasks, TaskGraphSnapshots.State taskGraph, TaskManagerSnapshots.State taskManager, ManaSnapshots.State mana, ExperienceSnapshots.State experience, KeeperEconomySnapshots.State economy, CreatureSpawnSnapshots.State recruitment, ChickenSpawnSnapshots.State chickenSpawning, LifetimeSnapshots.State lifetimes, SlapSnapshots.State slaps, HealthSnapshots.State health, AnimationSnapshots.State animation, LifetimeSnapshots.Clock creatureView, MovementSnapshots.State movement, Map<String,List<TriggerSnapshots.State>> triggerTrees, Map<TriggerRegistrySnapshots.Kind,TriggerRegistrySnapshots.State> triggerRegistries) { }
 
     public static void main(String[] args) throws Exception {
         String base = Path.of(args[0]).toAbsolutePath().normalize() + "/";
-        int ownerCount = 0, pickedUp = 0, observedBooks = 0, observedChickens = 0, observedCreatures = 0, observedParties = 0, spawnedParties = 0, tileTaskCount = 0, roomTaskCount = 0, entityTaskCount = 0, objectiveTaskCount = 0, decoratorCount = 0, movingBodies = 0, triggerTrees = 0, triggerNodes = 0;
+        int ownerCount = 0, pickedUp = 0, observedBooks = 0, observedChickens = 0, observedCreatures = 0, observedParties = 0, spawnedParties = 0, tileTaskCount = 0, roomTaskCount = 0, entityTaskCount = 0, objectiveTaskCount = 0, decoratorCount = 0, movingBodies = 0, triggerTrees = 0, triggerNodes = 0, triggerOwners = 0;
         for (String name : List.of("level1", "level17", "TrapTime", "level10")) {
             var kwd = KwdFile.load(base, Path.of(base, "Data/editor/maps/" + name + ".kwd"));
             var data = new GameEntityData();
@@ -139,7 +139,7 @@ class OwnerSnapshotSmoke {
                                     new LevelSnapshots.State(LevelState.capture(game.getLevelInfo()), ((GameTimeController) game.getGameTimer()).captureState()), Map.copyOf(statistics),
                                     ((MapController) game.getGameWorldController().getMapController()).captureRoomStates(),
                                     game.getPlayerControllers().values().stream().map(player -> ((PlayerController) player).captureState()).toList(),
-                                    ((MapController) game.getGameWorldController().getMapController()).captureFlashControls(), systems.creatures(), systems.spellbooks(), systems.chickens(), systems.creatureControllers(), systems.creatureAi(), systems.parties(), systems.taskAllocation(), systems.tileTasks(), systems.roomTasks(), systems.entityTasks(), systems.taskGraph(), systems.taskManager(), systems.mana(), systems.experience(), systems.economy(), systems.recruitment(), systems.chickenSpawning(), systems.lifetimes(), systems.slaps(), systems.health(), systems.animation(), systems.creatureView(), systems.movement(), ((GameController) game).captureTriggerTrees());
+                                    ((MapController) game.getGameWorldController().getMapController()).captureFlashControls(), systems.creatures(), systems.spellbooks(), systems.chickens(), systems.creatureControllers(), systems.creatureAi(), systems.parties(), systems.taskAllocation(), systems.tileTasks(), systems.roomTasks(), systems.entityTasks(), systems.taskGraph(), systems.taskManager(), systems.mana(), systems.experience(), systems.economy(), systems.recruitment(), systems.chickenSpawning(), systems.lifetimes(), systems.slaps(), systems.health(), systems.animation(), systems.creatureView(), systems.movement(), ((GameController) game).captureTriggerTrees(), ((GameController) game).captureTriggerRegistries());
                         } catch (IOException e) { throw new UncheckedIOException(e); }
                     });
                     var staged = GameEntityData.restore(EntitySnapshots.decode(EntitySnapshots.encode(capture.entities())));
@@ -395,6 +395,21 @@ class OwnerSnapshotSmoke {
                                 var node = partyState.nodes().get(entry.getValue());
                                 if (partyState.spawned().containsKey(node.id())) require(creatures.getParty(entry.getKey()) == creatures.getPartyById(node.id()), "Shared party identity lost");
                             }
+                            var registryStates = new EnumMap<TriggerRegistrySnapshots.Kind,TriggerRegistrySnapshots.State>(TriggerRegistrySnapshots.Kind.class);
+                            for (var entry : capture.triggerRegistries().entrySet()) registryStates.put(entry.getKey(), TriggerRegistrySnapshots.decode(TriggerRegistrySnapshots.encode(entry.getValue())));
+                            var doors = DoorsController.restoreBindings(kwd, staged, kwd.getVariables(), map, gameRef, level, objects);
+                            var beforeTriggerLevel = LevelState.capture(level);
+                            var beforeTriggerKeepers = stagedPlayers.stream().map(p -> p.getKeeper().captureState()).toList();
+                            try (var registries = toniarts.openkeeper.game.trigger.TriggerRegistries.restore(registryStates, gameRef, level,
+                                    new GameTimeController(capture.clock()), map, creatures, objects, doors, noDeathCleanup, null, staged)) {
+                                require(registryStates.equals(registries.captureState()), "Concrete trigger owner bindings differ");
+                                registries.start();registries.start();
+                                require(registryStates.equals(registries.captureState()), "Trigger activation changed execution state");
+                                require(beforeTriggerLevel.equals(LevelState.capture(level)), "Trigger binding changed level values");
+                                require(beforeTriggerKeepers.equals(stagedPlayers.stream().map(p -> p.getKeeper().captureState()).toList()), "Trigger binding changed keeper values");
+                                require(Arrays.equals(beforeHands, EntitySnapshots.encode(staged.capture())), "Trigger registry binding changed entities");
+                                triggerOwners += registryStates.values().stream().mapToInt(state -> state.entries().size()).sum();
+                            }
                             var creatureAi = CreatureSystemSnapshots.decode(CreatureSystemSnapshots.encode(capture.creatureAi()));
                             var aiSystem = toniarts.openkeeper.game.logic.CreatureAiSystem.restoreState(staged, creatures, tasks, creatureAi);
                             try {require(creatureAi.equals(aiSystem.captureState()), "Active creature membership differs");}
@@ -445,12 +460,14 @@ class OwnerSnapshotSmoke {
         require(objectiveTaskCount > 0, "No live objective tasks exercised");
         System.out.println("PASS objective task nodes=" + objectiveTaskCount + " decorators=" + decoratorCount);
         System.out.println("PASS party node round trips=" + observedParties + " spawned index entries=" + spawnedParties);
+        require(triggerOwners > 0, "No concrete trigger owners exercised");
+        System.out.println("PASS concrete trigger owner bindings=" + triggerOwners);
         require(triggerTrees > 0, "No trigger trees exercised");
         System.out.println("PASS trigger execution trees=" + triggerTrees + " nodes=" + triggerNodes);
         require(movingBodies > 0, "No active steering bodies exercised");
         System.out.println("PASS movement body round trips=" + movingBodies);
         System.out.println("PASS 12 live owner captures; keeper round trips=" + ownerCount + " carried entity round trips=" + pickedUp);
-        System.out.println("Keeper/hand/level/time/statistics/map/room/player/flash/creature-index/spellbook-index/object/chicken/creature-cache/AI-membership/party/unified-task-graph/task-manager/mana/experience/economy/recruitment/chicken-spawning/lifetimes/slaps/health/animation/view/mood/doors/loose-objects/hauling/bridge/movement/trigger-tree bindings and listener activation only. Whole-world restoration, resumed gameplay and complete save files remain unverified.");
+        System.out.println("Keeper/hand/level/time/statistics/map/room/player/flash/creature-index/spellbook-index/object/chicken/creature-cache/AI-membership/party/unified-task-graph/task-manager/mana/experience/economy/recruitment/chicken-spawning/lifetimes/slaps/health/animation/view/mood/doors/loose-objects/hauling/bridge/movement/trigger-tree/trigger-registry bindings and listener activation only. Whole-world restoration, resumed gameplay and complete save files remain unverified.");
     }
     static void require(boolean ok, String message) { if (!ok) throw new AssertionError(message); }
 }
