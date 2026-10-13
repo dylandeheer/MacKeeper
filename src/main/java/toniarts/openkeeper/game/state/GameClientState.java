@@ -31,8 +31,6 @@ import java.util.Map;
 import java.util.TreeMap;
 import javax.annotation.Nullable;
 import toniarts.openkeeper.Main;
-import toniarts.openkeeper.game.controller.IPlayerController;
-import toniarts.openkeeper.game.controller.PlayerController;
 import toniarts.openkeeper.game.data.CampaignLevel;
 import toniarts.openkeeper.game.data.Keeper;
 import toniarts.openkeeper.game.data.ResearchableEntity;
@@ -77,7 +75,6 @@ public final class GameClientState extends AbstractPauseAwareState {
     private final IKwdFile kwdFile;
 
     private final Map<Short, Keeper> players = new TreeMap<>();
-    private final Map<Short, IPlayerController> playerControllers = new TreeMap<>();
     private final Object loadingObject = new Object();
     private volatile boolean gameStarted = false;
 
@@ -120,6 +117,26 @@ public final class GameClientState extends AbstractPauseAwareState {
     /** Stage pending notifications without rendering or acknowledging them. */
     public void restorePendingPresentation(PresentationQueue.State state) {
         requireRenderThread();pendingPresentation.restore(state);
+    }
+
+    /** Capture on the render thread inside the server gate when joining a local session snapshot. */
+    public toniarts.openkeeper.game.state.session.ClientModelState captureClientModel() {
+        requireReadyClient();
+        return new toniarts.openkeeper.game.state.session.ClientModelState(playerId,
+                players.values().stream().map(Keeper::captureState).toList(), pendingPresentation.capture());
+    }
+
+    /** Restore observed model values without consuming pending events or rebuilding views. */
+    public void restoreClientModel(toniarts.openkeeper.game.state.session.ClientModelState saved) {
+        requireReadyClient();
+        if (saved.playerId() != playerId) throw new IllegalArgumentException("Client model belongs to another player");
+        saved.restore(players, pendingPresentation, kwdFile);
+    }
+
+    private void requireReadyClient() {
+        requireRenderThread();
+        if (!isInitialized() || !gameStarted || stateManager.getState(GameClientState.class) != this)
+            throw new IllegalStateException("Client is not ready for model restoration");
     }
 
     private void requireRenderThread() {
@@ -334,10 +351,6 @@ public final class GameClientState extends AbstractPauseAwareState {
         return players.values();
     }
 
-    public IPlayerController getPlayerController(short playerId) {
-        return playerControllers.get(playerId);
-    }
-
     /**
      * Get level variable value
      *
@@ -372,7 +385,6 @@ public final class GameClientState extends AbstractPauseAwareState {
                 for (Keeper keeper : players) {
                     keeper.setPlayer(kwdFile.getPlayer(keeper.getId()));
                     GameClientState.this.players.put(keeper.getId(), keeper);
-                    GameClientState.this.playerControllers.put(keeper.getId(), new PlayerController(kwdFile, keeper, kwdFile.getImp(), gameClientService.getEntityData(), kwdFile.getVariables()));
                 }
 
                 // Create player state

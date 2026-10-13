@@ -13,6 +13,7 @@ import toniarts.openkeeper.game.save.InteractionSnapshots;
 import toniarts.openkeeper.game.save.FogSnapshots;
 import toniarts.openkeeper.game.save.CreatureCardSnapshots;
 import toniarts.openkeeper.game.save.HandViewSnapshots;
+import toniarts.openkeeper.game.save.ClientModelSnapshots;
 import toniarts.openkeeper.view.HandViewState;
 import toniarts.openkeeper.view.KeeperHandState;
 import toniarts.openkeeper.view.creature.CreatureCardsState;
@@ -88,6 +89,28 @@ class NativePresentationSmoke {
         }
         private static java.lang.reflect.Field interactionField(String name) throws Exception {
             var field = PlayerInteractionState.class.getDeclaredField(name);field.setAccessible(true);return field;
+        }
+        private void restoreClientModel() throws Exception {
+            var saved=loop.captureSnapshot(game -> client.captureClientModel());
+            var identities=client.getPlayers().stream().collect(java.util.stream.Collectors.toMap(k->k.getId(),k->k));
+            var server=loop.captureSnapshot(game -> game.getPlayerController(saved.playerId()).getKeeper().captureState());
+            var messages=states.getState(SystemMessageState.class).captureState();
+            Path file=Files.createTempFile(Path.of("work"),"client-model-",".bin");
+            try {
+                for(int i=0;i<3;i++) {
+                    Files.write(file,ClientModelSnapshots.encode(saved));var decoded=ClientModelSnapshots.decode(Files.readAllBytes(file));
+                    client.getPlayer().setGold(client.getPlayer().getGold()+999);
+                    loop.captureSnapshot(game -> {client.restoreClientModel(decoded);return null;});
+                    if(!saved.equals(client.captureClientModel()) || !messages.equals(states.getState(SystemMessageState.class).captureState())
+                            || !server.equals(loop.captureSnapshot(game -> game.getPlayerController(saved.playerId()).getKeeper().captureState())))
+                        throw new AssertionError("Client model restore replayed notifications or changed server state");
+                    for(var keeper:client.getPlayers()) if(identities.get(keeper.getId())!=keeper) throw new AssertionError("Client model replaced a keeper referenced by views");
+                }
+            } finally {Files.delete(file);}
+            try(var worker=Executors.newSingleThreadExecutor()) {
+                worker.submit(()->{try{client.captureClientModel();throw new AssertionError("Off-render client model accepted");}catch(IllegalStateException expected){}}).get(5,TimeUnit.SECONDS);
+            }
+            System.out.println("CLIENTMODEL PASS three joined keeper/notification disk restores preserve observed values, keeper identities and server state; pending events remain undelivered");
         }
         private void restoreHandView(PlayerState player) throws Exception {
             var interaction = states.getState(PlayerInteractionState.class);var hand = states.getState(KeeperHandState.class);
@@ -356,6 +379,7 @@ class NativePresentationSmoke {
                             if (before.getGold() == gold || !session.isInTransition()) throw new AssertionError("Restore rendered or acknowledged event");
                         }
                     } finally {Files.delete(file);}
+                    restoreClientModel();
                     System.out.println("PRESENTATION 6 worker notifications retained through 3 disk round trips; no staging side effects");
                     stage = 2;delay = 0;
                 }
@@ -397,7 +421,7 @@ class NativePresentationSmoke {
                 if (stage == 6 && states.getState(PlayerInteractionState.class).isEnabled()
                         && !interactionField("refreshAfterRestore").getBoolean(states.getState(PlayerInteractionState.class))) {
                     verifyInteractionResume();
-                    System.out.println("PRESENTATION PASS pending events, active camera, messages, HUD panels, interaction, fog, creature-card and hand-view owners, cinematic acknowledgement and pause/resume");
+                    System.out.println("PRESENTATION PASS client models, pending events, active camera, messages, HUD panels, interaction, fog, creature-card and hand-view owners, cinematic acknowledgement and pause/resume");
                     successful = true;app.stop();stage = 7;
                 }
             } catch (Throwable failure) {failure.printStackTrace();app.stop();stage = 7;}

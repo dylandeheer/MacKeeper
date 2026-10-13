@@ -347,6 +347,21 @@ public final class Keeper implements Comparable<Keeper>, IIndexable, Savable {
         return result;
     }
 
+    /** Quietly replace values while preserving the keeper identity referenced by client views. */
+    public void restoreValues(KeeperState state, Player definition) {
+        if (state.id() != id) throw new IllegalArgumentException("Cannot replace another keeper identity");
+        Keeper prepared = restoreState(state, definition);
+        ai = prepared.ai;aiType = prepared.aiType;player = prepared.player;
+        gold = prepared.gold;goldReserve = prepared.goldReserve;goldMined = prepared.goldMined;
+        mana = prepared.mana;manaGain = prepared.manaGain;manaLoose = prepared.manaLoose;maxMana = prepared.maxMana;
+        dungeonHeartLocation = prepared.dungeonHeartLocation;possession = prepared.possession;
+        availableRooms = prepared.availableRooms;availableSpells = prepared.availableSpells;availableCreatures = prepared.availableCreatures;
+        availableDoors = prepared.availableDoors;availableTraps = prepared.availableTraps;currentResearch = prepared.currentResearch;
+        destroyed = prepared.destroyed;killedByPlayerId = prepared.killedByPlayerId;
+        creaturesLost = prepared.creaturesLost;enemyCreaturesKilled = prepared.enemyCreaturesKilled;heroesKilled = prepared.heroesKilled;
+        creatureKillsByPlayer = prepared.creatureKillsByPlayer;allies = prepared.allies;
+    }
+
     private static List<ResearchableEntity> restoreResearch(List<KeeperState.Research> states) {
         List<ResearchableEntity> restored = new ArrayList<>(states.size());
         for (var state : states) restored.add(state.restore());
@@ -366,6 +381,7 @@ public final class Keeper implements Comparable<Keeper>, IIndexable, Savable {
         out.write(manaGain, "manaGain", 0);
         out.write(manaLoose, "manaLoose", 0);
         out.write(maxMana, "maxMana", 0);
+        out.write(possession, "possession", false);
         out.write(dungeonHeartLocation != null, "hasDungeonHeartLocation", true);
         out.write(dungeonHeartLocation != null ? dungeonHeartLocation.x : 0, "dungeonHeartLocationX", 0);
         out.write(dungeonHeartLocation != null ? dungeonHeartLocation.y : 0, "dungeonHeartLocationY", 0);
@@ -398,6 +414,7 @@ public final class Keeper implements Comparable<Keeper>, IIndexable, Savable {
         manaGain = in.readInt("manaGain", manaGain);
         manaLoose = in.readInt("manaLoose", manaLoose);
         maxMana = in.readInt("maxMana", maxMana);
+        possession = in.readBoolean("possession", false);
         int x = in.readInt("dungeonHeartLocationX", 0);
         int y = in.readInt("dungeonHeartLocationY", 0);
         dungeonHeartLocation = in.readBoolean("hasDungeonHeartLocation", true) ? new Point(x, y) : null;

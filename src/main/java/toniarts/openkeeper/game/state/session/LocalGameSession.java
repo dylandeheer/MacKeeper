@@ -6,8 +6,6 @@
 package toniarts.openkeeper.game.state.session;
 
 import com.jme3.app.state.AppStateManager;
-import com.jme3.export.binary.BinaryExporter;
-import com.jme3.export.binary.BinaryImporter;
 import com.jme3.math.Vector2f;
 import com.jme3.math.Vector3f;
 import com.jme3.util.SafeArrayList;
@@ -15,11 +13,8 @@ import com.simsilica.es.EntityData;
 import com.simsilica.es.EntityId;
 import toniarts.openkeeper.game.save.GameEntityData;
 import toniarts.openkeeper.utils.Point;
-import java.io.ByteArrayOutputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
-import java.lang.System.Logger;
-import java.lang.System.Logger.Level;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -39,16 +34,8 @@ import toniarts.openkeeper.tools.convert.map.IKwdFile;
 import toniarts.openkeeper.tools.convert.map.KwdFile;
 import toniarts.openkeeper.tools.convert.map.Player;
 import toniarts.openkeeper.tools.convert.map.TriggerAction;
-import toniarts.openkeeper.utils.Point;
 import toniarts.openkeeper.utils.Utils;
 
-import java.io.ByteArrayOutputStream;
-import java.io.IOException;
-import java.lang.System.Logger;
-import java.lang.System.Logger.Level;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.List;
 
 /**
  * Local game session, a virtual server
@@ -57,7 +44,6 @@ import java.util.List;
  */
 public final class LocalGameSession implements GameSessionServerService, GameSessionClientService, SimulationSession {
 
-    private static final Logger logger = System.getLogger(LocalGameSession.class.getName());
     private static final short PLAYER_ID = Player.KEEPER1_ID;
 
     private final SessionTransitions transitions = new SessionTransitions();
@@ -132,21 +118,10 @@ public final class LocalGameSession implements GameSessionServerService, GameSes
 
     @Override
     public void sendGameData(Collection<Keeper> players) {
-        BinaryExporter exporter = BinaryExporter.getInstance();
-        BinaryImporter importer = BinaryImporter.getInstance();
-
-        // Clone the data so it really is different as in normal multiplayer it is
+        // Preserve every observed value and research identity without sharing mutable server data.
         for (GameSessionListener listener : listeners.getArray()) {
-            List<Keeper> copiedPlayers = new ArrayList<>(players.size());
-            for (Keeper player : players) {
-                try (ByteArrayOutputStream playerStream = new ByteArrayOutputStream()) {
-                    exporter.save(player, playerStream);
-                    copiedPlayers.add((Keeper) importer.load(playerStream.toByteArray()));
-                } catch (IOException ex) {
-                    logger.log(Level.ERROR, "Failed to serialize the players!", ex);
-                }
-            }
-
+            List<Keeper> copiedPlayers = players.stream()
+                    .map(player -> Keeper.restoreState(player.captureState(), null)).toList();
             listener.onGameDataLoaded(copiedPlayers);
         }
     }
