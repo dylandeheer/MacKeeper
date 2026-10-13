@@ -59,6 +59,8 @@ public abstract class PlayerMapViewState extends AbstractAppState implements Map
     
     private static final Logger logger = System.getLogger(PlayerMapViewState.class.getName());
 
+    private Thread renderThread;
+    private boolean mapAttached;
     private Main app;
     private AppStateManager stateManager;
     private final IMapInformation mapInformation;
@@ -127,6 +129,7 @@ public abstract class PlayerMapViewState extends AbstractAppState implements Map
 
                     app.enqueue(() -> {
                         worldNode.attachChild(map);
+                        mapAttached = true;
 
                         loadCompleteNotifier.onLoadComplete();
                     });
@@ -167,6 +170,7 @@ public abstract class PlayerMapViewState extends AbstractAppState implements Map
         super.initialize(stateManager, app);
         this.app = (Main) app;
         this.stateManager = stateManager;
+        renderThread = Thread.currentThread();
 
         // Effects
         this.stateManager.attach(effectManager);
@@ -261,6 +265,21 @@ public abstract class PlayerMapViewState extends AbstractAppState implements Map
 
     public IMapInformation getMapInformation() {
         return mapInformation;
+    }
+
+    public toniarts.openkeeper.view.fogofwar.FogSnapshot captureFogState() {
+        requireFogOwner();return fogOfWarController.captureState();
+    }
+
+    public void restoreFogState(toniarts.openkeeper.view.fogofwar.FogSnapshot saved) {
+        requireFogOwner();fogOfWarController.restoreState(saved);
+        fogOfWarController.refreshPresentation();
+    }
+
+    private void requireFogOwner() {
+        if (!isInitialized() || !mapAttached || renderThread != Thread.currentThread()
+                || stateManager.getState(PlayerMapViewState.class) != this)
+            throw new IllegalStateException("Fog restore requires the loaded render-thread map owner");
     }
 
     public IFogOfWarInformation getFogOfWarInformation() {

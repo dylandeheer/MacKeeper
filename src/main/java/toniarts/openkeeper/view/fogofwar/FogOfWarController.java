@@ -103,6 +103,10 @@ public final class FogOfWarController implements IFogOfWarInformation {
 
     private final List<Consumer<Point[]>> additionalTilesDirtyListeners = new ArrayList<>();
 
+    private final Set<EntityId> observedHearts = new HashSet<>();
+    private boolean reconcileHearts;
+    private boolean started;
+
     private EntityId possessedCreature;
     private float visionUpdateAccumulator;
 
@@ -139,26 +143,81 @@ public final class FogOfWarController implements IFogOfWarInformation {
     }
 
     public void start() {
+        if (started) throw new IllegalStateException("Fog controller already started");
         creatureEntities = entityData.getEntities(Position.class, Owner.class, CreatureComponent.class);
         doorEntities = entityData.getEntities(Position.class, DoorComponent.class, DoorViewState.class);
         heartRoomEntities = entityData.getEntities(RoomComponent.class, Owner.class, DungeonHeart.class);
+        observedHearts.clear();
+        for (Entity e : heartRoomEntities) observedHearts.add(e.getId());
+        started = true;
+    }
+
+    /** Caller owns the client/render boundary; capture does not advance entity queries. */
+    public FogSnapshot captureState() {
+        requireStarted();
+        return new FogSnapshot(state.captureState(), visionUpdateAccumulator,
+                pendingHeartReveals.stream().map(r -> new FogSnapshot.HeartReveal(r.center, r.elapsedIntervals)).toList(),
+                pendingTaggedTiles, seenEnemies, observedHearts, possessedCreature);
+    }
+
+    /** Restore without seeding, sighting alerts or tile callbacks. Redraw separately after all owners bind. */
+    public void restoreState(FogSnapshot saved) {
+        requireStarted();
+        if (saved.knowledge().viewerId() != viewerId || saved.knowledge().width() != mapData.getWidth()
+                || saved.knowledge().height() != mapData.getHeight())
+            throw new IllegalArgumentException("Fog snapshot belongs to another map/viewer");
+        state.restoreState(saved.knowledge());
+        visionUpdateAccumulator = saved.visionTime();possessedCreature = saved.possessedCreature();
+        pendingHeartReveals.clear();
+        for (var r : saved.hearts()) {
+            var reveal = new PendingHeartReveal(r.center());reveal.elapsedIntervals = r.elapsedIntervals();
+            pendingHeartReveals.add(reveal);
+        }
+        pendingTaggedTiles.clear();pendingTaggedTiles.addAll(saved.pendingTags());
+        seenEnemies.clear();seenEnemies.addAll(saved.seenEnemies());
+        observedHearts.clear();observedHearts.addAll(saved.observedHearts());reconcileHearts = true;
+        // These caches are consumed only after updateDoors/creatureEntities.applyChanges
+        // on the next vision pass. They are derived from the restored client ECS.
+        doorsByPosition.clear();closedDoorTiles.clear();
+    }
+
+    /** Presentation-only invalidation; it must not become fresh enemy-sighting history. */
+    public void refreshPresentation() {
+        requireStarted();
+        Point[] points = new Point[mapData.getWidth() * mapData.getHeight()];
+        for (int i = 0; i < points.length; i++) points[i] = new Point(i % mapData.getWidth(), i / mapData.getWidth());
+        fireTilesDirty(points);
+    }
+
+    private void requireStarted() {
+        if (!started) throw new IllegalStateException("Fog controller is not active");
     }
 
     public void stop() {
+        requireStarted();started = false;
         creatureEntities.release();
         doorEntities.release();
         heartRoomEntities.release();
     }
 
     public void update(float tpf) {
+        requireStarted();
+        if (!Float.isFinite(tpf) || tpf < 0 || !Float.isFinite(visionUpdateAccumulator + tpf))
+            throw new IllegalArgumentException("Invalid fog delta");
         heartRoomEntities.applyChanges();
-        for (Entity e : heartRoomEntities.getAddedEntities()) {
+        var added = reconcileHearts ? heartRoomEntities.stream().filter(e -> !observedHearts.contains(e.getId())).toList()
+                : new ArrayList<>(heartRoomEntities.getAddedEntities());
+        for (Entity e : added.stream().sorted(java.util.Comparator.comparing(Entity::getId)).toList()) {
             Owner owner = e.get(Owner.class);
             RoomComponent room = e.get(RoomComponent.class);
             if (owner.ownerId == viewerId && room.location != null) {
                 pendingHeartReveals.add(new PendingHeartReveal(room.location));
             }
         }
+
+        observedHearts.clear();
+        for (Entity e : heartRoomEntities) observedHearts.add(e.getId());
+        reconcileHearts = false;
 
         visionUpdateAccumulator += tpf;
         if (visionUpdateAccumulator >= VISION_UPDATE_INTERVAL) {

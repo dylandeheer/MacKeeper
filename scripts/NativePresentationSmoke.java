@@ -10,6 +10,11 @@ import toniarts.openkeeper.game.save.CameraSnapshots;
 import toniarts.openkeeper.game.save.MessageSnapshots;
 import toniarts.openkeeper.game.save.HudPanelSnapshots;
 import toniarts.openkeeper.game.save.InteractionSnapshots;
+import toniarts.openkeeper.game.save.FogSnapshots;
+import toniarts.openkeeper.view.PlayerMapViewState;
+import toniarts.openkeeper.view.fogofwar.FogSnapshot;
+import toniarts.openkeeper.game.fogofwar.FogState;
+import toniarts.openkeeper.utils.Point;
 import toniarts.openkeeper.view.InteractionSelection;
 import toniarts.openkeeper.view.PlayerInteractionState;
 import toniarts.openkeeper.gui.nifty.CustomTabGroupControl;
@@ -75,6 +80,45 @@ class NativePresentationSmoke {
         }
         private static java.lang.reflect.Field interactionField(String name) throws Exception {
             var field = PlayerInteractionState.class.getDeclaredField(name);field.setAccessible(true);return field;
+        }
+        private void restoreFog() throws Exception {
+            var owner = states.getState(PlayerMapViewState.class);
+            var original = owner.captureFogState();var knowledge = original.knowledge();
+            Point unexplored = null;
+            for (int y = 1; y < knowledge.height() - 1 && unexplored == null; y++)
+                for (int x = 1; x < knowledge.width() - 1; x++) {
+                    var p = new Point(x,y);
+                    if (!owner.getFogOfWarInformation().isVisible(p)) {unexplored = p;break;}
+                }
+            if (unexplored == null) throw new AssertionError("No unexplored fog test tile");
+            owner.markPendingTaggedTiles(List.of(unexplored), true);
+            var controller = (toniarts.openkeeper.view.fogofwar.FogOfWarController) owner.getFogOfWarInformation();
+            var dirty = new Point(knowledge.width()/2, knowledge.height()/2);
+            controller.revealActionPointTiles(List.of(dirty), !owner.getFogOfWarInformation().isExplored(dirty));
+            var saved = owner.captureFogState();var messagesBefore = states.getState(SystemMessageState.class).captureState();
+            Path file = Files.createTempFile(Path.of("work"), "fog-", ".bin");
+            try {
+                for (int i = 0; i < 3; i++) {
+                    Files.write(file, FogSnapshots.encode(saved));var decoded = FogSnapshots.decode(Files.readAllBytes(file));
+                    controller.disableFogOfWar();
+                    loop.captureSnapshot(game -> {owner.restoreFogState(decoded);return null;});
+                    if (!saved.equals(owner.captureFogState()) || !messagesBefore.equals(states.getState(SystemMessageState.class).captureState()))
+                        throw new AssertionError("Fog restore changed discovery history or replayed notifications");
+                    if (!owner.getFogOfWarInformation().isPendingTagged(unexplored)) throw new AssertionError("Pending fog tag lost");
+                }
+            } finally {Files.delete(file);}
+            var k = saved.knowledge();
+            var bad = new FogSnapshot(new FogState.Snapshot((short)4,k.width(),k.height(),k.enabled(),k.explored(),k.perceived(),k.dirty()),
+                    saved.visionTime(),saved.hearts(),saved.pendingTags(),saved.seenEnemies(),saved.observedHearts(),saved.possessedCreature());
+            try {owner.restoreFogState(bad);throw new AssertionError("Wrong-viewer fog accepted");} catch (IllegalArgumentException expected) {}
+            if (!saved.equals(owner.captureFogState())) throw new AssertionError("Invalid fog binding changed owner");
+            try (var worker = Executors.newSingleThreadExecutor()) {
+                worker.submit(() -> {
+                    try {owner.captureFogState();throw new AssertionError("Off-render fog capture accepted");} catch (IllegalStateException expected) {}
+                }).get(5,TimeUnit.SECONDS);
+            }
+            owner.restoreFogState(original);
+            System.out.println("FOG PASS three disk round trips retain knowledge, pending tags/dirty history and discovery timers, redraw actual map without notification replay; invalid owner rejected");
         }
         private void restoreInteraction() throws Exception {
             var owner = states.getState(PlayerInteractionState.class);
@@ -222,7 +266,7 @@ class NativePresentationSmoke {
                 if (stage == 3 && (delay += tpf) > 7) {
                     if (session.isInTransition() || !player.isTransitionEnd()) throw new AssertionError("Restored cinematic did not acknowledge completion");
                     if (!player.isPaused()) throw new AssertionError("Pending event delivery changed pause state");
-                    restoreMessages();restoreHudPanels(player);restoreInteraction();stage = 4;delay = 0;
+                    restoreMessages();restoreHudPanels(player);restoreInteraction();restoreFog();stage = 4;delay = 0;
                 }
                 if (stage == 4 && (delay += tpf) > 2) {
                     if (!pausedMessages.equals(states.getState(SystemMessageState.class).captureState())) throw new AssertionError("Paused messages aged");
@@ -247,7 +291,7 @@ class NativePresentationSmoke {
                 if (stage == 6 && states.getState(PlayerInteractionState.class).isEnabled()
                         && !interactionField("refreshAfterRestore").getBoolean(states.getState(PlayerInteractionState.class))) {
                     verifyInteractionResume();
-                    System.out.println("PRESENTATION PASS pending events, active camera, messages, HUD panels and interaction owners, cinematic acknowledgement and pause/resume");
+                    System.out.println("PRESENTATION PASS pending events, active camera, messages, HUD panels, interaction and fog owners, cinematic acknowledgement and pause/resume");
                     successful = true;app.stop();stage = 7;
                 }
             } catch (Throwable failure) {failure.printStackTrace();app.stop();stage = 7;}
