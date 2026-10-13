@@ -194,9 +194,19 @@ public class PlayerTriggerControl extends TriggerControl {
             case PLAYER_ROOM_SIZE:
                 return false;
             case PLAYER_DOORS:
-                return false;
             case PLAYER_TRAPS:
-                return false;
+                short defenseId = trigger.getUserData("targetId", short.class);
+                boolean doorCondition = trigger.getType() == TriggerGeneric.TargetType.PLAYER_DOORS;
+                if (trigger.getComparison() == TriggerGeneric.ComparisonType.NONE) {
+                    var available = doorCondition ? getPlayer().getAvailableDoors() : getPlayer().getAvailableTraps();
+                    return available.stream().anyMatch(item -> item.isDiscovered()
+                            && (defenseId == 0 || item.getId() == defenseId));
+                }
+                int defenseFlags = trigger.getUserData("flag", short.class);
+                target = doorCondition ? gameController.countDoors(playerId, defenseId, defenseFlags)
+                        : gameController.countTraps(playerId, defenseId, defenseFlags);
+                value = trigger.getUserData("value", int.class);
+                break;
             case PLAYER_KEEPER_SPELL:
                 boolean isAvailable = trigger.getUserData("flag", short.class) == 1;
                 short keeperSpellId = trigger.getUserData("targetId", short.class);

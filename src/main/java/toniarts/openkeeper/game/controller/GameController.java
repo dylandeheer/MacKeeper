@@ -414,6 +414,14 @@ public final class GameController implements IGameLogicUpdatable, IGameControlle
         gameResults.endGame(playerId, win);
     }
 
+    @Override public int countDoors(short playerId, short typeId, int flags) {
+        return DefenseCounts.doors(entityData, playerId, typeId, flags);
+    }
+
+    @Override public int countTraps(short playerId, short typeId, int flags) {
+        return DefenseCounts.traps(entityData, levelInfo.getLevelData(), playerId, typeId, flags);
+    }
+
     @Override public void markPlayerObjective(short playerId) {
         if (levelInfo.players.containsKey(playerId)) LevelObjectives.addPlayer(entityData, playerId);
     }

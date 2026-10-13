@@ -4,10 +4,11 @@ Date: 2026-10-12. Input: locally owned Steam base and English data. The report c
 
 The parser loaded all **66 maps**, including **24 campaign variants**, **5 secret maps** and **7 My Pet Dungeon maps**. All parsed child/sibling trigger links refer to existing nodes and are acyclic. This validates parsing and link integrity only: it does not prove gameplay compatibility, trigger semantics, victory or progression.
 
-## Confirmed campaign dependencies on unfinished code
+## Campaign dependencies and implementation status
 
 | Trigger | Occurrences | Campaign maps | Source finding |
 |---|---:|---:|---|
+| `PLAYER_DOORS` / `PLAYER_TRAPS` | 10 | 1 plus secret/MPD maps | Predicates now follow verified availability, blueprint and built-count rules; manufacture and placement remain missing. See [DEFENSES.md](DEFENSES.md). |
 | `MAKE_OBJECTIVE` (player-scoped keeper target) | 14 | 5 | Implemented six-slot registry; all authored commands pass isolated dispatch and server archive checks. Mission timing and original display fidelity remain unverified. |
 | `LEVEL_PAY_DAY` | 1 | 1 | Implemented cycle observation and physical collection; Level 1 authored timing passes a headless movement/transaction check. Mission progression and original parity remain unverified. |
 

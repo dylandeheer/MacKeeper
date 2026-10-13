@@ -2502,6 +2502,13 @@ public final class KwdFile implements IKwdFile, IKwdMap {
 
                         case PLAYER_DOORS:
                         case PLAYER_TRAPS:
+                            ((TriggerGeneric) trigger).setTargetValueComparison(reader.readByteAsEnum(TriggerGeneric.ComparisonType.class));
+                            trigger.setUserData("targetId", reader.readUnsignedByte()); // 0 = all types
+                            trigger.setUserData("flag", reader.readUnsignedByte()); // 8 = blueprints, 16 = built; not player comparison
+                            trigger.setUserData("playerId", reader.readUnsignedByte()); // Unused by the native predicate
+                            trigger.setUserData("value", reader.readUnsignedInteger());
+                            break;
+
                         case PLAYER_KEEPER_SPELL:
                         case PLAYER_DESTROYS:
                             ((TriggerGeneric) trigger).setTargetValueComparison(reader.readByteAsEnum(TriggerGeneric.ComparisonType.class));

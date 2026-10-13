@@ -76,6 +76,10 @@ public interface IGameController {
      */
     void endGame(short playerId, boolean win);
 
+    int countDoors(short playerId, short typeId, int flags);
+
+    int countTraps(short playerId, short typeId, int flags);
+
     void markPlayerObjective(short playerId);
 
     void markCreatureObjective(EntityId creatureId, toniarts.openkeeper.game.data.ObjectiveType objective);
