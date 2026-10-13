@@ -10,15 +10,15 @@ import toniarts.openkeeper.game.state.loop.GameLoopManager;
 import toniarts.openkeeper.utils.GameLoop;
 import toniarts.openkeeper.utils.GameLoopClock;
 
-/** Detached server simulation. Includes native loop phase; file identity and client session state are separate. */
+/** Detached server simulation. Includes native loop phase and transition flags; file identity and rendered client state are separate. */
 public record SimulationState(GameEntityData.Snapshot entities, List<KeeperState> keepers,
         List<PlayerControlState> players, List<RoomState> rooms, List<FlashTileControl.State> flashes,
         LevelSnapshots.State level, GameLoopManager.SystemState systems,
         Map<TriggerRegistrySnapshots.Kind, TriggerRegistrySnapshots.State> triggers,
-        SimulationRandom.State random, ResultSnapshots.State results, List<GameLoopClock.State> loops) {
+        SimulationRandom.State random, ResultSnapshots.State results, List<GameLoopClock.State> loops, toniarts.openkeeper.game.state.session.SessionTransitions.State transitions) {
     public SimulationState {
         Objects.requireNonNull(entities);Objects.requireNonNull(level);Objects.requireNonNull(systems);
-        Objects.requireNonNull(random);Objects.requireNonNull(results);
+        Objects.requireNonNull(random);Objects.requireNonNull(results);Objects.requireNonNull(transitions);
         loops = List.copyOf(loops);
         if (loops.size() != 3) throw new IllegalArgumentException("Expected logic, animation and steering phases");
         keepers = List.copyOf(keepers);players = List.copyOf(players);rooms = List.copyOf(rooms);
@@ -27,6 +27,7 @@ public record SimulationState(GameEntityData.Snapshot entities, List<KeeperState
         for (var keeper : keepers) if (!ids.add(keeper.id())) throw new IllegalArgumentException("Duplicate saved keeper");
         var owners = new HashSet<Short>();
         for (var player : players) if (!owners.add(player.playerId())) throw new IllegalArgumentException("Duplicate saved player controller");
+        if (!ids.containsAll(transitions.pendingPlayers())) throw new IllegalArgumentException("Saved transition references absent keeper");
         if (!ids.equals(owners)) throw new IllegalArgumentException("Saved keeper/controller owners differ");
         if (!systems.taskAllocation().equals(systems.taskGraph().allocation())) throw new IllegalArgumentException("Task allocation differs");
     }
@@ -50,7 +51,7 @@ public record SimulationState(GameEntityData.Snapshot entities, List<KeeperState
                             .map(p -> ((PlayerController)p).captureState()).toList(),
                     map.captureRoomStates(), map.captureFlashControls(),
                     new LevelSnapshots.State(LevelState.capture(game.getLevelInfo()), ((GameTimeController)game.getGameTimer()).captureState()),
-                    systems, controller.captureTriggerRegistries(), game.getRandom().captureState(), controller.captureResults(), manager.captureLoopPhases());
+                    systems, controller.captureTriggerRegistries(), game.getRandom().captureState(), controller.captureResults(), manager.captureLoopPhases(), manager.captureTransitions());
             } catch (java.io.IOException failure) {throw new java.io.UncheckedIOException(failure);}
         });
     }

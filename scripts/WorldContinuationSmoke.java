@@ -74,7 +74,7 @@ class WorldContinuationSmoke {
             throw new AssertionError("Accepted service from active world");
         }catch(IllegalArgumentException expected){}
         if(!staged[0].capture().entities().isEmpty())throw new AssertionError("Rejected store was not closed");
-        var broken=new SimulationState(state.entities(),state.keepers(),state.players(),List.of(),state.flashes(),state.level(),state.systems(),state.triggers(),state.random(),state.results(),state.loops());
+        var broken=new SimulationState(state.entities(),state.keepers(),state.players(),List.of(),state.flashes(),state.level(),state.systems(),state.triggers(),state.random(),state.results(),state.loops(),state.transitions());
         try {
             GameLoopManager.restore(kwd,broken,data->{staged[0]=data;return service(data);});
             throw new AssertionError("Accepted absent rooms");
@@ -170,6 +170,7 @@ class WorldContinuationSmoke {
         result.put("rooms",RoomSnapshots.encode(state.rooms()));result.put("flashes",MapControlSnapshots.encode(state.flashes()));
         result.put("level",LevelSnapshots.encode(state.level()));result.put("random",RandomSnapshots.encode(state.random()));
         result.put("results",ResultSnapshots.encode(state.results()));
+        result.put("transitions",TransitionSnapshots.encode(state.transitions()));
         state.triggers().forEach((kind,value)->{try{result.put("trigger-"+kind,TriggerRegistrySnapshots.encode(value));}catch(IOException e){throw new UncheckedIOException(e);}});
         result.put("creature-index",CreatureIndexSnapshots.encode(s.creatures()));result.put("spellbooks",SpellbookIndexSnapshots.encode(s.spellbooks()));
         result.put("chickens",ChickenSnapshots.encode(s.chickens()));result.put("creature-ai",CreatureSystemSnapshots.encode(s.creatureAi()));

@@ -67,8 +67,10 @@ class SimulationArchivesTest {
             var bad=bytes.clone();bad[phases+i*25+24]=2;resign(bad);
             assertThrows(IOException.class,()->SimulationArchives.decode(bad));
         }
-        var old=bytes.clone();ByteBuffer.wrap(old).putInt(4,1);resign(old);
-        assertThrows(IOException.class,()->SimulationArchives.decode(old));
+        for(int version:new int[]{1,2}) {
+            var old=bytes.clone();ByteBuffer.wrap(old).putInt(4,version);resign(old);
+            assertThrows(IOException.class,()->SimulationArchives.decode(old));
+        }
         var level=new GameLevel();var ticks=GameLevel.class.getDeclaredField("ticksPerSec");ticks.setAccessible(true);ticks.setInt(level,10);
         var map=(IKwdFile)Proxy.newProxyInstance(IKwdFile.class.getClassLoader(),new Class[]{IKwdFile.class},(p,m,a)->switch(m.getName()){
             case "getGameLevel"->level;default->throw new AssertionError(m.getName());
@@ -149,7 +151,7 @@ class SimulationArchivesTest {
         var simulation=new SimulationState(new GameEntityData.Snapshot(2,List.of()),List.of(),List.of(),List.of(),List.of(),level,systems,triggers,new SimulationRandom.State(731),new ResultSnapshots.State(Map.of()), List.of(
                 new toniarts.openkeeper.utils.GameLoopClock.State(50_000_000,12_345,23_456,true),
                 new toniarts.openkeeper.utils.GameLoopClock.State(16_666_667,6,42,true),
-                new toniarts.openkeeper.utils.GameLoopClock.State(16_666_667,7,43,false)));
+                new toniarts.openkeeper.utils.GameLoopClock.State(16_666_667,7,43,false)), new toniarts.openkeeper.game.state.session.SessionTransitions.State(Set.of()));
         String path="data/editor/maps/unit.kwd";
         return new SimulationArchive(new SimulationArchive.Definition(new MapSource(path,List.of(new MapSource.File(path,3,"a".repeat(64)))),20,List.of()),simulation);
     }

@@ -42,7 +42,7 @@ import toniarts.openkeeper.utils.GameLoop;
 public final class GameLoopManager {
 
     private final List<GameLoop> loops = new ArrayList<>();
-    private final SimulationGate simulationGate = new SimulationGate();
+    private final SimulationGate simulationGate;
     private volatile boolean closed;
     private final java.util.concurrent.atomic.AtomicBoolean started = new java.util.concurrent.atomic.AtomicBoolean();
     private final java.util.concurrent.CompletableFuture<Void> shutdown = new java.util.concurrent.CompletableFuture<>();
@@ -89,6 +89,7 @@ public final class GameLoopManager {
     public GameLoopManager(IKwdFile level, GameSessionServerService gameService, List<Keeper> players,
             toniarts.openkeeper.game.random.SimulationRandom random) {
         this.gameService = gameService;
+        simulationGate = sessionGate(gameService);
         final EntityData entityData = gameService.getEntityData();
         final Map<Variable.MiscVariable.MiscType, Variable.MiscVariable> gameSettings = level.getVariables();
 
@@ -160,6 +161,9 @@ public final class GameLoopManager {
     private GameLoopManager(IKwdFile definition, GameSessionServerService service,
             toniarts.openkeeper.game.save.GameEntityData data, toniarts.openkeeper.game.save.SimulationState saved) {
         gameService = service;
+        simulationGate = sessionGate(service);
+        if (service instanceof toniarts.openkeeper.game.state.session.SimulationSession session) session.restoreTransitions(saved.transitions());
+        else if (!saved.transitions().pendingPlayers().isEmpty()) throw new IllegalArgumentException("Saved transitions require a receiving session");
         var staged = new ArrayList<IGameLogicUpdatable>();
         try {
             var game = track(staged, GameController.restore(definition, data, service, saved));gameController = game;
@@ -208,6 +212,16 @@ public final class GameLoopManager {
 
     private static <T extends IGameLogicUpdatable> T track(List<IGameLogicUpdatable> staged, T system) {
         staged.add(system);return system;
+    }
+
+    private static SimulationGate sessionGate(GameSessionServerService service) {
+        return service instanceof toniarts.openkeeper.game.state.session.SimulationSession session
+                ? session.getTransitions().gate() : new SimulationGate();
+    }
+
+    public toniarts.openkeeper.game.state.session.SessionTransitions.State captureTransitions() {
+        return gameService instanceof toniarts.openkeeper.game.state.session.SimulationSession session
+                ? session.getTransitions().capture() : new toniarts.openkeeper.game.state.session.SessionTransitions.State(java.util.Set.of());
     }
 
     public EntityData getEntityData() { return gameService.getEntityData(); }

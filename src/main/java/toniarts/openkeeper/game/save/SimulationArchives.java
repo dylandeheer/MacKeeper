@@ -15,7 +15,7 @@ import static toniarts.openkeeper.game.save.SaveValues.*;
 /** Bounded, explicit server archive with integrity checking and atomic file replacement. */
 public final class SimulationArchives {
     private static final int MAGIC = 0x4d4b5341; // MKSA
-    private static final int VERSION = 2;
+    private static final int VERSION = 3;
     static final int MAX_PAYLOAD_BYTES = 256 * 1024 * 1024;
     static final int MAX_PART_BYTES = 128 * 1024 * 1024;
     static final int HEADER_BYTES = 12, DIGEST_BYTES = 32;
@@ -45,6 +45,7 @@ public final class SimulationArchives {
                 out.writeLong(phase.intervalNanos());out.writeLong(phase.remainderNanos());
                 out.writeLong(phase.pendingNanos());BOOLEAN.write(out, phase.paused());
             }
+            writePart(out, TransitionSnapshots.encode(state.transitions()));
             out.writeInt(state.triggers().size());
             for (var entry : new TreeMap<>(state.triggers()).entrySet()) {
                 enumeration(TriggerRegistrySnapshots.Kind.class).write(out, entry.getKey());
@@ -123,6 +124,7 @@ public final class SimulationArchives {
             var loops = new ArrayList<toniarts.openkeeper.utils.GameLoopClock.State>();
             for (int i = 0; i < 3; i++) loops.add(new toniarts.openkeeper.utils.GameLoopClock.State(
                     in.readLong(), in.readLong(), in.readLong(), BOOLEAN.read(in)));
+            var transitions = TransitionSnapshots.decode(readPart(in));
             int triggerCount = count(in.readInt(), TriggerRegistrySnapshots.Kind.values().length);
             var triggers = new EnumMap<TriggerRegistrySnapshots.Kind, TriggerRegistrySnapshots.State>(TriggerRegistrySnapshots.Kind.class);
             for (int i = 0; i < triggerCount; i++) {
@@ -159,7 +161,7 @@ public final class SimulationArchives {
             var systems = new GameLoopManager.SystemState(creatures, spellbooks, chickens, creatureControllers, creatureAi,
                     parties, taskAllocation, tileTasks, roomTasks, entityTasks, taskGraph, taskManager, mana, experience,
                     economy, recruitment, chickenSpawning, lifetimes, slaps, health, animation, creatureView, movement, positions);
-            return new SimulationArchive(definition, new SimulationState(entities, keepers, players, rooms, flashes, level, systems, triggers, random, results, loops));
+            return new SimulationArchive(definition, new SimulationState(entities, keepers, players, rooms, flashes, level, systems, triggers, random, results, loops, transitions));
     }
 
     public static SimulationArchive read(Path path) throws IOException {

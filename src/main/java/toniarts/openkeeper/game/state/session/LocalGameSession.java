@@ -55,18 +55,24 @@ import java.util.List;
  *
  * @author Toni Helenius <helenius.toni@gmail.com>
  */
-public final class LocalGameSession implements GameSessionServerService, GameSessionClientService {
+public final class LocalGameSession implements GameSessionServerService, GameSessionClientService, SimulationSession {
 
     private static final Logger logger = System.getLogger(LocalGameSession.class.getName());
     private static final short PLAYER_ID = Player.KEEPER1_ID;
 
-    private boolean playerInTransition = false;
-    private final EntityData entityData = new GameEntityData();
+    private final SessionTransitions transitions = new SessionTransitions();
+    private final EntityData entityData;
     private final SafeArrayList<GameSessionListener> listeners = new SafeArrayList<>(GameSessionListener.class);
     private final SafeArrayList<GameSessionServiceListener> serverListeners = new SafeArrayList<>(GameSessionServiceListener.class);
 
-    public LocalGameSession() {
+    public LocalGameSession() {this(new GameEntityData());}
 
+    /** A staged local session binds an independent store before any listeners are attached. */
+    public LocalGameSession(GameEntityData data) {entityData = java.util.Objects.requireNonNull(data);}
+
+    @Override public SessionTransitions getTransitions() {return transitions;}
+    @Override public void restoreTransitions(SessionTransitions.State state) {
+        transitions.restore(state, java.util.Set.of(PLAYER_ID));
     }
 
     /**
@@ -188,10 +194,9 @@ public final class LocalGameSession implements GameSessionServerService, GameSes
     @Override
     public void doTransition(short pathId, Vector3f start, short playerId) {
         if (playerId == PLAYER_ID) {
-            playerInTransition = true;
-            for (GameSessionListener listener : listeners.getArray()) {
-                listener.onDoTransition(pathId, start);
-            }
+            transitions.begin(playerId, () -> {
+                for (GameSessionListener listener : listeners.getArray()) listener.onDoTransition(pathId, start);
+            });
         }
     }
 
@@ -378,15 +383,14 @@ public final class LocalGameSession implements GameSessionServerService, GameSes
 
     @Override
     public void transitionEnd() {
-        playerInTransition = false;
-        for (GameSessionServiceListener listener : serverListeners.getArray()) {
-            listener.onTransitionEnd(PLAYER_ID);
-        }
+        transitions.complete(PLAYER_ID, () -> {
+            for (GameSessionServiceListener listener : serverListeners.getArray()) listener.onTransitionEnd(PLAYER_ID);
+        });
     }
 
     @Override
     public boolean isInTransition() {
-        return playerInTransition;
+        return transitions.isInTransition();
     }
 
     @Override
