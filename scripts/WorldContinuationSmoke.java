@@ -17,7 +17,7 @@ class WorldContinuationSmoke {
     public static void main(String[] args) throws Exception {
         String base=Path.of(args[0]).toAbsolutePath()+"/";
         for(String name:args.length>1?List.of(args[1]):List.of("Level1","TrapTime","Level17","Level10")) {
-            var kwd=KwdFile.load(base,Path.of(base,"Data/editor/maps/"+name+".kwd"));
+            var kwd=KwdFile.load(Path.of(base).toString(),name);
             var data=new GameEntityData();var service=service(data);
             try(var original=new Driver(new GameLoopManager(kwd,service,null,new SimulationRandom(731)))) {
                 float logicStep=1f/kwd.getGameLevel().getTicksPerSec();
@@ -25,7 +25,7 @@ class WorldContinuationSmoke {
                 var saved=SimulationState.capture(original.manager);
                 rejectsIsolatedFailures(kwd,saved,original,service);
                 original.events.clear();
-                var restored=new Driver(GameLoopManager.restore(kwd,saved,WorldContinuationSmoke::service));
+                var restored=new Driver(diskRoundTrip(kwd,saved).restore(kwd,WorldContinuationSmoke::service));
                 try {
                     equal(saved,SimulationState.capture(restored.manager),name+" initial");
                     if(!restored.events.isEmpty())throw new AssertionError("Restore replayed client events: "+restored.events);
@@ -44,15 +44,25 @@ class WorldContinuationSmoke {
                         original.events.clear();restored.events.clear();
                         if(tick%40==20)restored=reload(restored,name+" reload="+tick);
                     }
-                    System.out.println("PASS "+name+" full server binding, 240 logic steps with 60Hz animation/steering, "+(6+builds)+" reloads and "+builds+" build/sell cycles");
+                    System.out.println("PASS "+name+" full server archive/disk binding, 240 logic steps with 60Hz animation/steering, "+(6+builds)+" reloads and "+builds+" build/sell cycles");
                 } finally {restored.close();}
             }
         }
         System.out.println("Server simulation continuation only; native loop phase, client/session restore, complete files and mission completion remain unverified.");
     }
+    static SimulationArchive diskRoundTrip(toniarts.openkeeper.tools.convert.map.IKwdFile definition,SimulationState state)throws Exception {
+        var archive=new SimulationArchive(SimulationArchive.Definition.capture(definition),state);
+        var directory=Files.createTempDirectory(Path.of("work"),"continuation-save-");var file=directory.resolve("world.mksa");
+        try {
+            SimulationArchives.write(file,archive);var restored=SimulationArchives.read(file);
+            if(!Arrays.equals(SimulationArchives.encode(archive),SimulationArchives.encode(restored)))throw new AssertionError("Archive bytes changed after decode");
+            equal(state,restored.simulation(),"Disk round trip");return restored;
+        } finally {Files.deleteIfExists(file);Files.deleteIfExists(directory);}
+    }
     static Driver reload(Driver driver,String stage)throws Exception {
         var state=SimulationState.capture(driver.manager);
-        var next=new Driver(GameLoopManager.restore(driver.manager.getGameController().getLevelInfo().getLevelData(),state,WorldContinuationSmoke::service));
+        var definition=driver.manager.getGameController().getLevelInfo().getLevelData();
+        var next=new Driver(diskRoundTrip(definition,state).restore(definition,WorldContinuationSmoke::service));
         equal(state,SimulationState.capture(next.manager),stage);
         if(!next.events.isEmpty())throw new AssertionError("Reload replayed client events: "+next.events);
         next.events.addAll(driver.events);driver.close();return next;

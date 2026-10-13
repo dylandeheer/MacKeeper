@@ -140,6 +140,15 @@ public final class KwdFile implements IKwdFile, IKwdMap {
     private Creature imp;
     private Creature dwarf;
     private final String basePath;
+    private final List<MapSource.File> sourceFiles = new ArrayList<>();
+    private String sourceIdentityFailure;
+
+    @Override
+    public MapSource getMapSource() {
+        if (!loaded) throw new IllegalStateException("Map definition has not finished loading");
+        if (sourceIdentityFailure != null) throw new IllegalStateException(sourceIdentityFailure);
+        return new MapSource(sourceFiles.getFirst().path(), sourceFiles);
+    }
     private GameObject levelGem;
 
     private final Object loadingLock = new Object();
@@ -165,6 +174,7 @@ public final class KwdFile implements IKwdFile, IKwdMap {
      * general info
      */
     private KwdFile(String basePath, Path file, boolean load) {
+        this.basePath = PathUtils.fixFilePath(basePath);
 
         // Load the actual main map info (paths to catalogs most importantly)
         // Read the file
@@ -175,7 +185,6 @@ public final class KwdFile implements IKwdFile, IKwdMap {
             // Fug
             throw new RuntimeException("Failed to read the file " + file + "!", e);
         }
-        this.basePath = PathUtils.fixFilePath(basePath);
 
         // See if we need to load the actual data
         if (load) {
@@ -197,7 +206,7 @@ public final class KwdFile implements IKwdFile, IKwdMap {
 
     private static Path getKwdFile(String basePath, String file) {
         try {
-            return Paths.get(PathUtils.getRealFileName(basePath + PathUtils.DKII_MAPS_FOLDER, file + ".kwd"));
+            return Paths.get(PathUtils.getRealFileName(PathUtils.fixFilePath(basePath) + PathUtils.DKII_MAPS_FOLDER, file + ".kwd"));
         } catch (IOException e) {
             throw new RuntimeException("Failed to read the file " + file, e);
         }
@@ -225,7 +234,7 @@ public final class KwdFile implements IKwdFile, IKwdMap {
      * @return complete level file
      */
     public static IKwdFile load(String basePath, String file) {
-        return load(basePath, getKwdFile(file));
+        return load(basePath, getKwdFile(basePath, file));
     }
 
     /**
@@ -272,7 +281,12 @@ public final class KwdFile implements IKwdFile, IKwdMap {
     }
 
     private void readFileContents(Path file) throws IOException {
-        try (ISeekableResourceReader data = new FileResourceReader(file)) {
+        byte[] bytes;
+        try (var input = java.nio.file.Files.newInputStream(file)) {
+            bytes = input.readNBytes(MapSource.MAX_FILE_BYTES + 1);
+            if (bytes.length > MapSource.MAX_FILE_BYTES) throw new IOException("Map source exceeds size limit: " + file);
+        }
+        try (ISeekableResourceReader data = new toniarts.openkeeper.tools.convert.ByteArrayResourceReader(bytes)) {
             while (data.getFilePointer() < data.length()) {
 
                 // Read header (and put the file pointer to the data start)
@@ -283,6 +297,13 @@ public final class KwdFile implements IKwdFile, IKwdMap {
             if (data.getFilePointer() != data.length()) {
                 throw new RuntimeException("Failed to parse file");
             }
+        }
+        try {
+            if (sourceFiles.size() >= MapSource.MAX_FILES) throw new IllegalArgumentException("Too many source files for a save");
+            sourceFiles.add(MapSource.fingerprint(Path.of(basePath), file, bytes));
+        } catch (IllegalArgumentException failure) {
+            // Loading external custom maps remains supported. Saving needs a portable installed-data locator.
+            sourceIdentityFailure = failure.getMessage();
         }
     }
 

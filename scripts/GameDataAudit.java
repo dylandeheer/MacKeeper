@@ -15,6 +15,10 @@ class GameDataAudit {
                 inspected++;
                 try {
                     IKwdFile level = KwdFile.load(base, path);
+                    var source = level.getMapSource();
+                    if (!source.mapPath().endsWith("/" + path.getFileName().toString().toLowerCase(Locale.ROOT)))
+                        throw new IllegalStateException("Map source locator differs");
+                    System.out.println(path.getFileName()+"\tSOURCE\t"+source.files().size());
                     Map<String,Integer> counts = new TreeMap<>();
                     for (Trigger trigger : level.getTriggers().values()) {
                         String kind = switch (trigger) {
