@@ -26,6 +26,7 @@ import toniarts.openkeeper.game.component.Position;
 import toniarts.openkeeper.game.controller.ICreaturesController;
 import toniarts.openkeeper.game.map.IMapInformation;
 import toniarts.openkeeper.utils.GameTimeCounter;
+import toniarts.openkeeper.game.save.LifetimeSnapshots;
 import toniarts.openkeeper.utils.WorldUtils;
 
 /**
@@ -49,6 +50,12 @@ public final class CreatureTorturingSystem extends GameTimeCounter {
         torturedEntities = entityData.getEntities(CreatureTortured.class, CreatureComponent.class, Position.class, Owner.class);
     }
 
+    public LifetimeSnapshots.Clock captureTime() {return new LifetimeSnapshots.Clock(timeElapsed);}
+
+    public static CreatureTorturingSystem restoreState(EntityData data,ICreaturesController creatures,IMapInformation map,LifetimeSnapshots.Clock saved) {
+        var system=new CreatureTorturingSystem(data,creatures,map);system.timeElapsed=saved.elapsed();return system;
+    }
+
     @Override
     public void processTick(float tpf) {
         super.processTick(tpf);
@@ -56,7 +63,7 @@ public final class CreatureTorturingSystem extends GameTimeCounter {
         torturedEntities.applyChanges();
 
         // Process ticks
-        for (Entity entity : torturedEntities) {
+        for (Entity entity : torturedEntities.stream().sorted(java.util.Comparator.comparing(Entity::getId)).toList()) {
             CreatureTortured creatureTortured = entity.get(CreatureTortured.class);
             if (creatureTortured.tortureCheckTime >= timeElapsed) {
                 continue;

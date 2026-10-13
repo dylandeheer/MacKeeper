@@ -78,6 +78,15 @@ public final class CreaturePortraitScrollControl extends AbstractController {
         }
     }
 
+    public int getFirstVisible() {return firstVisible;}
+
+    /** Quiet restore, clamped to the number of cards that fit the current window. */
+    public void restoreFirstVisible(int index) {
+        if (index < 0 || index > Math.max(0, portraits.size() - 1))
+            throw new IllegalArgumentException("Invalid portrait scroll position");
+        firstVisible = Math.min(index, maxFirstVisible());layoutPortraits();
+    }
+
     public void setPortraits(List<Element> portraits) {
         this.portraits = List.copyOf(portraits);
         firstVisible = Math.min(firstVisible, maxFirstVisible());

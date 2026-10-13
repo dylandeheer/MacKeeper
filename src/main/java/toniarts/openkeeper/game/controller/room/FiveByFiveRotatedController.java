@@ -48,17 +48,25 @@ public final class FiveByFiveRotatedController extends AbstractRoomController im
     public FiveByFiveRotatedController(EntityId entityId, EntityData entityData, IKwdFile kwdFile,
             RoomInstance roomInstance, IObjectsController objectsController,
             Map<Variable.MiscVariable.MiscType, Variable.MiscVariable> gameSettings, IGameTimer gameTimer) {
-        super(entityId, entityData, kwdFile, roomInstance, objectsController, ObjectType.GOLD);
+        this(entityId, entityData, kwdFile, roomInstance, objectsController, gameSettings, gameTimer, true);
+    }
+
+    public FiveByFiveRotatedController(EntityId entityId, EntityData entityData, IKwdFile kwdFile,
+            RoomInstance roomInstance, IObjectsController objectsController,
+            Map<Variable.MiscVariable.MiscType, Variable.MiscVariable> gameSettings, IGameTimer gameTimer, boolean initialize) {
+        super(entityId, entityData, kwdFile, roomInstance, objectsController, ObjectType.GOLD, initialize);
 
         this.gameTimer = gameTimer;
         maxGold = (int) gameSettings.get(Variable.MiscVariable.MiscType.MAX_GOLD_PER_DUNGEON_HEART_TILE).getValue();
 
-        entityData.setComponent(entityId, new DungeonHeart());
+        if (initialize) entityData.setComponent(entityId, new DungeonHeart());
     }
 
     @Override
     public void destroy() {
+        if (isDestroyed()) return;
         super.destroy();
+        releaseContents();
 
         entityData.removeComponent(entityId, ImpGenerator.class);
     }
@@ -66,6 +74,7 @@ public final class FiveByFiveRotatedController extends AbstractRoomController im
     @Override
     public void construct() {
         super.construct();
+        if (isDestroyed()) return;
 
         addObjectControl(new RoomGoldControl(kwdFile, this, entityData, gameTimer, objectsController) {
 
@@ -81,7 +90,7 @@ public final class FiveByFiveRotatedController extends AbstractRoomController im
         });
 
         // Init the spawn point
-        if (!isDestroyed()) {
+        if (!isDestroyed() && !isRestoring()) {
             entityData.setComponent(entityId, new ImpGenerator(start, Double.MIN_VALUE));
         }
     }

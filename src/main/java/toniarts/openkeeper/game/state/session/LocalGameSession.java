@@ -6,20 +6,15 @@
 package toniarts.openkeeper.game.state.session;
 
 import com.jme3.app.state.AppStateManager;
-import com.jme3.export.binary.BinaryExporter;
-import com.jme3.export.binary.BinaryImporter;
 import com.jme3.math.Vector2f;
 import com.jme3.math.Vector3f;
 import com.jme3.util.SafeArrayList;
 import com.simsilica.es.EntityData;
 import com.simsilica.es.EntityId;
-import com.simsilica.es.base.DefaultEntityData;
+import toniarts.openkeeper.game.save.GameEntityData;
 import toniarts.openkeeper.utils.Point;
-import java.io.ByteArrayOutputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
-import java.lang.System.Logger;
-import java.lang.System.Logger.Level;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -39,34 +34,35 @@ import toniarts.openkeeper.tools.convert.map.IKwdFile;
 import toniarts.openkeeper.tools.convert.map.KwdFile;
 import toniarts.openkeeper.tools.convert.map.Player;
 import toniarts.openkeeper.tools.convert.map.TriggerAction;
-import toniarts.openkeeper.utils.Point;
 import toniarts.openkeeper.utils.Utils;
 
-import java.io.ByteArrayOutputStream;
-import java.io.IOException;
-import java.lang.System.Logger;
-import java.lang.System.Logger.Level;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.List;
 
 /**
  * Local game session, a virtual server
  *
  * @author Toni Helenius <helenius.toni@gmail.com>
  */
-public final class LocalGameSession implements GameSessionServerService, GameSessionClientService {
+public final class LocalGameSession implements GameSessionServerService, GameSessionClientService, SimulationSession {
 
-    private static final Logger logger = System.getLogger(LocalGameSession.class.getName());
     private static final short PLAYER_ID = Player.KEEPER1_ID;
 
-    private boolean playerInTransition = false;
-    private final EntityData entityData = new DefaultEntityData();
+    private final SessionTransitions transitions = new SessionTransitions();
+    private final EntityData entityData;
+    private volatile boolean commandsEnabled = true;
+
+    public boolean isCommandAdmissionEnabled() {return commandsEnabled;}
+    public void setCommandAdmission(boolean enabled) {commandsEnabled = enabled;}
     private final SafeArrayList<GameSessionListener> listeners = new SafeArrayList<>(GameSessionListener.class);
     private final SafeArrayList<GameSessionServiceListener> serverListeners = new SafeArrayList<>(GameSessionServiceListener.class);
 
-    public LocalGameSession() {
+    public LocalGameSession() {this(new GameEntityData());}
 
+    /** A staged local session binds an independent store before any listeners are attached. */
+    public LocalGameSession(GameEntityData data) {entityData = java.util.Objects.requireNonNull(data);}
+
+    @Override public SessionTransitions getTransitions() {return transitions;}
+    @Override public void restoreTransitions(SessionTransitions.State state) {
+        transitions.restore(state, java.util.Set.of(PLAYER_ID));
     }
 
     /**
@@ -119,6 +115,70 @@ public final class LocalGameSession implements GameSessionServerService, GameSes
         stateManager.attach(gameServerState);
     }
 
+    /** Independent world preparation may run off the render thread while the old game remains live. */
+    public static PreparedRestore prepareLocalGame(toniarts.openkeeper.game.save.LocalSessionArchive archive,
+            IKwdFile definition) throws IOException {
+        archive.validateDefinition(definition);
+        LocalGameSession[] receiving = new LocalGameSession[1];
+        var loop = archive.server().restore(definition, data -> {
+            var service = new LocalGameSession(data);service.setCommandAdmission(false);receiving[0] = service;return service;
+        });
+        return new PreparedRestore(archive, definition, receiving[0], loop);
+    }
+
+    /** Exactly one owner either installs this prepared world or disposes it. */
+    public static final class PreparedRestore implements AutoCloseable {
+        private final toniarts.openkeeper.game.save.LocalSessionArchive archive;
+        private final IKwdFile definition;
+        private final LocalGameSession service;
+        private final toniarts.openkeeper.game.state.loop.GameLoopManager loop;
+        private boolean consumed;
+        private PreparedRestore(toniarts.openkeeper.game.save.LocalSessionArchive archive, IKwdFile definition,
+                LocalGameSession service, toniarts.openkeeper.game.state.loop.GameLoopManager loop) {
+            this.archive = archive;this.definition = definition;this.service = service;this.loop = loop;
+        }
+        /** Render thread only, after deferred cleanup has removed the previous HUD. */
+        public synchronized GameClientState install(AppStateManager states, Main app) {
+            if (consumed) throw new IllegalStateException("Prepared session has already been consumed");
+            if (states.getState(GameClientState.class) != null || states.getState(GameServerState.class) != null
+                    || states.getState(toniarts.openkeeper.game.state.PlayerState.class) != null || app.getNifty().getScreen("hud") != null)
+                throw new IllegalStateException("Retire the previous game before installing a restored session");
+            consumed = true;
+            GameClientState client = null;GameServerState server = null;
+            var menu = states.getState(toniarts.openkeeper.game.state.MainMenuState.class);
+            boolean menuWasEnabled = menu != null && menu.isEnabled();
+            try {
+                client = GameClientState.restored(definition, service, app, archive.client());
+                var branch = archive.client().progress().campaign();
+                server = GameServerState.restored(definition, archive.campaign(), service, branch == null ? null : branch.bind(), loop);
+                if (menuWasEnabled) menu.setEnabled(false);
+                states.attach(client);states.attach(server);return client;
+            } catch (RuntimeException | Error failure) {
+                if (client != null) client.detach();
+                if (server != null) server.detach();else loop.stop();
+                if (menuWasEnabled) menu.setEnabled(true);
+                throw failure;
+            }
+        }
+        @Override public synchronized void close() {if (!consumed) {consumed = true;loop.stop();}}
+    }
+
+    /** Load a validated local archive after the previous client has been retired. */
+    public static GameClientState restoreLocalGame(toniarts.openkeeper.game.save.LocalSessionArchive archive,
+            IKwdFile definition, AppStateManager states, Main app) throws IOException {
+        // Fail before allocating a staged world when the legacy caller still owns an active session.
+        if (states.getState(GameClientState.class) != null || states.getState(GameServerState.class) != null
+                || states.getState(toniarts.openkeeper.game.state.PlayerState.class) != null || app.getNifty().getScreen("hud") != null)
+            throw new IllegalStateException("Retire the previous game before installing a restored session");
+        try (var prepared = prepareLocalGame(archive, definition)) {return prepared.install(states, app);}
+    }
+
+    /** Preparation failure is a lifecycle signal, not a saved gameplay notification. */
+    public void failLoading(Throwable failure) {
+        String message = java.util.Objects.requireNonNullElse(failure.getMessage(), failure.getClass().getSimpleName());
+        for (GameSessionListener listener : listeners.getArray()) listener.onLoadFailed(message);
+    }
+
     @Override
     public EntityData getEntityData() {
         return entityData;
@@ -126,21 +186,10 @@ public final class LocalGameSession implements GameSessionServerService, GameSes
 
     @Override
     public void sendGameData(Collection<Keeper> players) {
-        BinaryExporter exporter = BinaryExporter.getInstance();
-        BinaryImporter importer = BinaryImporter.getInstance();
-
-        // Clone the data so it really is different as in normal multiplayer it is
+        // Preserve every observed value and research identity without sharing mutable server data.
         for (GameSessionListener listener : listeners.getArray()) {
-            List<Keeper> copiedPlayers = new ArrayList<>(players.size());
-            for (Keeper player : players) {
-                try (ByteArrayOutputStream playerStream = new ByteArrayOutputStream()) {
-                    exporter.save(player, playerStream);
-                    copiedPlayers.add((Keeper) importer.load(playerStream.toByteArray()));
-                } catch (IOException ex) {
-                    logger.log(Level.ERROR, "Failed to serialize the players!", ex);
-                }
-            }
-
+            List<Keeper> copiedPlayers = players.stream()
+                    .map(player -> Keeper.restoreState(player.captureState(), null)).toList();
             listener.onGameDataLoaded(copiedPlayers);
         }
     }
@@ -188,10 +237,9 @@ public final class LocalGameSession implements GameSessionServerService, GameSes
     @Override
     public void doTransition(short pathId, Vector3f start, short playerId) {
         if (playerId == PLAYER_ID) {
-            playerInTransition = true;
-            for (GameSessionListener listener : listeners.getArray()) {
-                listener.onDoTransition(pathId, start);
-            }
+            transitions.begin(playerId, () -> {
+                for (GameSessionListener listener : listeners.getArray()) listener.onDoTransition(pathId, start);
+            });
         }
     }
 
@@ -218,6 +266,15 @@ public final class LocalGameSession implements GameSessionServerService, GameSes
         if (playerId == PLAYER_ID) {
             for (GameSessionListener listener : listeners.getArray()) {
                 listener.onShowMessage(textId);
+            }
+        }
+    }
+
+    @Override
+    public void showObjective(int objectiveId, short playerId) {
+        if (playerId == PLAYER_ID) {
+            for (GameSessionListener listener : listeners.getArray()) {
+                listener.onShowObjective(objectiveId);
             }
         }
     }
@@ -315,6 +372,7 @@ public final class LocalGameSession implements GameSessionServerService, GameSes
 
     @Override
     public void selectTiles(Vector2f start, Vector2f end, boolean select) {
+        if (!commandsEnabled) return;
         for (GameSessionServiceListener listener : serverListeners.getArray()) {
             listener.onSelectTiles(start, end, select, PLAYER_ID);
         }
@@ -322,6 +380,7 @@ public final class LocalGameSession implements GameSessionServerService, GameSes
 
     @Override
     public void build(Vector2f start, Vector2f end, short roomId) {
+        if (!commandsEnabled) return;
         for (GameSessionServiceListener listener : serverListeners.getArray()) {
             listener.onBuild(start, end, roomId, PLAYER_ID);
         }
@@ -329,6 +388,7 @@ public final class LocalGameSession implements GameSessionServerService, GameSes
 
     @Override
     public void sell(Vector2f start, Vector2f end) {
+        if (!commandsEnabled) return;
         for (GameSessionServiceListener listener : serverListeners.getArray()) {
             listener.onSell(start, end, PLAYER_ID);
         }
@@ -341,6 +401,7 @@ public final class LocalGameSession implements GameSessionServerService, GameSes
 
     @Override
     public void interact(EntityId entity) {
+        if (!commandsEnabled) return;
         for (GameSessionServiceListener listener : serverListeners.getArray()) {
             listener.onInteract(entity, PLAYER_ID);
         }
@@ -348,6 +409,7 @@ public final class LocalGameSession implements GameSessionServerService, GameSes
 
     @Override
     public void pickUp(EntityId entity) {
+        if (!commandsEnabled) return;
         for (GameSessionServiceListener listener : serverListeners.getArray()) {
             listener.onPickUp(entity, PLAYER_ID);
         }
@@ -355,6 +417,7 @@ public final class LocalGameSession implements GameSessionServerService, GameSes
 
     @Override
     public void drop(EntityId entity, Point tile, Vector2f coordinates, EntityId dropOnEntity) {
+        if (!commandsEnabled) return;
         for (GameSessionServiceListener listener : serverListeners.getArray()) {
             listener.onDrop(entity, tile, coordinates, dropOnEntity, PLAYER_ID);
         }
@@ -362,6 +425,7 @@ public final class LocalGameSession implements GameSessionServerService, GameSes
 
     @Override
     public void getGold(int amount) {
+        if (!commandsEnabled) return;
         for (GameSessionServiceListener listener : serverListeners.getArray()) {
             listener.onGetGold(amount, PLAYER_ID);
         }
@@ -369,19 +433,19 @@ public final class LocalGameSession implements GameSessionServerService, GameSes
 
     @Override
     public void transitionEnd() {
-        playerInTransition = false;
-        for (GameSessionServiceListener listener : serverListeners.getArray()) {
-            listener.onTransitionEnd(PLAYER_ID);
-        }
+        transitions.complete(PLAYER_ID, () -> {
+            for (GameSessionServiceListener listener : serverListeners.getArray()) listener.onTransitionEnd(PLAYER_ID);
+        });
     }
 
     @Override
     public boolean isInTransition() {
-        return playerInTransition;
+        return transitions.isInTransition();
     }
 
     @Override
     public void pauseGame() {
+        if (!commandsEnabled) return;
         for (GameSessionServiceListener listener : serverListeners.getArray()) {
             listener.onPauseRequest(PLAYER_ID);
         }
@@ -389,6 +453,7 @@ public final class LocalGameSession implements GameSessionServerService, GameSes
 
     @Override
     public void resumeGame() {
+        if (!commandsEnabled) return;
         for (GameSessionServiceListener listener : serverListeners.getArray()) {
             listener.onResumeRequest(PLAYER_ID);
         }
@@ -403,6 +468,7 @@ public final class LocalGameSession implements GameSessionServerService, GameSes
 
     @Override
     public void triggerCheat(CheatState.CheatType cheat) {
+        if (!commandsEnabled) return;
         for (GameSessionServiceListener listener : serverListeners.getArray()) {
             listener.onCheatTriggered(cheat, PLAYER_ID);
         }
@@ -410,6 +476,7 @@ public final class LocalGameSession implements GameSessionServerService, GameSes
 
     @Override
     public void castKeeperSpell(short keeperSpellId, EntityId target, Point tile, Vector2f position) {
+        if (!commandsEnabled) return;
         for (GameSessionServiceListener listener : serverListeners.getArray()) {
             listener.onCastKeeperSpell(keeperSpellId, target, tile, position, PLAYER_ID);
         }
@@ -417,6 +484,7 @@ public final class LocalGameSession implements GameSessionServerService, GameSes
 
     @Override
     public void placeDoor(short doorId, Point tile) {
+        if (!commandsEnabled) return;
         for (GameSessionServiceListener listener : serverListeners.getArray()) {
             listener.onPlaceDoor(doorId, tile, PLAYER_ID);
         }
@@ -424,6 +492,7 @@ public final class LocalGameSession implements GameSessionServerService, GameSes
 
     @Override
     public void placeTrap(short trapId, Point tile) {
+        if (!commandsEnabled) return;
         for (GameSessionServiceListener listener : serverListeners.getArray()) {
             listener.onPlaceTrap(trapId, tile, PLAYER_ID);
         }
@@ -447,9 +516,9 @@ public final class LocalGameSession implements GameSessionServerService, GameSes
     }
 
     @Override
-    public void onGoldChange(short keeperId, int gold) {
+    public void onGoldChange(short keeperId, long gold, int goldReserve) {
         for (GameSessionListener listener : listeners.getArray()) {
-            listener.onGoldChange(keeperId, gold);
+            listener.onGoldChange(keeperId, gold, goldReserve);
         }
     }
 
@@ -505,10 +574,10 @@ public final class LocalGameSession implements GameSessionServerService, GameSes
     }
 
     @Override
-    public void endGame(boolean win, short playerId) {
+    public void endGame(boolean win, short playerId, double elapsedSeconds) {
         if (playerId == PLAYER_ID) {
             for (GameSessionListener listener : listeners.getArray()) {
-                listener.onGameEnded(win);
+                listener.onGameEnded(win, elapsedSeconds);
             }
         }
     }

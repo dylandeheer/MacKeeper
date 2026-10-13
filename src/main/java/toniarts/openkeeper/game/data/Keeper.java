@@ -41,7 +41,8 @@ public final class Keeper implements Comparable<Keeper>, IIndexable, Savable {
     private boolean ai;
     private AIType aiType = AIType.MASTER_KEEPER;
 
-    private int gold;
+    private long gold;
+    private int goldReserve;
     private int goldMined;
     private int mana;
     private int manaGain;
@@ -59,6 +60,11 @@ public final class Keeper implements Comparable<Keeper>, IIndexable, Savable {
     private transient Player player;
     private short id;
     private boolean destroyed = false;
+    private short killedByPlayerId;
+    private long creaturesLost;
+    private long enemyCreaturesKilled;
+    private long heroesKilled;
+    private long[] creatureKillsByPlayer = new long[256];
     private Set<Short> allies = HashSet.newHashSet(4);
 
     public Keeper() {
@@ -73,6 +79,10 @@ public final class Keeper implements Comparable<Keeper>, IIndexable, Savable {
     public Keeper(Player player) {
         this.player = player;
         this.id = player.getPlayerId();
+        this.ai = player.isAi();
+        if (player.getAiAttributes() != null && player.getAiAttributes().getAiType() != null) {
+            this.aiType = player.getAiAttributes().getAiType();
+        }
     }
 
     @Override
@@ -128,6 +138,35 @@ public final class Keeper implements Comparable<Keeper>, IIndexable, Savable {
      */
     public boolean isDestroyed() {
         return destroyed;
+    }
+
+    /** Record the first final-heart defeat. Zero means the killer is unknown. */
+    public void markDestroyed(short killerId) {
+        if (destroyed) return;
+        killedByPlayerId = killerId;
+        destroyed = true;
+    }
+
+    public short getKilledByPlayerId() { return killedByPlayerId; }
+
+    public long getCreaturesLost() { return creaturesLost; }
+
+    /** Native wildcard kill queries count non-hero enemies; filtered queries count every species. */
+    public long getCreatureKills(short victimPlayerId) {
+        return victimPlayerId == 0 ? enemyCreaturesKilled : creatureKillsByPlayer[victimPlayerId];
+    }
+
+    public long getHeroesKilled() { return heroesKilled; }
+
+    public void recordCreatureLoss() { creaturesLost++; }
+
+    public void recordCreatureKill(short victimPlayerId, boolean hero) {
+        if (victimPlayerId < 0 || victimPlayerId >= creatureKillsByPlayer.length) {
+            throw new IllegalArgumentException("Invalid victim player ID: " + victimPlayerId);
+        }
+        creatureKillsByPlayer[victimPlayerId]++;
+        if (hero) heroesKilled++;
+        else if (victimPlayerId != id) enemyCreaturesKilled++;
     }
 
     public AIType getAiType() {
@@ -188,7 +227,15 @@ public final class Keeper implements Comparable<Keeper>, IIndexable, Savable {
         allies.remove(playerId);
     }
 
-    public int getGold() {
+    /** Unspent initial stockpile; included in total gold, outside physical room storage. */
+    public int getGoldReserve() { return goldReserve; }
+
+    public void setGoldReserve(int goldReserve) {
+        if (goldReserve < 0) throw new IllegalArgumentException("Negative gold reserve");
+        this.goldReserve = goldReserve;
+    }
+
+    public long getGold() {
         return gold;
     }
 
@@ -196,7 +243,7 @@ public final class Keeper implements Comparable<Keeper>, IIndexable, Savable {
         return mana;
     }
 
-    public void setGold(int gold) {
+    public void setGold(long gold) {
         this.gold = gold;
     }
 
@@ -256,18 +303,86 @@ public final class Keeper implements Comparable<Keeper>, IIndexable, Savable {
         return currentResearch;
     }
 
+    /** Copy under the simulation snapshot boundary. Map definitions are not copied. */
+    public KeeperState captureState() {
+        boolean shared = currentResearch != null && java.util.stream.Stream.of(
+                availableRooms, availableSpells, availableDoors, availableTraps)
+                .flatMap(Collection::stream).anyMatch(entity -> entity == currentResearch);
+        return new KeeperState(id, ai, aiType, gold, goldReserve, goldMined, mana, manaGain, manaLoose, maxMana,
+                dungeonHeartLocation, possession,
+                availableRooms.stream().map(KeeperState.Research::capture).toList(),
+                availableSpells.stream().map(KeeperState.Research::capture).toList(), availableCreatures,
+                availableDoors.stream().map(KeeperState.Research::capture).toList(),
+                availableTraps.stream().map(KeeperState.Research::capture).toList(),
+                currentResearch == null ? null : KeeperState.Research.capture(currentResearch), shared,
+                destroyed, killedByPlayerId, creaturesLost, enemyCreaturesKilled, heroesKilled,
+                java.util.Arrays.stream(creatureKillsByPlayer).boxed().toList(), allies);
+    }
+
+    /** Reconstruct values without initial money, research initialization or defeat callbacks. */
+    public static Keeper restoreState(KeeperState state, Player definition) {
+        if (definition != null && definition.getPlayerId() != state.id()) {
+            throw new IllegalArgumentException("Keeper does not match map player definition");
+        }
+        Keeper result = new Keeper(state.ai(), state.id());
+        result.player = definition;result.aiType = state.aiType();
+        result.gold = state.gold();result.goldReserve = state.goldReserve();result.goldMined = state.goldMined();
+        result.mana = state.mana();result.manaGain = state.manaGain();result.manaLoose = state.manaLoose();result.maxMana = state.maxMana();
+        result.dungeonHeartLocation = state.dungeonHeartLocation();result.possession = state.possession();
+        result.availableRooms = restoreResearch(state.availableRooms());result.availableSpells = restoreResearch(state.availableSpells());
+        result.availableDoors = restoreResearch(state.availableDoors());result.availableTraps = restoreResearch(state.availableTraps());
+        result.availableCreatures = new ArrayList<>(state.availableCreatures());
+        if (state.currentResearch() != null) {
+            if (state.currentResearchShared()) {
+                result.currentResearch = java.util.stream.Stream.of(result.availableRooms, result.availableSpells,
+                        result.availableDoors, result.availableTraps).flatMap(Collection::stream)
+                        .filter(entity -> entity.getId() == state.currentResearch().id()
+                                && entity.getResearchableType() == state.currentResearch().type()).findFirst().orElseThrow();
+            } else result.currentResearch = state.currentResearch().restore();
+        }
+        result.destroyed = state.destroyed();result.killedByPlayerId = state.killedByPlayerId();
+        result.creaturesLost = state.creaturesLost();result.enemyCreaturesKilled = state.enemyCreaturesKilled();result.heroesKilled = state.heroesKilled();
+        result.creatureKillsByPlayer = state.creatureKillsByPlayer().stream().mapToLong(Long::longValue).toArray();
+        result.allies = new HashSet<>(state.allies());
+        return result;
+    }
+
+    /** Quietly replace values while preserving the keeper identity referenced by client views. */
+    public void restoreValues(KeeperState state, Player definition) {
+        if (state.id() != id) throw new IllegalArgumentException("Cannot replace another keeper identity");
+        Keeper prepared = restoreState(state, definition);
+        ai = prepared.ai;aiType = prepared.aiType;player = prepared.player;
+        gold = prepared.gold;goldReserve = prepared.goldReserve;goldMined = prepared.goldMined;
+        mana = prepared.mana;manaGain = prepared.manaGain;manaLoose = prepared.manaLoose;maxMana = prepared.maxMana;
+        dungeonHeartLocation = prepared.dungeonHeartLocation;possession = prepared.possession;
+        availableRooms = prepared.availableRooms;availableSpells = prepared.availableSpells;availableCreatures = prepared.availableCreatures;
+        availableDoors = prepared.availableDoors;availableTraps = prepared.availableTraps;currentResearch = prepared.currentResearch;
+        destroyed = prepared.destroyed;killedByPlayerId = prepared.killedByPlayerId;
+        creaturesLost = prepared.creaturesLost;enemyCreaturesKilled = prepared.enemyCreaturesKilled;heroesKilled = prepared.heroesKilled;
+        creatureKillsByPlayer = prepared.creatureKillsByPlayer;allies = prepared.allies;
+    }
+
+    private static List<ResearchableEntity> restoreResearch(List<KeeperState.Research> states) {
+        List<ResearchableEntity> restored = new ArrayList<>(states.size());
+        for (var state : states) restored.add(state.restore());
+        return restored;
+    }
+
     @Override
     public void write(JmeExporter ex) throws IOException {
         OutputCapsule out = ex.getCapsule(this);
         out.write(id, "playerId", Integer.valueOf(0).shortValue());
         out.write(ai, "ai", false);
         out.write(aiType, "aiType", null);
-        out.write(gold, "gold", 0);
+        out.write(gold, "goldTotal", 0L);
+        out.write(goldReserve, "goldReserve", 0);
         out.write(goldMined, "goldMined", 0);
         out.write(mana, "mana", 0);
         out.write(manaGain, "manaGain", 0);
         out.write(manaLoose, "manaLoose", 0);
         out.write(maxMana, "maxMana", 0);
+        out.write(possession, "possession", false);
+        out.write(dungeonHeartLocation != null, "hasDungeonHeartLocation", true);
         out.write(dungeonHeartLocation != null ? dungeonHeartLocation.x : 0, "dungeonHeartLocationX", 0);
         out.write(dungeonHeartLocation != null ? dungeonHeartLocation.y : 0, "dungeonHeartLocationY", 0);
         out.writeSavableArrayList(new ArrayList(availableRooms), "availableRooms", null);
@@ -277,7 +392,12 @@ public final class Keeper implements Comparable<Keeper>, IIndexable, Savable {
         out.writeSavableArrayList(new ArrayList(availableTraps), "availableTraps", null);
         out.write(currentResearch, "currentResearch", null);
         out.write(destroyed, "destroyed", false);
+        out.write(killedByPlayerId, "killedByPlayerId", (short) 0);
         out.write(toPrimitiveShortArray(allies), "allies", new short[0]);
+        out.write(creaturesLost, "creaturesLost", 0L);
+        out.write(enemyCreaturesKilled, "enemyCreaturesKilled", 0L);
+        out.write(heroesKilled, "heroesKilled", 0L);
+        out.write(creatureKillsByPlayer, "creatureKillsByPlayer", new long[256]);
     }
 
     @Override
@@ -286,15 +406,18 @@ public final class Keeper implements Comparable<Keeper>, IIndexable, Savable {
         id = in.readShort("playerId", id);
         ai = in.readBoolean("ai", ai);
         aiType = in.readEnum("aiType", AIType.class, aiType);
-        gold = in.readInt("gold", gold);
+        gold = in.readLong("goldTotal", in.readInt("gold", 0));
+        goldReserve = in.readInt("goldReserve", 0);
+        if (goldReserve < 0 || goldReserve > gold) throw new IOException("Invalid gold reserve");
         goldMined = in.readInt("goldMined", goldMined);
         mana = in.readInt("mana", mana);
         manaGain = in.readInt("manaGain", manaGain);
         manaLoose = in.readInt("manaLoose", manaLoose);
         maxMana = in.readInt("maxMana", maxMana);
+        possession = in.readBoolean("possession", false);
         int x = in.readInt("dungeonHeartLocationX", 0);
         int y = in.readInt("dungeonHeartLocationY", 0);
-        dungeonHeartLocation = new Point(x, y);
+        dungeonHeartLocation = in.readBoolean("hasDungeonHeartLocation", true) ? new Point(x, y) : null;
         availableRooms = in.readSavableArrayList("availableRooms", new ArrayList<>());
         availableSpells = in.readSavableArrayList("availableSpells", new ArrayList<>());
         availableCreatures = toReferenceList(in.readShortArray("availableCreatures", new short[0]));
@@ -302,7 +425,19 @@ public final class Keeper implements Comparable<Keeper>, IIndexable, Savable {
         availableTraps = in.readSavableArrayList("availableTraps", new ArrayList<>());
         currentResearch = (ResearchableEntity) in.readSavable("currentResearch", null);
         destroyed = in.readBoolean("destroyed", destroyed);
+        killedByPlayerId = destroyed ? in.readShort("killedByPlayerId", (short) 0) : 0;
         allies = new HashSet<>(toReferenceList(in.readShortArray("allies", new short[0])));
+        creaturesLost = in.readLong("creaturesLost", 0L);
+        enemyCreaturesKilled = in.readLong("enemyCreaturesKilled", 0L);
+        heroesKilled = in.readLong("heroesKilled", 0L);
+        creatureKillsByPlayer = in.readLongArray("creatureKillsByPlayer", new long[256]);
+        if (creaturesLost < 0 || enemyCreaturesKilled < 0 || heroesKilled < 0
+                || creatureKillsByPlayer == null || creatureKillsByPlayer.length != 256) {
+            throw new IOException("Invalid creature combat statistics");
+        }
+        for (long count : creatureKillsByPlayer) {
+            if (count < 0) throw new IOException("Invalid creature kill count");
+        }
     }
 
     private static short[] toPrimitiveShortArray(Collection<Short> list) {

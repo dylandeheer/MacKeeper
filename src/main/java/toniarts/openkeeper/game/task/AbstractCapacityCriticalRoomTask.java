@@ -31,11 +31,19 @@ public abstract class AbstractCapacityCriticalRoomTask extends AbstractRoomTask 
 
     protected final TaskManager taskManager;
 
-    public AbstractCapacityCriticalRoomTask(final INavigationService navigationService, final IMapController mapController, Point p, short playerId, IRoomController room, TaskManager taskManager) {
-        super(navigationService, mapController, p, playerId, room);
+    public AbstractCapacityCriticalRoomTask(toniarts.openkeeper.game.task.TaskIdentityAllocator taskIds, final INavigationService navigationService, final IMapController mapController, Point p, short playerId, IRoomController room, TaskManager taskManager) {
+        super(taskIds, navigationService, mapController, p, playerId, room);
 
         this.taskManager = taskManager;
     }
+
+    protected AbstractCapacityCriticalRoomTask(TaskIdentityAllocator ids, toniarts.openkeeper.game.data.TaskBaseState saved,
+            INavigationService navigation, IMapController map, Point point, short player, IRoomController room, TaskManager manager) {
+        super(ids, saved, navigation, map, point, player, room);
+        this.taskManager = java.util.Objects.requireNonNull(manager);
+    }
+
+    public final TaskManager getTaskManager() {return taskManager;}
 
     @Override
     public void unassign(ICreatureController creature) {

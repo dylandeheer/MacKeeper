@@ -31,7 +31,12 @@ public final class CasinoController extends NormalRoomController {
 
     public CasinoController(EntityId entityId, EntityData entityData, IKwdFile kwdFile,
             RoomInstance roomInstance, IObjectsController objectsController) {
-        super(entityId, entityData, kwdFile, roomInstance, objectsController);
+        this(entityId, entityData, kwdFile, roomInstance, objectsController, true);
+    }
+
+    public CasinoController(EntityId entityId, EntityData entityData, IKwdFile kwdFile,
+            RoomInstance roomInstance, IObjectsController objectsController, boolean initialize) {
+        super(entityId, entityData, kwdFile, roomInstance, objectsController, initialize);
     }
 
     @Override

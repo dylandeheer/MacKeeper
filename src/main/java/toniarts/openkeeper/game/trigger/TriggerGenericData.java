@@ -74,6 +74,10 @@ public final class TriggerGenericData extends TriggerData {
         }
     }
 
+    public short getRepeatTimes() { return repeatTimes; }
+
+    public TriggerGenericData getLastTrigger() { return lastTrigger; }
+
     public boolean isRepeateable() {
         return (repeatTimes > 0);
     }

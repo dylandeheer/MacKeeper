@@ -26,6 +26,7 @@ import toniarts.openkeeper.game.component.Position;
 import toniarts.openkeeper.game.controller.creature.CreatureState;
 import toniarts.openkeeper.utils.GameTimeCounter;
 import toniarts.openkeeper.utils.WorldUtils;
+import toniarts.openkeeper.game.save.LifetimeSnapshots;
 
 /**
  * Handles creature falling (dropped from hand). In the future maybe all these would be handled by a physics
@@ -46,6 +47,12 @@ public final class CreatureFallSystem extends GameTimeCounter {
         fallEntities = entityData.getEntities(CreatureFall.class, Position.class, CreatureComponent.class);
     }
 
+    public LifetimeSnapshots.Clock captureTime() {return new LifetimeSnapshots.Clock(timeElapsed);}
+
+    public static CreatureFallSystem restoreState(EntityData data, LifetimeSnapshots.Clock saved) {
+        var system = new CreatureFallSystem(data);system.timeElapsed = saved.elapsed();return system;
+    }
+
     @Override
     public void processTick(float tpf) {
         super.processTick(tpf);
@@ -53,9 +60,9 @@ public final class CreatureFallSystem extends GameTimeCounter {
         fallEntities.applyChanges();
 
         // Process ticks
-        for (Entity entity : fallEntities) {
+        for (Entity entity : fallEntities.stream().sorted(java.util.Comparator.comparing(Entity::getId)).toList()) {
             Position position = entity.get(Position.class);
-            Position newPosition = new Position(position.rotation, position.position);
+            Position newPosition = new Position(position.rotation, position.position.clone());
             newPosition.position.y = Math.max(newPosition.position.y - tpf * GRAVITY, WorldUtils.FLOOR_HEIGHT);
             entity.set(newPosition);
             if (newPosition.position.y == WorldUtils.FLOOR_HEIGHT) {

@@ -54,7 +54,6 @@ public abstract class RoomFoodControl extends AbstractRoomObjectControl<EntityId
 
     @Override
     public void destroy() {
-        super.destroy();
 
         // We don't destroy the chickens, that would be inhumane, but we set them free
         List<Collection<EntityId>> objectList = new ArrayList<>(objectsByCoordinate.values());
@@ -63,6 +62,7 @@ public abstract class RoomFoodControl extends AbstractRoomObjectControl<EntityId
                 removeItem(obj);
             }
         }
+        super.destroy();
     }
 
     @Override

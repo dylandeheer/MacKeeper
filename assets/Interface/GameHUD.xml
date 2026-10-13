@@ -117,6 +117,14 @@
                 <panel childLayout="vertical" x="0" y="0" id="objective" visible="false" width="100%"
                        height="100%" valign="top" backgroundColor="#0008" padding="10px">
 
+                    <panel id="scriptedObjectivePanel" childLayout="vertical" visible="false" padding="10px">
+                        <control name="label" id="scriptedObjective" style="textGold"
+                                 textHAlign="left" textVAlign="top" wrap="true" />
+                    </panel>
+
+                    <control name="scrollPanel" id="objectiveScroll" width="100%" height="*" horizontal="false" stepSizeY="32">
+                        <panel childLayout="horizontal" width="100%">
+                            <panel id="objectiveBriefing" childLayout="vertical" width="60%" paddingRight="24px">
                     <text id="mainObjectivesTitle" text="${menu.1408}" style="textGold" align="left" />
                     <panel childLayout="vertical" padding="10px">
                         <control name="label" id="mainObjective" style="text"
@@ -132,9 +140,38 @@
                         <control name="label" id="subObjective3" style="text"
                                  textHAlign="left" wrap="true" />
                     </panel>
-                    <panel height="*" />
-                    <control name="iconText" icon="Textures/GUI/Options/i-accept.png"
-                             text="${menu.11}" click="toggleObjective()" />
+                            </panel>
+                    <panel id="objectiveTargets" childLayout="vertical" width="40%" height="240px" visible="false">
+                        <text text="Current targets" style="textGold" height="48px" align="left" />
+                        <control name="label" id="objectiveTarget0" style="text" height="32px" width="100%"
+                                 textHAlign="left" visibleToMouse="true">
+                            <interact onClick="zoomToObjective(0)" />
+                        </control>
+                        <control name="label" id="objectiveTarget1" style="text" height="32px" width="100%"
+                                 textHAlign="left" visibleToMouse="true">
+                            <interact onClick="zoomToObjective(1)" />
+                        </control>
+                        <control name="label" id="objectiveTarget2" style="text" height="32px" width="100%"
+                                 textHAlign="left" visibleToMouse="true">
+                            <interact onClick="zoomToObjective(2)" />
+                        </control>
+                        <control name="label" id="objectiveTarget3" style="text" height="32px" width="100%"
+                                 textHAlign="left" visibleToMouse="true">
+                            <interact onClick="zoomToObjective(3)" />
+                        </control>
+                        <control name="label" id="objectiveTarget4" style="text" height="32px" width="100%"
+                                 textHAlign="left" visibleToMouse="true">
+                            <interact onClick="zoomToObjective(4)" />
+                        </control>
+                        <control name="label" id="objectiveTarget5" style="text" height="32px" width="100%"
+                                 textHAlign="left" visibleToMouse="true">
+                            <interact onClick="zoomToObjective(5)" />
+                        </control>
+                    </panel>
+                        </panel>
+                    </control>
+                    <control name="iconText" id="objectiveClose" height="76px" icon="Textures/GUI/Options/i-accept.png"
+                             text="Close" click="toggleObjective()" />
                 </panel>
 
                 <panel id="statistics" x="5%" y="5%" height="90%" width="90%" align="left" valign="top" childLayout="vertical" visible="false">

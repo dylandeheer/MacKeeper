@@ -288,6 +288,12 @@ public final class Room implements Comparable<Room>, ISoundable, IIndexable {
         this.returnPercentage = returnPercentage;
     }
 
+    /** In-level hero gates, excluding the front-end scene. */
+    public boolean isHeroGate() {
+        return tileConstruction == TileConstruction.HERO_GATE_2_BY_2
+                || tileConstruction == TileConstruction.HERO_GATE_3_BY_1;
+    }
+
     public short getTerrainId() {
         return terrainId;
     }

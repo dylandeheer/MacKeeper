@@ -16,6 +16,8 @@
  */
 package toniarts.openkeeper.game.state;
 
+import toniarts.openkeeper.game.logic.PaydaySystem;
+
 import com.jme3.app.Application;
 import com.jme3.app.state.AbstractAppState;
 import com.jme3.app.state.AppStateManager;
@@ -45,6 +47,9 @@ import java.util.List;
 import javax.annotation.Nullable;
 import toniarts.openkeeper.game.data.CampaignLevel;
 import toniarts.openkeeper.game.data.Settings;
+import toniarts.openkeeper.game.state.session.PlayerProgressState;
+import toniarts.openkeeper.game.state.session.PlayerScreenState;
+import java.util.UUID;
 
 /**
  * The player state! GUI, camera, etc. Player interactions
@@ -63,6 +68,9 @@ public final class PlayerState extends AbstractAppState implements PlayerListene
     private final EntityData entityData;
     @Nullable
     private final CampaignLevel campaignLevel;
+    private GameResult gameResult;
+    private final UUID attemptId;
+    private Thread renderThread;
 
     private boolean paused = false;
 
@@ -76,7 +84,18 @@ public final class PlayerState extends AbstractAppState implements PlayerListene
     private PlayerScreenController screen;
 
     public PlayerState(int playerId, IKwdFile kwdFile, EntityData entityData, boolean enabled, Main app, @Nullable CampaignLevel campaignLevel) {
+        this(playerId, kwdFile, entityData, enabled, app, campaignLevel,
+                PlayerProgressState.fresh((short) playerId, campaignLevel));
+    }
+
+    /** Stage progress before constructing views; the session assembler restores screen/input owners separately. */
+    public PlayerState(int playerId, IKwdFile kwdFile, EntityData entityData, boolean enabled, Main app,
+            @Nullable CampaignLevel campaignLevel, PlayerProgressState progress) {
+        if (playerId < 0 || playerId > 255) throw new IllegalArgumentException("Invalid local player");
+        progress.validateBinding((short) playerId, campaignLevel);
         this.playerId = (short) playerId;
+        this.attemptId = progress.attemptId();
+        this.gameResult = progress.result() == null ? null : GameResult.restoreState(progress.result());
         this.kwdFile = kwdFile;
         this.entityData = entityData;
         this.app = app;
@@ -93,9 +112,57 @@ public final class PlayerState extends AbstractAppState implements PlayerListene
     public void initialize(final AppStateManager stateManager, final Application app) {
         super.initialize(stateManager, app);
 
+        renderThread = Thread.currentThread();
         assetManager = this.app.getAssetManager();
         this.stateManager = stateManager;
     }
+
+    /** Capture only observes local result delivery; it neither reads server results nor writes the profile. */
+    public PlayerProgressState captureProgressState() {
+        requireActiveOwner();
+        return new PlayerProgressState(playerId, attemptId, PlayerProgressState.Campaign.of(campaignLevel),
+                gameResult == null ? null : gameResult.captureState());
+    }
+
+    private void requireActiveOwner() {
+        if (!isInitialized() || Thread.currentThread() != renderThread
+                || stateManager.getState(PlayerState.class) != this)
+            throw new IllegalStateException("Player state belongs to the active render-thread owner");
+    }
+
+    public boolean hasGameResult() { return gameResult != null; }
+
+    public PlayerScreenState captureScreenState() {
+        requireActiveOwner();
+        EndGameState end = stateManager.getState(EndGameState.class);
+        boolean awaiting = end != null && end.isAwaitingInputFor(this);
+        if (!isEnabled() && !awaiting || isEnabled() && end != null)
+            throw new IllegalStateException("Player screen lifecycle is still changing");
+        return new PlayerScreenState(playerId, isEnabled(), paused, transitionEnd,
+                screen.getRequestedRoute(), screen.getCinematicText(), awaiting);
+    }
+
+    /**
+     * Restore into an already prepared matching lifecycle. Other owners retain their own enabled
+     * flags; this does not pause/resume the server, rebuild controls or replay result delivery.
+     * Wait for isScreenReady() before admitting input to a replaced session.
+     */
+    public void restoreScreenState(PlayerScreenState saved) {
+        requireActiveOwner();
+        if (saved.playerId() != playerId || saved.playerEnabled() != isEnabled())
+            throw new IllegalArgumentException("Player screen requires a matching prepared owner");
+        EndGameState end = stateManager.getState(EndGameState.class);
+        if (saved.awaitingEndInput() ? !hasGameResult() || end == null || !end.isAwaitingInputFor(this) : end != null)
+            throw new IllegalArgumentException("Player result screen is not prepared");
+        screen.validateScreenRestore(saved);
+        paused = saved.paused();transitionEnd = saved.transitionEnd();
+        screen.restoreScreenRouting(saved);
+        if (saved.awaitingEndInput()) end.restoreAwaitingInput();
+    }
+
+    public boolean isScreenReady() { requireActiveOwner();return screen.isRouteReady(); }
+
+    void updateScreenRouting() { if (screen != null) screen.updateScreenRouting(); }
 
     @Override
     public void cleanup() {
@@ -138,7 +205,7 @@ public final class PlayerState extends AbstractAppState implements PlayerListene
             // Get the game state
             final GameClientState gameState = stateManager.getState(GameClientState.class);
             screen.setState(this);
-            screen.initHud(gameState.getLevelData().getGameLevel().getTextTableId().getLevelDictFile(), entityData);
+            screen.initHud(gameState.getLevelData().getGameLevel(), entityData);
 
             // Cursor
             app.getInputManager().setCursorVisible(true);
@@ -304,7 +371,7 @@ public final class PlayerState extends AbstractAppState implements PlayerListene
     }
 
     public void setWideScreen(boolean enable) {
-        if (interactionState.isInitialized()) {
+        if (interactionState != null && interactionState.isInitialized()) {
             interactionState.setEnabled(!enable);
         }
 
@@ -393,11 +460,10 @@ public final class PlayerState extends AbstractAppState implements PlayerListene
     }
 
     public void quitToDebriefing() {
-        // TODO copy results of game from GameState
-        GameResult result = new GameResult();
+        if (gameResult == null) { quitToMainMenu(); return; }
         stateManager.getState(GameClientState.class).detach();
         stateManager.detach(this);
-        stateManager.getState(MainMenuState.class).doDebriefing(result, kwdFile, campaignLevel != null);
+        stateManager.getState(MainMenuState.class).doDebriefing(gameResult, kwdFile, campaignLevel);
     }
 
     public void quitToOS() {
@@ -405,7 +471,10 @@ public final class PlayerState extends AbstractAppState implements PlayerListene
     }
 
     public void zoomToDungeon() {
-        cameraState.setCameraLookAt(stateManager.getState(GameClientState.class).getPlayer(playerId).getDungeonHeartLocation());
+        Point heart = stateManager.getState(GameClientState.class).getPlayer(playerId).getDungeonHeartLocation();
+        if (heart != null) {
+            cameraState.setCameraLookAt(heart);
+        }
     }
 
     /**
@@ -472,6 +541,11 @@ public final class PlayerState extends AbstractAppState implements PlayerListene
         stateManager.getState(SystemMessageState.class).addMessage(SystemMessageState.MessageType.INFO, String.format("${level.%d}", textId));
     }
 
+    public void showObjective(int objectiveId) {
+        // GameClientState dispatches this on the render thread.
+        if (screen != null) screen.showObjective(objectiveId);
+    }
+
     public void zoomToPoint(Vector3f point) {
         cameraState.zoomToPoint(point);
     }
@@ -487,14 +561,14 @@ public final class PlayerState extends AbstractAppState implements PlayerListene
      *
      * @param win did we win or not
      */
-    protected void endGame(boolean win) {
+    protected void endGame(boolean win, double elapsedSeconds) {
+        if (gameResult != null) return;
+        gameResult = GameResult.completed(win, elapsedSeconds);
 
-        // Save campaign progress on win
-        if (win && campaignLevel != null) {
+        // The local profile owns campaign progress; server and remote opponents do not.
+        if (campaignLevel != null) {
             Settings settings = Main.getUserSettings();
-            settings.increaseLevelAttempts(campaignLevel);
-            settings.setLevelStatus(campaignLevel, Settings.LevelStatus.COMPLETED);
-            settings.setSetting(Settings.Setting.LEVEL_NUMBER, campaignLevel.getLevel() + 1);
+            settings.recordCampaignResult(campaignLevel, attemptId, win);
             try {
                 settings.save();
             } catch (IOException ex) {
@@ -509,14 +583,14 @@ public final class PlayerState extends AbstractAppState implements PlayerListene
 
     String getTooltipText(String text) {
         int dungeonHealth = 0;
-        int paydayCost = 0;
+        long paydayCost = PaydaySystem.estimateNextPayroll(entityData, playerId);
 
         return text.replaceAll("%19%", String.valueOf(dungeonHealth))
                 .replaceAll("%20", String.valueOf(paydayCost));
     }
 
     @Override
-    public void onGoldChange(short keeperId, int gold) {
+    public void onGoldChange(short keeperId, long gold, int goldReserve) {
         screen.setGold(gold);
     }
 

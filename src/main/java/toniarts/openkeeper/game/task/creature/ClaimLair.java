@@ -39,9 +39,17 @@ public final class ClaimLair extends AbstractCapacityCriticalRoomTask {
 
     private boolean executed = false;
 
-    public ClaimLair(final INavigationService navigationService, final IMapController mapController, Point p, short playerId, IRoomController room, TaskManager taskManager) {
-        super(navigationService, mapController, p, playerId, room, taskManager);
+    public ClaimLair(toniarts.openkeeper.game.task.TaskIdentityAllocator taskIds, final INavigationService navigationService, final IMapController mapController, Point p, short playerId, IRoomController room, TaskManager taskManager) {
+        super(taskIds, navigationService, mapController, p, playerId, room, taskManager);
     }
+
+    public ClaimLair(toniarts.openkeeper.game.task.TaskIdentityAllocator ids, toniarts.openkeeper.game.data.TaskBaseState saved,
+            INavigationService navigation, IMapController map, Point point, short player, IRoomController room, TaskManager manager, boolean executed) {
+        super(ids, saved, navigation, map, point, player, room, manager);
+        this.executed = executed;
+    }
+
+    public boolean hasExecuted() { return executed; }
 
     @Override
     public boolean isValid(ICreatureController creature) {

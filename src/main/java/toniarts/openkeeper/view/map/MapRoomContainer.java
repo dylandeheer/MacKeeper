@@ -39,6 +39,8 @@ import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Function;
+import java.util.function.Consumer;
+import toniarts.openkeeper.utils.Point;
 
 /**
  * Contains the map rooms
@@ -58,8 +60,16 @@ public class MapRoomContainer extends EntityContainer<IRoomInformation> implemen
 
     private final EntitySet roomCatalogs;
 
+    private final Map<EntityId, Boolean> destroyedByRoom = new HashMap<>();
+    private final Consumer<Point[]> visualChangeListener;
+
     public MapRoomContainer(EntityData entityData, IKwdFile kwdFile) {
+        this(entityData, kwdFile, points -> { });
+    }
+
+    public MapRoomContainer(EntityData entityData, IKwdFile kwdFile, Consumer<Point[]> visualChangeListener) {
         super(entityData, RoomComponent.class, Owner.class, Health.class);
+        this.visualChangeListener = visualChangeListener;
 
         roomCatalogs = entityData.getEntities(Storage.class);
     }
@@ -69,6 +79,7 @@ public class MapRoomContainer extends EntityContainer<IRoomInformation> implemen
         logger.log(Level.TRACE, "MapRoomContainer.addObject({0})", e);
         IRoomInformation result = new RoomInformation(e);
         roomMap.put(e.getId(), result);
+        destroyedByRoom.put(e.getId(), result.isDestroyed());
         ownersByRoom.put(e.getId(), result.getOwnerId());
         roomTypesByRoom.put(e.getId(), result.getRoomId());
         roomsByOwners
@@ -79,12 +90,20 @@ public class MapRoomContainer extends EntityContainer<IRoomInformation> implemen
                 .computeIfAbsent(result.getRoomId(), (t) -> new HashSet<>())
                 .add(e.getId());
 
+        if (result.isDestroyed()) {
+            visualChangeListener.accept(new Point[] {e.get(RoomComponent.class).location});
+        }
         return result;
     }
 
     @Override
     protected void updateObject(IRoomInformation object, Entity e) {
         logger.log(System.Logger.Level.TRACE, "MapRoomContainer.updateObject({0}, {1})", object, e);
+
+        boolean wasDestroyed = destroyedByRoom.put(e.getId(), object.isDestroyed());
+        if (wasDestroyed != object.isDestroyed()) {
+            visualChangeListener.accept(new Point[] {e.get(RoomComponent.class).location});
+        }
 
         // See if the room has changed owners
         Short oldOwner = ownersByRoom.get(e.getId());
@@ -107,6 +126,7 @@ public class MapRoomContainer extends EntityContainer<IRoomInformation> implemen
     protected void removeObject(IRoomInformation object, Entity e) {
         logger.log(Level.TRACE, "MapTileContainer.removeObject({0})", e);
         roomMap.remove(e.getId());
+        destroyedByRoom.remove(e.getId());
         Short ownerId = ownersByRoom.remove(e.getId());
         roomsByOwners.get(ownerId).remove(e.getId());
         roomTypesByOwners.get(ownerId).get(roomTypesByRoom.remove(e.getId())).remove(e.getId());
@@ -140,6 +160,7 @@ public class MapRoomContainer extends EntityContainer<IRoomInformation> implemen
 
         // Also free the room capacity catalog updates
         roomCatalogs.release();
+        destroyedByRoom.clear();
         roomCatalogsByRoom.clear();
         storageTypeByRoomCatalog.clear();
         roomByRoomCatalog.clear();

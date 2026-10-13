@@ -91,6 +91,9 @@ import toniarts.openkeeper.utils.WorldUtils;
  */
 public final class CreaturesController implements ICreaturesController {
 
+    private final java.util.random.RandomGenerator random;
+    @Override public java.util.random.RandomGenerator getRandom() { return random; }
+
     private static final Logger logger = System.getLogger(CreaturesController.class.getName());
 
     private final IKwdFile kwdFile;
@@ -116,6 +119,10 @@ public final class CreaturesController implements ICreaturesController {
     private final IGameController gameController;
     private final IMapController mapController;
     private final ILevelInfo levelInfo;
+    private final boolean restoring;
+    private boolean controllersRestored;
+    private boolean partiesRestored;
+    private final java.util.concurrent.atomic.AtomicLong nextPartyId = new java.util.concurrent.atomic.AtomicLong(1);
 
     private final static int MANA_GENERATION_IMP = -7;  // I don't find in Creature.java
 
@@ -138,6 +145,26 @@ public final class CreaturesController implements ICreaturesController {
      */
     public CreaturesController(IKwdFile kwdFile, EntityData entityData, Map<Variable.MiscVariable.MiscType, Variable.MiscVariable> gameSettings, IGameTimer gameTimer,
             IGameController gameController, IMapController mapController, ILevelInfo levelInfo) {
+        this(kwdFile, entityData, gameSettings, gameTimer, gameController, mapController, levelInfo, new toniarts.openkeeper.game.random.SimulationRandom());
+    }
+
+    public CreaturesController(IKwdFile kwdFile, EntityData entityData, Map<Variable.MiscVariable.MiscType, Variable.MiscVariable> gameSettings, IGameTimer gameTimer,
+            IGameController gameController, IMapController mapController, ILevelInfo levelInfo, java.util.random.RandomGenerator random) {
+        this(kwdFile, entityData, gameSettings, gameTimer, gameController, mapController, levelInfo, false, random);
+    }
+
+    /** Stage a factory without spawning authored creatures or initializing runtime parties. */
+    public static CreaturesController restoreBindings(IKwdFile kwdFile, EntityData entityData,
+            Map<Variable.MiscVariable.MiscType, Variable.MiscVariable> settings, IGameTimer timer,
+            IGameController game, IMapController map, ILevelInfo level, java.util.random.RandomGenerator random) {
+        return new CreaturesController(kwdFile, entityData, settings, timer, game, map, level, true, random);
+    }
+
+    private CreaturesController(IKwdFile kwdFile, EntityData entityData,
+            Map<Variable.MiscVariable.MiscType, Variable.MiscVariable> gameSettings, IGameTimer gameTimer,
+            IGameController gameController, IMapController mapController, ILevelInfo levelInfo, boolean restoring, java.util.random.RandomGenerator random) {
+        this.random = java.util.Objects.requireNonNull(random);
+        this.restoring = restoring;
         this.kwdFile = kwdFile;
         this.entityData = entityData;
         this.gameSettings = gameSettings;
@@ -146,8 +173,87 @@ public final class CreaturesController implements ICreaturesController {
         this.mapController = mapController;
         this.levelInfo = levelInfo;
 
-        // Load creatures
-        loadCreatures();
+        if (!restoring) loadCreatures();
+        else for (Thing.HeroParty party : kwdFile.getThings(Thing.HeroParty.class)) heroParties.put(party.getId(), party);
+    }
+
+    /** Include all live cache entries, also controllers held by parties/tasks outside the AI system. */
+    public List<toniarts.openkeeper.game.data.CreatureControlState> captureControllerStates(
+            toniarts.openkeeper.game.save.TaskNodeReferences.Capture taskNodes) {
+        var controllers = new java.util.ArrayList<ICreatureController>();
+        for (var reference : creatureControllersByEntityId.values()) {
+            var controller = reference.get();
+            if (controller != null) controllers.add(controller);
+        }
+        controllers.sort(java.util.Comparator.comparing(ICreatureController::getEntityId));
+        return controllers.stream().map(c -> ((CreatureController) c).captureState(taskNodes)).toList();
+    }
+
+    /** Bind caches atomically after all values validate. Keep the returned controllers strongly held
+     * until their system, party and task owners have been reconstructed. */
+    public List<ICreatureController> restoreCreatureControllers(
+            List<toniarts.openkeeper.game.data.CreatureControlState> states,
+            toniarts.openkeeper.game.save.TaskNodeReferences.Bindings taskNodes) {
+        if (!restoring || controllersRestored || !creatureControllersByEntityId.isEmpty())
+            throw new IllegalStateException("Creature cache cannot be rebound");
+        if (!(entityData instanceof toniarts.openkeeper.game.save.GameEntityData data))
+            throw new IllegalArgumentException("Restoration requires tracked entities");
+        if (states.size() > 65_536) throw new IllegalArgumentException("Too many creature controllers");
+        var ids = new java.util.HashSet<EntityId>();
+        var result = new java.util.ArrayList<ICreatureController>();
+        for (var state : states) {
+            if (!ids.add(state.entityId())) throw new IllegalArgumentException("Duplicate creature controller");
+            result.add(CreatureController.restoreState(state, taskNodes, data, kwdFile.getCreature(state.creatureType()),
+                    gameController.getNavigationService(), gameController.getTaskManager(), gameTimer, gameSettings,
+                    this, gameController.getEntityLookupService(), mapController, levelInfo,
+                    gameController.getGameWorldController().getObjectsController(), gameController.getGameWorldController().getShotsController()));
+        }
+        result.forEach(c -> creatureControllersByEntityId.put(c.getEntityId(), new WeakReference<>(c)));
+        controllersRestored = true;
+        return List.copyOf(result);
+    }
+
+    /** Lookup for graph binding, including cached controllers whose ECS removal is pending. */
+    public ICreatureController getBoundController(EntityId id) {
+        var reference = creatureControllersByEntityId.get(id);
+        var controller = reference == null ? null : reference.get();
+        if (controller == null) throw new IllegalArgumentException("Missing bound creature controller: " + id);
+        return controller;
+    }
+
+    private long allocatePartyId() {
+        return nextPartyId.getAndUpdate(id -> {
+            if (id == Long.MAX_VALUE) throw new IllegalStateException("Party ID space exhausted");
+            return id + 1;
+        });
+    }
+
+    public toniarts.openkeeper.game.data.PartyRegistryState captureParties() {
+        var identities = new java.util.IdentityHashMap<IPartyController, Integer>();
+        var nodes = new java.util.ArrayList<toniarts.openkeeper.game.data.PartyState>();
+        java.util.function.Function<IPartyController, Integer> index = party -> identities.computeIfAbsent(party, p -> {
+            int id = nodes.size();nodes.add(((PartyController) p).captureState());return id;
+        });
+        var current = new java.util.TreeMap<Short, Integer>();
+        var spawned = new java.util.TreeMap<Long, Integer>();
+        new java.util.TreeMap<>(creaturePartiesByPartyId).forEach((id, party) -> current.put(id, index.apply(party)));
+        new java.util.TreeMap<>(creaturePartiesById).forEach((id, party) -> spawned.put(id, index.apply(party)));
+        return new toniarts.openkeeper.game.data.PartyRegistryState(nextPartyId.get(), nodes, current, spawned);
+    }
+
+    /** Restore both party indexes after creature caches, without selecting leaders or spawning members. */
+    public void restoreParties(toniarts.openkeeper.game.data.PartyRegistryState saved) {
+        if (!restoring || !controllersRestored || partiesRestored || !creaturePartiesByPartyId.isEmpty() || !creaturePartiesById.isEmpty())
+            throw new IllegalStateException("Party registry cannot be rebound");
+        var nodes = new java.util.ArrayList<PartyController>();
+        for (var state : saved.nodes()) nodes.add(PartyController.restoreState(state, heroParties.get(state.definitionId()),
+                this::allocatePartyId, this::getBoundController, random));
+        var current = new HashMap<Short, IPartyController>();
+        var spawned = new HashMap<Long, IPartyController>();
+        saved.current().forEach((id, index) -> current.put(id, nodes.get(index)));
+        saved.spawned().forEach((id, index) -> spawned.put(id, nodes.get(index)));
+        creaturePartiesByPartyId.putAll(current);creaturePartiesById.putAll(spawned);
+        nextPartyId.set(saved.nextId());partiesRestored = true;
     }
 
     private void loadCreatures() {
@@ -188,7 +294,7 @@ public final class CreaturesController implements ICreaturesController {
         for (Thing.HeroParty heroParty : kwdFile.getThings(Thing.HeroParty.class)) {
             try {
                 heroParties.put(heroParty.getId(), heroParty);
-                creaturePartiesByPartyId.put(heroParty.getId(), new PartyController(heroParty));
+                creaturePartiesByPartyId.put(heroParty.getId(), new PartyController(heroParty, this::allocatePartyId, random));
             } catch (Exception ex) {
                 logger.log(Level.WARNING, "Could not load Thing " + heroParty + "!", ex);
             }
@@ -234,7 +340,9 @@ public final class CreaturesController implements ICreaturesController {
 
     @Override
     public EntityId spawnCreature(short creatureId, short playerId, int level, Vector2f position, SpawnType spawnType) {
-        return loadCreature(creatureId, playerId, level, position.x, position.y, 0, 100, 0, null, spawnType, null, (short) 0, 0, false);
+        Creature creature = kwdFile.getCreature(creatureId);
+        int initialGold = scaleAttribute(creature.getAttributes().getInitialGoldHeld(), kwdFile.getCreatureStats(level), Variable.CreatureStats.StatType.INITIAL_GOLD_HELD);
+        return loadCreature(creatureId, playerId, level, position.x, position.y, 0, 100, initialGold, null, spawnType, null, (short) 0, 0, false);
     }
 
     private EntityId loadCreature(short creatureId, short ownerId, int level, float x, float y, float rotation, Integer healthPercentage, int money,
@@ -246,8 +354,8 @@ public final class CreaturesController implements ICreaturesController {
     }
 
     private EntityId loadCreature(EntityId entity, Creature creature, Integer healthPercentage, int money, int level, SpawnType spawnType, float x, float y, short ownerId, float rotation, Thing.HeroParty.Objective objective, short objectiveTargetPlayerId, int objectiveTargetActionPointId, Integer triggerId, boolean diesInstantly) {
-        String name = Utils.generateCreatureName();
-        String bloodType = Utils.generateBloodType();
+        String name = Utils.generateCreatureName(random);
+        String bloodType = Utils.generateBloodType(random);
 
         return loadCreature(entity, creature, name, bloodType, healthPercentage, money, level, spawnType, x, y, ownerId, rotation, objective, objectiveTargetPlayerId, objectiveTargetActionPointId, triggerId, diesInstantly);
     }
@@ -448,6 +556,41 @@ public final class CreaturesController implements ICreaturesController {
     }
 
     @Override
+    public int countCreaturesAtLevel(short playerId, int minimumLevel) {
+        EntitySet entities = entityData.getEntities(new FieldFilter<>(Owner.class, "ownerId", playerId),
+                Owner.class, CreatureComponent.class, CreatureExperience.class, Health.class);
+        try {
+            int count = 0;
+            for (Entity entity : entities) {
+                if (!entity.get(CreatureComponent.class).worker
+                        && entity.get(CreatureExperience.class).level >= minimumLevel) count++;
+            }
+            return count;
+        } finally {
+            entities.release();
+        }
+    }
+
+    @Override
+    public int countCreaturesByMood(short playerId, short creatureId, int moodState) {
+        EntitySet entities = entityData.getEntities(new FieldFilter<>(Owner.class, "ownerId", playerId),
+                Owner.class, CreatureComponent.class, CreatureMood.class, Health.class);
+        try {
+            int count = 0;
+            for (Entity entity : entities) {
+                CreatureComponent component = entity.get(CreatureComponent.class);
+                if (component.worker || (creatureId != 0 && component.creatureId != creatureId)) continue;
+                Creature creature = kwdFile.getCreature(component.creatureId);
+                int threshold = CreatureMood.toRuntimeThreshold(creature.getAttributes().getUnhappyThreshold());
+                if (entity.get(CreatureMood.class).getState(threshold) == moodState) count++;
+            }
+            return count;
+        } finally {
+            entities.release();
+        }
+    }
+
+    @Override
     public void levelUpCreatures(short playerId, int level) {
 
         // Find all the living creatures of the wanted player
@@ -470,45 +613,50 @@ public final class CreaturesController implements ICreaturesController {
 
     @Override
     public void levelUpCreature(EntityId entityId, int level, int experience) {
+        synchronized (GameWorldController.GOLD_LOCK) {
+            // Get all the components needed
+            CreatureComponent creatureComponent = entityData.getComponent(entityId, CreatureComponent.class);
+            CreatureExperience creatureExperience = entityData.getComponent(entityId, CreatureExperience.class);
+            Health health = entityData.getComponent(entityId, Health.class);
+            Gold gold = entityData.getComponent(entityId, Gold.class);
+            Senses senses = entityData.getComponent(entityId, Senses.class);
+            Threat threat = entityData.getComponent(entityId, Threat.class);
+            CreatureMeleeAttack creatureMeleeAttack = entityData.getComponent(entityId, CreatureMeleeAttack.class);
+            Regeneration regeneration = entityData.getComponent(entityId, Regeneration.class);
 
-        // Get all the components needed
-        CreatureComponent creatureComponent = entityData.getComponent(entityId, CreatureComponent.class);
-        CreatureExperience creatureExperience = entityData.getComponent(entityId, CreatureExperience.class);
-        Health health = entityData.getComponent(entityId, Health.class);
-        Gold gold = entityData.getComponent(entityId, Gold.class);
-        Senses senses = entityData.getComponent(entityId, Senses.class);
-        Threat threat = entityData.getComponent(entityId, Threat.class);
-        CreatureMeleeAttack creatureMeleeAttack = entityData.getComponent(entityId, CreatureMeleeAttack.class);
-        Regeneration regeneration = entityData.getComponent(entityId, Regeneration.class);
+            // Create a new versions of them
+            creatureComponent = new CreatureComponent(creatureComponent);
+            creatureExperience = new CreatureExperience(creatureExperience);
+            health = new Health(health);
+            gold = new Gold(gold);
+            senses = new Senses(senses);
+            threat = new Threat(threat);
+            creatureMeleeAttack = new CreatureMeleeAttack(creatureMeleeAttack);
+            if (regeneration == null) {
+                regeneration = new Regeneration(0, null);
+            } else {
+                regeneration = new Regeneration(regeneration);
+            }
 
-        // Create a new versions of them
-        creatureComponent = new CreatureComponent(creatureComponent);
-        creatureExperience = new CreatureExperience(creatureExperience);
-        health = new Health(health);
-        gold = new Gold(gold);
-        senses = new Senses(senses);
-        threat = new Threat(threat);
-        creatureMeleeAttack = new CreatureMeleeAttack(creatureMeleeAttack);
-        if (regeneration == null) {
-            regeneration = new Regeneration(0, null);
-        } else {
-            regeneration = new Regeneration(regeneration);
-        }
+            // Set the new stats
+            creatureExperience.level = level;
+            creatureExperience.experience = experience;
 
-        // Set the new stats
-        creatureExperience.level = level;
-        creatureExperience.experience = experience;
+            // Update stats
+            setAttributesByLevel(creatureComponent, creatureExperience, health, gold, senses, threat, creatureMeleeAttack, regeneration);
+            setSpells(entityId, kwdFile.getCreature(creatureComponent.creatureId), level);
 
-        // Update stats
-        setAttributesByLevel(creatureComponent, creatureExperience, health, gold, senses, threat, creatureMeleeAttack, regeneration);
-        setSpells(entityId, kwdFile.getCreature(creatureComponent.creatureId), level);
-
-        // Set the new components to the entity
-        entityData.setComponents(entityId, creatureComponent, creatureExperience, health, gold, senses, threat, creatureMeleeAttack);
-        if (regeneration.ownLandHealthIncrease > 0) {
-            entityData.setComponent(entityId, regeneration);
-        } else {
-            entityData.removeComponent(entityId, Regeneration.class);
+            // Set the new components to the entity
+            entityData.setComponents(entityId, creatureComponent, creatureExperience, health, gold, senses, threat, creatureMeleeAttack);
+            Mobile mobile = entityData.getComponent(entityId, Mobile.class);
+            if (mobile != null) {
+                entityData.setComponent(entityId, new Mobile(mobile.canFly, mobile.canWalkOnWater, mobile.canWalkOnLava, creatureComponent.speed));
+            }
+            if (regeneration.ownLandHealthIncrease > 0) {
+                entityData.setComponent(entityId, regeneration);
+            } else {
+                entityData.removeComponent(entityId, Regeneration.class);
+            }
         }
     }
 
@@ -516,50 +664,71 @@ public final class CreaturesController implements ICreaturesController {
         Creature creature = kwdFile.getCreature(creatureComponent.creatureId);
         Map<Variable.CreatureStats.StatType, Variable.CreatureStats> stats = kwdFile.getCreatureStats(creatureExperience.level);
         Creature.Attributes attributes = creature.getAttributes();
-        creatureComponent.height = attributes.getHeight() * ((stats != null ? stats.get(Variable.CreatureStats.StatType.HEIGHT_TILES).getValue() : 100) / 100);
+        creatureComponent.height = scaleAttribute(attributes.getHeight(), stats, Variable.CreatureStats.StatType.HEIGHT_TILES);
         if (healthComponent != null) {
             int prevMaxHealth = healthComponent.maxHealth;
-            healthComponent.maxHealth = attributes.getHp() * ((stats != null ? stats.get(Variable.CreatureStats.StatType.HEALTH).getValue() : 100) / 100);
-            healthComponent.health = healthComponent.maxHealth * healthComponent.health / prevMaxHealth;
-            regeneration.ownLandHealthIncrease = attributes.getOwnLandHealthIncrease() * ((stats != null ? stats.get(Variable.CreatureStats.StatType.OWN_LAND_HEALTH_INCREASE_PER_SECOND).getValue() : 100) / 100);
+            healthComponent.maxHealth = scaleAttribute(attributes.getHp(), stats, Variable.CreatureStats.StatType.HEALTH);
+            // Preserve the health fraction without overflowing or killing a living creature by rounding.
+            healthComponent.health = prevMaxHealth > 0 && healthComponent.health > 0 && healthComponent.maxHealth > 0
+                    ? (int) Math.max(1, Math.min(healthComponent.maxHealth, (long) healthComponent.maxHealth * healthComponent.health / prevMaxHealth)) : 0;
+            regeneration.ownLandHealthIncrease = scaleAttribute(attributes.getOwnLandHealthIncrease(), stats, Variable.CreatureStats.StatType.OWN_LAND_HEALTH_INCREASE_PER_SECOND);
         }
-        creatureComponent.fear = attributes.getFear() * ((stats != null ? stats.get(Variable.CreatureStats.StatType.FEAR).getValue() : 100) / 100);
-        threatComponent.threat = attributes.getThreat() * ((stats != null ? stats.get(Variable.CreatureStats.StatType.THREAT).getValue() : 100) / 100);
-        creatureComponent.pay = attributes.getPay() * ((stats != null ? stats.get(Variable.CreatureStats.StatType.PAY).getValue() : 100) / 100);
-        goldComponent.maxGold = attributes.getMaxGoldHeld() * ((stats != null ? stats.get(Variable.CreatureStats.StatType.MAX_GOLD_HELD).getValue() : 100) / 100);
-        creatureComponent.hungerFill = attributes.getHungerFill() * ((stats != null ? stats.get(Variable.CreatureStats.StatType.HUNGER_FILL_CHICKENS).getValue() : 100) / 100);
-        creatureComponent.manaGenPrayer = attributes.getManaGenPrayer() * ((stats != null ? stats.get(Variable.CreatureStats.StatType.MANA_GENERATED_BY_PRAYER_PER_SECOND).getValue() : 100) / 100);
-        creatureExperience.experienceToNextLevel = attributes.getExpForNextLevel() * ((stats != null ? stats.get(Variable.CreatureStats.StatType.EXPERIENCE_POINTS_FOR_NEXT_LEVEL).getValue() : 100) / 100);
-        creatureExperience.experiencePerSecond = attributes.getExpPerSecond() * ((stats != null ? stats.get(Variable.CreatureStats.StatType.EXPERIENCE_POINTS_PER_SECOND).getValue() : 100) / 100);
-        creatureExperience.experiencePerSecondTraining = attributes.getExpPerSecondTraining() * ((stats != null ? stats.get(Variable.CreatureStats.StatType.EXPERIENCE_POINTS_FROM_TRAINING_PER_SECOND).getValue() : 100) / 100);
-        creatureComponent.researchPerSecond = attributes.getResearchPerSecond() * ((stats != null ? stats.get(Variable.CreatureStats.StatType.RESEARCH_POINTS_PER_SECOND).getValue() : 100) / 100);
-        creatureComponent.manufacturePerSecond = attributes.getManufacturePerSecond() * ((stats != null ? stats.get(Variable.CreatureStats.StatType.MANUFACTURE_POINTS_PER_SECOND).getValue() : 100) / 100);
-        creatureComponent.decomposeValue = attributes.getDecomposeValue() * ((stats != null ? stats.get(Variable.CreatureStats.StatType.DECOMPOSE_VALUE).getValue() : 100) / 100);
-        creatureComponent.speed = attributes.getSpeed() * ((stats != null ? stats.get(Variable.CreatureStats.StatType.SPEED_TILES_PER_SECOND).getValue() : 100) / 100);
-        creatureComponent.runSpeed = attributes.getRunSpeed() * ((stats != null ? stats.get(Variable.CreatureStats.StatType.RUN_SPEED_TILES_PER_SECOND).getValue() : 100) / 100);
-        creatureComponent.tortureTimeToConvert = attributes.getTortureTimeToConvert() * ((stats != null ? stats.get(Variable.CreatureStats.StatType.TORTURE_TIME_TO_CONVERT_SECONDS).getValue() : 100) / 100);
-        creatureComponent.posessionManaCost = attributes.getPossessionManaCost() * ((stats != null ? stats.get(Variable.CreatureStats.StatType.POSSESSION_MANA_COST_PER_SECOND).getValue() : 100) / 100);
+        creatureComponent.fear = scaleAttribute(attributes.getFear(), stats, Variable.CreatureStats.StatType.FEAR);
+        threatComponent.threat = scaleAttribute(attributes.getThreat(), stats, Variable.CreatureStats.StatType.THREAT);
+        creatureComponent.pay = scaleAttribute(attributes.getPay(), stats, Variable.CreatureStats.StatType.PAY);
+        goldComponent.maxGold = scaleAttribute(attributes.getMaxGoldHeld(), stats, Variable.CreatureStats.StatType.MAX_GOLD_HELD);
+        creatureComponent.maxGoldHeld = goldComponent.maxGold;
+        creatureComponent.hungerFill = scaleAttribute(attributes.getHungerFill(), stats, Variable.CreatureStats.StatType.HUNGER_FILL_CHICKENS);
+        creatureComponent.manaGenPrayer = scaleAttribute(attributes.getManaGenPrayer(), stats, Variable.CreatureStats.StatType.MANA_GENERATED_BY_PRAYER_PER_SECOND);
+        creatureExperience.experienceToNextLevel = scaleAttribute(attributes.getExpForNextLevel(), stats, Variable.CreatureStats.StatType.EXPERIENCE_POINTS_FOR_NEXT_LEVEL);
+        creatureExperience.experiencePerSecond = scaleAttribute(attributes.getExpPerSecond(), stats, Variable.CreatureStats.StatType.EXPERIENCE_POINTS_PER_SECOND);
+        creatureExperience.experiencePerSecondTraining = scaleAttribute(attributes.getExpPerSecondTraining(), stats, Variable.CreatureStats.StatType.EXPERIENCE_POINTS_FROM_TRAINING_PER_SECOND);
+        creatureComponent.researchPerSecond = scaleAttribute(attributes.getResearchPerSecond(), stats, Variable.CreatureStats.StatType.RESEARCH_POINTS_PER_SECOND);
+        creatureComponent.manufacturePerSecond = scaleAttribute(attributes.getManufacturePerSecond(), stats, Variable.CreatureStats.StatType.MANUFACTURE_POINTS_PER_SECOND);
+        creatureComponent.decomposeValue = scaleAttribute(attributes.getDecomposeValue(), stats, Variable.CreatureStats.StatType.DECOMPOSE_VALUE);
+        creatureComponent.speed = scaleAttribute(attributes.getSpeed(), stats, Variable.CreatureStats.StatType.SPEED_TILES_PER_SECOND);
+        creatureComponent.runSpeed = scaleAttribute(attributes.getRunSpeed(), stats, Variable.CreatureStats.StatType.RUN_SPEED_TILES_PER_SECOND);
+        creatureComponent.tortureTimeToConvert = scaleAttribute(attributes.getTortureTimeToConvert(), stats, Variable.CreatureStats.StatType.TORTURE_TIME_TO_CONVERT_SECONDS);
+        creatureComponent.posessionManaCost = scaleAttribute(attributes.getPossessionManaCost(), stats, Variable.CreatureStats.StatType.POSSESSION_MANA_COST_PER_SECOND);
         if (sensesComponent != null) {
-            sensesComponent.distanceCanHear = attributes.getDistanceCanHear() * ((stats != null ? stats.get(Variable.CreatureStats.StatType.DISTANCE_CAN_HEAR_TILES).getValue() : 100) / 100);
+            sensesComponent.distanceCanHear = scaleAttribute(attributes.getDistanceCanHear(), stats, Variable.CreatureStats.StatType.DISTANCE_CAN_HEAR_TILES);
         }
-        goldComponent.gold = attributes.getInitialGoldHeld() * ((stats != null ? stats.get(Variable.CreatureStats.StatType.INITIAL_GOLD_HELD).getValue() : 100) / 100);
-        creatureMeleeAttack.damage = creature.getMeleeDamage() * ((stats != null ? stats.get(Variable.CreatureStats.StatType.MELEE_DAMAGE).getValue() : 100) / 100);
-        creatureMeleeAttack.rechargeTime = creature.getMeleeRecharge() * ((stats != null ? stats.get(Variable.CreatureStats.StatType.MELEE_RECHARGE_TIME_SECONDS).getValue() : 100) / 100);
+        creatureMeleeAttack.damage = scaleAttribute(creature.getMeleeDamage(), stats, Variable.CreatureStats.StatType.MELEE_DAMAGE);
+        creatureMeleeAttack.rechargeTime = scaleAttribute(creature.getMeleeRecharge(), stats, Variable.CreatureStats.StatType.MELEE_RECHARGE_TIME_SECONDS);
 
         // FIXME: We should know when we run and when we walk and set the speed
         // Steering
         //setMaxLinearSpeed(speed);
     }
 
+    private static int statPercentage(Map<Variable.CreatureStats.StatType, Variable.CreatureStats> stats, Variable.CreatureStats.StatType type) {
+        Variable.CreatureStats stat = stats == null ? null : stats.get(type);
+        int percentage = stat == null ? 100 : stat.getValue();
+        if (percentage < 0) throw new IllegalArgumentException("Negative creature stat percentage for " + type);
+        return percentage;
+    }
+
+    private static int scaleAttribute(int base, Map<Variable.CreatureStats.StatType, Variable.CreatureStats> stats, Variable.CreatureStats.StatType type) {
+        return Math.toIntExact((long) base * statPercentage(stats, type) / 100);
+    }
+
+    private static float scaleAttribute(float base, Map<Variable.CreatureStats.StatType, Variable.CreatureStats> stats, Variable.CreatureStats.StatType type) {
+        return base * (statPercentage(stats, type) / 100f);
+    }
+
     @Override
     public void spawnHeroParty(short partyId, PartyType partyType, Vector2f position) {
+        var gate = mapController.getRoomControllerByCoordinates(WorldUtils.vectorToPoint(position));
+        if (gate != null && gate.getRoom().isHeroGate() && gate.isDestroyed()) {
+            return;
+        }
         /**
          * In the game manual it is said that it is entirely possible to have multiple parties with the same
          * party ID, the old party just isn't controlled anymore
          */
         IPartyController partyController = creaturePartiesByPartyId.get(partyId);
         if (partyController.isCreated()) {
-            partyController = new PartyController(heroParties.get(partyId));
+            partyController = new PartyController(heroParties.get(partyId), this::allocatePartyId, random);
             logger.log(Level.DEBUG, "Re-spawning party {0}!", partyId);
         }
         partyController.setType(partyType);
@@ -664,21 +833,25 @@ public final class CreaturesController implements ICreaturesController {
 
     @Override
     public void makeCreaturesHappy(short playerId) {
-        EntitySet entities = entityData.getEntities(new FieldFilter<>(Owner.class, "ownerId", playerId), Owner.class, CreatureMood.class);
-        for (Entity entity : entities) {
-            entityData.setComponent(entity.getId(), new CreatureMood());
+        synchronized (GameWorldController.GOLD_LOCK) {
+            EntitySet entities = entityData.getEntities(new FieldFilter<>(Owner.class, "ownerId", playerId), Owner.class, CreatureMood.class);
+            for (Entity entity : entities) {
+                entityData.setComponent(entity.getId(), new CreatureMood());
+            }
         }
     }
 
     @Override
     public void angerEnemyCreatures(short playerId) {
-        EntitySet entities = entityData.getEntities(Owner.class, CreatureMood.class);
-        for (Entity entity : entities) {
-            if (entity.get(Owner.class).ownerId == playerId) {
-                continue;
+        synchronized (GameWorldController.GOLD_LOCK) {
+            EntitySet entities = entityData.getEntities(Owner.class, CreatureMood.class);
+            for (Entity entity : entities) {
+                if (entity.get(Owner.class).ownerId == playerId) {
+                    continue;
+                }
+                entityData.setComponent(entity.getId(), new CreatureMood(CreatureMood.MAX_ANGER, CreatureMood.MAX_ANGER,
+                        CreatureMood.MAX_ANGER, CreatureMood.MAX_ANGER, CreatureMood.MAX_ANGER, CreatureMood.MAX_ANGER));
             }
-            entityData.setComponent(entity.getId(), new CreatureMood(CreatureMood.MAX_ANGER, CreatureMood.MAX_ANGER,
-                    CreatureMood.MAX_ANGER, CreatureMood.MAX_ANGER, CreatureMood.MAX_ANGER, CreatureMood.MAX_ANGER));
         }
     }
 
@@ -702,7 +875,7 @@ public final class CreaturesController implements ICreaturesController {
         // Get the spells the creature should have
         Map<Short, toniarts.openkeeper.tools.convert.map.CreatureSpell> availableSpells = creature.getSpells()
                 .stream()
-                .filter((spell) -> spell.getLevelAvailable() >= level)
+                .filter((spell) -> spell.getLevelAvailable() <= level)
                 .collect(Collectors.toMap((spell) -> spell.getCreatureSpellId(), (spell) -> kwdFile.getCreatureSpellById(spell.getCreatureSpellId())));
         List<EntityId> creatureSpellIds = new ArrayList<>(availableSpells.size());
         boolean spellsChanged = false;

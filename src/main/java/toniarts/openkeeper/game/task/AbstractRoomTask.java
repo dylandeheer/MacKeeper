@@ -33,13 +33,19 @@ public abstract class AbstractRoomTask extends AbstractTileTask {
 
     protected final IRoomController room;
 
-    public AbstractRoomTask(final INavigationService navigationService, final IMapController mapController, Point p, short playerId, IRoomController room) {
-        super(navigationService, mapController, p, playerId);
+    public AbstractRoomTask(toniarts.openkeeper.game.task.TaskIdentityAllocator taskIds, final INavigationService navigationService, final IMapController mapController, Point p, short playerId, IRoomController room) {
+        super(taskIds, navigationService, mapController, p, playerId);
 
         this.room = room;
     }
 
-    protected IRoomController getRoom() {
+    protected AbstractRoomTask(TaskIdentityAllocator ids, toniarts.openkeeper.game.data.TaskBaseState saved,
+            INavigationService navigation, IMapController map, Point point, short player, IRoomController room) {
+        super(ids, saved, navigation, map, point, player);
+        this.room = java.util.Objects.requireNonNull(room);
+    }
+
+    public IRoomController getRoom() {
         return room;
     }
 

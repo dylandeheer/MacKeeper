@@ -36,12 +36,22 @@ public class DoubleQuadController extends NormalRoomController {
 
     public DoubleQuadController(EntityId entityId, EntityData entityData, IKwdFile kwdFile,
             RoomInstance roomInstance, IObjectsController objectsController) {
-        this(entityId, entityData, kwdFile, roomInstance, objectsController, null);
+        this(entityId, entityData, kwdFile, roomInstance, objectsController, true);
+    }
+
+    public DoubleQuadController(EntityId entityId, EntityData entityData, IKwdFile kwdFile,
+            RoomInstance roomInstance, IObjectsController objectsController, boolean initialize) {
+        this(entityId, entityData, kwdFile, roomInstance, objectsController, null, initialize);
     }
 
     public DoubleQuadController(EntityId entityId, EntityData entityData, IKwdFile kwdFile,
             RoomInstance roomInstance, IObjectsController objectsController, ObjectType defaultStorageType) {
-        super(entityId, entityData, kwdFile, roomInstance, objectsController, defaultStorageType);
+        this(entityId, entityData, kwdFile, roomInstance, objectsController, defaultStorageType, true);
+    }
+
+    public DoubleQuadController(EntityId entityId, EntityData entityData, IKwdFile kwdFile,
+            RoomInstance roomInstance, IObjectsController objectsController, ObjectType defaultStorageType, boolean initialize) {
+        super(entityId, entityData, kwdFile, roomInstance, objectsController, defaultStorageType, initialize);
     }
 
 

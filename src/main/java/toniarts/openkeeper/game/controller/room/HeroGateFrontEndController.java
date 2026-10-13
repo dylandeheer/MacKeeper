@@ -43,7 +43,12 @@ public final class HeroGateFrontEndController extends NormalRoomController {
 
     public HeroGateFrontEndController(EntityId entityId, EntityData entityData, IKwdFile kwdFile,
             toniarts.openkeeper.common.RoomInstance roomInstance, IObjectsController objectsController) {
-        super(entityId, entityData, kwdFile, roomInstance, objectsController);
+        this(entityId, entityData, kwdFile, roomInstance, objectsController, true);
+    }
+
+    public HeroGateFrontEndController(EntityId entityId, EntityData entityData, IKwdFile kwdFile,
+            toniarts.openkeeper.common.RoomInstance roomInstance, IObjectsController objectsController, boolean initialize) {
+        super(entityId, entityData, kwdFile, roomInstance, objectsController, initialize);
     }
 
     @Override

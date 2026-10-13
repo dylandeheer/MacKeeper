@@ -37,8 +37,14 @@ public final class GameLoop {
     private final IGameLogicUpdatable gameLoopManager;
     private final Runner loop;
 
+    private final SimulationGate simulationGate;
+    private volatile boolean initialized;
+    private final Object lifecycle = new Object();
+    private boolean launched;
+    private boolean stopping;
+    private final java.util.concurrent.CompletableFuture<Void> cleanup = new java.util.concurrent.CompletableFuture<>();
     private final long updateRate;
-    private final AtomicBoolean pauseFlag = new AtomicBoolean(false);
+    private final GameLoopClock clock;
 
     public GameLoop(IGameLogicUpdatable gameLoopManager) {
         this(gameLoopManager, INTERVAL_FPS_60); // 60 FPS
@@ -49,8 +55,18 @@ public final class GameLoop {
     }
 
     public GameLoop(IGameLogicUpdatable gameLoopManager, long updateRateNanos, String name) {
-        this.gameLoopManager = gameLoopManager;
-        this.updateRate = updateRateNanos;
+        this(gameLoopManager, updateRateNanos, name, new SimulationGate());
+    }
+
+    public GameLoop(IGameLogicUpdatable gameLoopManager, long updateRateNanos, String name, SimulationGate simulationGate) {
+        this(gameLoopManager, new GameLoopClock.State(updateRateNanos, 0, 0, false), name, simulationGate);
+    }
+
+    public GameLoop(IGameLogicUpdatable gameLoopManager, GameLoopClock.State saved, String name, SimulationGate simulationGate) {
+        this.simulationGate = java.util.Objects.requireNonNull(simulationGate);
+        this.gameLoopManager = java.util.Objects.requireNonNull(gameLoopManager);
+        this.clock = new GameLoopClock(saved);
+        this.updateRate = saved.intervalNanos();
         this.loop = new Runner(NAME_PREFIX + " " + name);
     }
 
@@ -60,7 +76,11 @@ public final class GameLoop {
      * background thread.
      */
     public void start() {
-        loop.start();
+        synchronized (lifecycle) {
+            if (stopping || launched) throw new IllegalStateException("Game loop already started or stopped");
+            loop.start();
+            launched = true;
+        }
     }
 
     /**
@@ -72,14 +92,64 @@ public final class GameLoop {
         loop.close();
     }
 
+    /** Signal shutdown without waiting, so a group can stop all loops before joining any. */
+    public void requestStop() {
+        synchronized (lifecycle) {
+            stopping = true;
+            loop.go.set(false);
+        }
+        resume();
+    }
+
+    public boolean isInitialized() {
+        return initialized;
+    }
+
     public void pause() {
-        pauseFlag.set(true);
+        simulationGate.mutate(() -> {synchronized (clock) {clock.pause(simulationTime());}});
     }
 
     public void resume() {
-        pauseFlag.set(false);
-        synchronized (pauseFlag) {
-            pauseFlag.notify();
+        simulationGate.mutate(() -> {
+            synchronized (clock) {clock.resume(simulationTime());clock.notifyAll();}
+        });
+    }
+
+    /** Must be called inside this loop's shared exclusive snapshot boundary. */
+    public GameLoopClock.State capturePhase() {
+        if (!initialized) throw new IllegalStateException("Game loop has not initialized");
+        return clock.capture(simulationGate.snapshotTime());
+    }
+
+    /** Freeze scheduling at the shared capture timestamp without publishing a gameplay pause event. */
+    public void holdAtSnapshot() {
+        synchronized (clock) {clock.pause(simulationGate.snapshotTime());}
+    }
+
+    /** The gate protects suspended time; the clock monitor keeps timestamp sampling ordered with mutations. */
+    private long simulationTime() {
+        if (!Thread.holdsLock(clock)) throw new IllegalStateException("Clock time must be sampled under its monitor");
+        return System.nanoTime() - simulationGate.suspendedNanos();
+    }
+
+    private void initializeSystems() {
+        simulationGate.mutate(() -> {
+            gameLoopManager.start();
+            synchronized (clock) {clock.start(simulationTime());}
+            initialized = true;
+        });
+    }
+
+    private void stopSystems() {
+        try {
+            simulationGate.mutate(() -> {
+                initialized = false;
+                gameLoopManager.stop();
+            });
+            cleanup.complete(null);
+        } catch (RuntimeException | Error failure) {
+            cleanup.completeExceptionally(failure);
+            throw failure;
         }
     }
 
@@ -97,83 +167,79 @@ public final class GameLoop {
         }
 
         public void close() {
-            go.set(false);
-            GameLoop.this.resume();
-            try {
-                join();
-            } catch (InterruptedException e) {
-                throw new RuntimeException("Interrupted while waiting for game loop thread to complete.", e);
+            if (Thread.currentThread() == this) {
+                throw new IllegalStateException("A game loop cannot wait for its own shutdown; use requestStop");
             }
+            requestStop();
+            synchronized (lifecycle) {
+                // Staging can allocate queries before a Runner has ever been started.
+                if (!launched && !cleanup.isDone()) stopSystems();
+            }
+            boolean interrupted = false;
+            while (isAlive()) {
+                try {
+                    join();
+                } catch (InterruptedException e) {
+                    interrupted = true;
+                }
+            }
+            if (interrupted) Thread.currentThread().interrupt();
+            cleanup.join();
         }
 
         @Override
         public void run() {
-            gameLoopManager.start();
-
-            long frameRate = 0;
-            long lastTime = System.nanoTime();
-            while (go.get()) {
-                // Check pause
-                if (pauseFlag.get()) {
-                    synchronized (pauseFlag) {
-                        // We are in a while loop here to protect against spurious interrupts
-                        while (pauseFlag.get()) {
-                            try {
-                                pauseFlag.wait();
-                                lastTime = System.nanoTime();
-                            } catch (InterruptedException e) {
-                                throw new RuntimeException("Interrupted sleeping", e);
+            try {
+                initializeSystems();
+                while (go.get()) {
+                    if (clock.isPaused()) {
+                        synchronized (clock) {
+                            while (clock.isPaused() && go.get()) {
+                                try {clock.wait();}
+                                catch (InterruptedException e) {Thread.currentThread().interrupt();throw new RuntimeException("Interrupted sleeping", e);}
                             }
                         }
                         continue;
                     }
-                }
 
-                long time = System.nanoTime();
-                long delta = time - lastTime;
-
-                if (delta + frameRate >= updateRate) {
-                    lastTime = time;
-                    frameRate += delta - updateRate;
-                    gameLoopManager.processTick(delta / 1_000_000_000f);
-                    long tickTime = System.nanoTime() - time;
-                    // Logging
-                    logger.log(tickTime < updateRate ? Level.TRACE : Level.ERROR, "Loop \"{0}\" took {1} ms!",
-                            getName(), TimeUnit.NANOSECONDS.toMillis(delta));
-                }
-
-                // Wait just a little.  This is an important enough thread
-                // that we'll poll instead of smart-sleep but we also don't
-                // want to consume 100% of a CPU core.
-                // Thread.sleep(0) relies on the operating systems thread
-                // scheduler which will have a minimum granularity.  On Windows,
-                // Thread.sleep(0) can take as long as 15 ms to return.  Thus
-                // note that if we devolve into a case where the delta is more
-                // than the update rate then we never hit this code.
-                //
-                // And if the delta since last poll was kind of large
-                // we won't sleep at all... In this case, if the delta was
-                // more than half the updateRate... we'll skip sleeping.
-                // Which probably means that on Windows, we'll be responsive
-                // every other loop iteration.  It's an imperfect world and
-                // the only alternative is true CPU heating busy-waiting.
-                long sleep = TimeUnit.NANOSECONDS.toMillis(updateRate - frameRate);
-                if (sleep > 0) {
+                    long sleep;
+                    simulationGate.enterUpdate();
                     try {
-                        // More then 0 here and we underflow constantly.
-                        // 0 and we gobble up noticable CPU.  Slower update
-                        // rates could probably get away with the longer sleep
-                        // but 60 FPS can't keep up on Windows.  So we'll let
-                        // the sleep time be externally defined for cases
-                        // where the caller knows  better.
-                        Thread.sleep(sleep);
-                    } catch (InterruptedException e) {
-                        throw new RuntimeException("Interrupted sleeping", e);
+                        java.util.OptionalLong delta;
+                        synchronized (clock) {delta = clock.poll(simulationTime());}
+                        if (delta.isPresent()) {
+                            long tickStart = System.nanoTime();
+                            gameLoopManager.processTick(delta.getAsLong() / 1_000_000_000f);
+                            long tickTime = System.nanoTime() - tickStart;
+                            logger.log(tickTime < updateRate ? Level.TRACE : Level.ERROR, "Loop \"{0}\" took {1} ms!",
+                                    getName(), TimeUnit.NANOSECONDS.toMillis(tickTime));
+                        }
+                        synchronized (clock) {sleep = clock.sleepNanos(simulationTime());}
+                    } finally {
+                        simulationGate.leaveUpdate();
+                    }
+
+                    // Account for work already spent in this update and any restored pending fraction.
+                    // Sleep outside the gate so snapshots and commands remain available.
+                    sleep = TimeUnit.NANOSECONDS.toMillis(sleep);
+                    if (sleep > 0) {
+                        try {
+                            // More then 0 here and we underflow constantly.
+                            // 0 and we gobble up noticable CPU.  Slower update
+                            // rates could probably get away with the longer sleep
+                            // but 60 FPS can't keep up on Windows.  So we'll let
+                            // the sleep time be externally defined for cases
+                            // where the caller knows  better.
+                            Thread.sleep(sleep);
+                        } catch (InterruptedException e) {
+                            throw new RuntimeException("Interrupted sleeping", e);
+                        }
                     }
                 }
-            }
 
-            gameLoopManager.stop();
+            } finally {
+                stopSystems();
+            }
         }
     }
 }

@@ -36,6 +36,7 @@ import toniarts.openkeeper.game.task.TaskType;
 import static toniarts.openkeeper.game.task.TaskType.TRAIN;
 import toniarts.openkeeper.tools.convert.map.Creature;
 import toniarts.openkeeper.utils.GameTimeCounter;
+import toniarts.openkeeper.game.save.LifetimeSnapshots;
 
 /**
  * Handles creature animation states. These are based on the creature states and such. I'm not entirely sure
@@ -56,6 +57,13 @@ public final class CreatureViewSystem extends GameTimeCounter {
 
         creatureViewEntities = entityData.getEntities(CreatureViewState.class, Position.class);
         processAddedEntities(creatureViewEntities);
+    }
+
+    public LifetimeSnapshots.Clock captureTime() {return new LifetimeSnapshots.Clock(timeElapsed);}
+
+    /** The membership cache has no initialization effects; only the animation clock is retained separately. */
+    public static CreatureViewSystem restoreState(EntityData data, LifetimeSnapshots.Clock saved) {
+        var system = new CreatureViewSystem(data);system.timeElapsed = saved.elapsed();return system;
     }
 
     @Override

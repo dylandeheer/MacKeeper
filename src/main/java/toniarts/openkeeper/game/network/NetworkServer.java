@@ -27,7 +27,7 @@ import com.jme3.network.serializing.serializers.FieldSerializer;
 import com.jme3.network.service.HostedService;
 import com.jme3.network.service.rmi.RmiHostedService;
 import com.jme3.network.service.rpc.RpcHostedService;
-import com.simsilica.es.base.DefaultEntityData;
+import toniarts.openkeeper.game.save.GameEntityData;
 import com.simsilica.es.server.EntityDataHostedService;
 import com.simsilica.ethereal.EtherealHost;
 import toniarts.openkeeper.utils.Point;
@@ -46,6 +46,7 @@ import toniarts.openkeeper.game.component.CreatureHunger;
 import toniarts.openkeeper.game.component.CreatureImprisoned;
 import toniarts.openkeeper.game.component.CreatureMeleeAttack;
 import toniarts.openkeeper.game.component.CreatureMood;
+import toniarts.openkeeper.game.component.CreatureSalary;
 import toniarts.openkeeper.game.component.CreatureRecuperating;
 import toniarts.openkeeper.game.component.CreatureSleep;
 import toniarts.openkeeper.game.component.CreatureTortured;
@@ -168,11 +169,13 @@ public final class NetworkServer {
             Serializer.registerClass(CreatureImprisoned.class, new FieldSerializer());
             Serializer.registerClass(CreatureMeleeAttack.class, new FieldSerializer());
             Serializer.registerClass(CreatureMood.class, new FieldSerializer());
+            Serializer.registerClass(CreatureSalary.class, new FieldSerializer());
             Serializer.registerClass(CreatureRecuperating.class, new FieldSerializer());
             Serializer.registerClass(CreatureSleep.class, new FieldSerializer());
             Serializer.registerClass(CreatureTortured.class, new FieldSerializer());
             Serializer.registerClass(CreatureViewState.class, new FieldSerializer());
             Serializer.registerClass(Damage.class, new FieldSerializer());
+            Serializer.registerClass(toniarts.openkeeper.game.component.LastDamageSource.class, new FieldSerializer());
             Serializer.registerClass(Death.class, new FieldSerializer());
             Serializer.registerClass(Decay.class, new FieldSerializer());
             Serializer.registerClass(DoorComponent.class, new FieldSerializer());
@@ -184,6 +187,7 @@ public final class NetworkServer {
             Serializer.registerClass(HauledBy.class, new FieldSerializer());
             Serializer.registerClass(Health.class, new FieldSerializer());
             Serializer.registerClass(InHand.class, new FieldSerializer());
+            Serializer.registerClass(toniarts.openkeeper.game.component.ManufacturingOrder.class, new FieldSerializer());
             Serializer.registerClass(Interaction.class, new FieldSerializer());
             Serializer.registerClass(Mana.class, new FieldSerializer());
             Serializer.registerClass(MapTile.class, new FieldSerializer());
@@ -196,6 +200,7 @@ public final class NetworkServer {
             Serializer.registerClass(Party.class, new FieldSerializer());
             Serializer.registerClass(Placeable.class, new FieldSerializer());
             Serializer.registerClass(PlayerObjective.class, new FieldSerializer());
+            Serializer.registerClass(toniarts.openkeeper.game.component.LevelObjective.class, new FieldSerializer());
             Serializer.registerClass(PortalGem.class, new FieldSerializer());
             Serializer.registerClass(Position.class, new FieldSerializer());
             Serializer.registerClass(Regeneration.class, new FieldSerializer());
@@ -247,7 +252,7 @@ public final class NetworkServer {
         server.getServices().addService(ethereal);
 
         // The ES objects
-        server.getServices().addService(new EntityDataHostedService(NetworkConstants.ES_CHANNEL, new DefaultEntityData(), false));
+        server.getServices().addService(new EntityDataHostedService(NetworkConstants.ES_CHANNEL, new GameEntityData(), false));
 
         server.start();
 

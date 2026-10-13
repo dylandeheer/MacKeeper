@@ -44,6 +44,10 @@ public final class MapData implements IMapData {
     private final IMapTileController[][] tiles;
 
     public MapData(IKwdFile kwdFile, EntityData entityData, Collection<Keeper> players) {
+        this(kwdFile, entityData, players, new toniarts.openkeeper.game.random.SimulationRandom());
+    }
+
+    public MapData(IKwdFile kwdFile, EntityData entityData, Collection<Keeper> players, java.util.random.RandomGenerator random) {
         width = kwdFile.getMap().getWidth();
         height = kwdFile.getMap().getHeight();
 
@@ -53,13 +57,42 @@ public final class MapData implements IMapData {
         for (int y = 0; y < height; y++) {
             for (int x = 0; x < width; x++) {
                 Tile tile = kwdFile.getMap().getTile(x, y);
-                tiles[x][y] = createMapTile(entityData, tile, kwdFile, x, y, y * width + x, playersById);
+                tiles[x][y] = createMapTile(entityData, tile, kwdFile, x, y, y * width + x, playersById, random);
             }
         }
     }
 
+    private MapData(int width, int height) {
+        this.width = width;this.height = height;
+        tiles = new IMapTileController[width][height];
+    }
+
+    /** Bind a complete rectangular grid from saved components without creating or resetting tiles. */
+    public static MapData restore(IKwdFile definition, EntityData data) {
+        int width = definition.getMap().getWidth(), height = definition.getMap().getHeight();
+        if (width <= 0 || height <= 0 || (long) width * height > 1_000_000) throw new IllegalArgumentException("Invalid saved map dimensions");
+        MapData result = new MapData(width, height);
+        var ids = data.findEntities(null, MapTile.class);
+        if (ids.size() != width * height) throw new IllegalArgumentException("Saved map tile count differs");
+        for (EntityId id : ids) {
+            MapTile tile = data.getComponent(id, MapTile.class);
+            Point point = tile.p;
+            if (point == null || point.x < 0 || point.y < 0 || point.x >= width || point.y >= height
+                    || tile.index != point.y * width + point.x || result.tiles[point.x][point.y] != null
+                    || definition.getTerrain(tile.terrainId) == null
+                    || data.getComponent(id, Owner.class) == null
+                    || data.getComponent(id, toniarts.openkeeper.game.component.Health.class) == null
+                    || data.getComponent(id, toniarts.openkeeper.game.component.Gold.class) == null
+                    || data.getComponent(id, toniarts.openkeeper.game.component.Mana.class) == null) {
+                throw new IllegalArgumentException("Invalid saved map tile: " + id);
+            }
+            result.tiles[point.x][point.y] = new MapTileController(id, data);
+        }
+        return result;
+    }
+
     private static MapTileController createMapTile(EntityData entityData, Tile tile, IKwdFile kwdFile, int x, int y, int index,
-            Map<Short, Keeper> playersById) {
+            Map<Short, Keeper> playersById, java.util.random.RandomGenerator random) {
         EntityId entityId = entityData.createEntity();
 
         // Create ALL components for the map tile, even things like Gold when it has none, helps to parse the map tile as whole in client
@@ -80,7 +113,7 @@ public final class MapData implements IMapData {
         }
 
         // Set attributes
-        setAttributesFromTerrain(entityData, entityId, mapTileComponent, terrain);
+        setAttributesFromTerrain(entityData, entityId, mapTileComponent, terrain, random);
 
         return new MapTileController(entityId, entityData);
     }

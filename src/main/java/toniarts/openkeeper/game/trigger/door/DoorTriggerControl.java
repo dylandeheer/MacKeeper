@@ -45,7 +45,7 @@ public final class DoorTriggerControl extends AbstractThingTriggerControl<IDoorC
         TriggerGeneric.TargetType targetType = trigger.getType();
         switch (targetType) {
             case DOOR_DESTROYED:
-                return instanceControl.isDestroyed();
+                return instanceControl != null && instanceControl.isDestroyed();
             default:
                 return super.isActive(trigger);
         }

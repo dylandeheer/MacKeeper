@@ -16,8 +16,20 @@
  */
 package toniarts.openkeeper.game.controller.creature;
 
+import toniarts.openkeeper.tools.convert.map.Terrain;
+import toniarts.openkeeper.game.controller.room.FiveByFiveRotatedController;
+import toniarts.openkeeper.game.component.ObjectComponent;
+import toniarts.openkeeper.game.task.TaskType;
+
+import toniarts.openkeeper.game.controller.GameWorldController;
+
+import toniarts.openkeeper.game.component.CreatureSalary;
+
+import toniarts.openkeeper.game.logic.PaydaySystem;
+
 import com.badlogic.gdx.ai.fsm.DefaultStateMachine;
 import com.badlogic.gdx.ai.fsm.StateMachine;
+import toniarts.openkeeper.game.data.CreatureControlState;
 import com.badlogic.gdx.ai.pfa.GraphPath;
 import com.jme3.math.FastMath;
 import com.jme3.math.Vector2f;
@@ -94,7 +106,6 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.function.Consumer;
 
 /**
  * Controls an entity with {@link CreatureAi} component. Basically supports the
@@ -119,10 +130,44 @@ public final class CreatureController extends EntityController implements ICreat
     private final StateMachine<ICreatureController, CreatureState> stateMachine;
     private float motionless = 0;
 
+    public CreatureControlState captureState(toniarts.openkeeper.game.save.TaskNodeReferences.Capture taskNodes) {
+        return new CreatureControlState(entityId, creature.getId(), stateMachine.getCurrentState(),
+                stateMachine.getPreviousState(), stateMachine.getGlobalState(), motionless, nextPayCheck,
+                failedNavigationTask == null ? null : taskNodes.reference(failedNavigationTask), failedNavigationStart,
+                failedNavigationTarget, failedNavigationTime, failedHeartPaths.entrySet().stream()
+                        .sorted(java.util.Map.Entry.comparingByKey())
+                        .map(e -> new CreatureControlState.HeartPath(e.getKey(), e.getValue().start(), e.getValue().time())).toList());
+    }
+
+    /** Bind existing entities and task identities without entering/exiting states or assigning work. */
+    public static CreatureController restoreState(CreatureControlState saved,
+            toniarts.openkeeper.game.save.TaskNodeReferences.Bindings taskNodes,
+            toniarts.openkeeper.game.save.GameEntityData data, Creature definition, INavigationService navigation,
+            ITaskManager tasks, IGameTimer timer, Map<Variable.MiscVariable.MiscType, Variable.MiscVariable> settings,
+            ICreaturesController creatures, IEntityPositionLookup positions, IMapController map,
+            ILevelInfo level, IObjectsController objects, IShotsController shots) {
+        if (!data.wasAllocated(saved.entityId()) || definition == null || definition.getId() != saved.creatureType())
+            throw new IllegalArgumentException("Missing creature identity/definition");
+        for (var path : saved.heartPaths()) if (!data.wasAllocated(path.roomId()))
+            throw new IllegalArgumentException("Unallocated failed heart path reference");
+        Task failedTask = saved.failedTask() == null ? null : taskNodes.resolve(saved.failedTask());
+        return new CreatureController(saved.entityId(), data, definition, navigation, tasks, timer, settings,
+                creatures, positions, map, level, objects, shots, saved, failedTask);
+    }
+
     public CreatureController(EntityId entityId, EntityData entityData, Creature creature, INavigationService navigationService,
             ITaskManager taskManager, IGameTimer gameTimer, Map<Variable.MiscVariable.MiscType, Variable.MiscVariable> gameSettings,
             ICreaturesController creaturesController, IEntityPositionLookup entityPositionLookup, IMapController mapController,
             ILevelInfo levelInfo, IObjectsController objectsController, IShotsController shotsController) {
+        this(entityId, entityData, creature, navigationService, taskManager, gameTimer, gameSettings,
+                creaturesController, entityPositionLookup, mapController, levelInfo, objectsController, shotsController, null, null);
+    }
+
+    private CreatureController(EntityId entityId, EntityData entityData, Creature creature, INavigationService navigationService,
+            ITaskManager taskManager, IGameTimer gameTimer, Map<Variable.MiscVariable.MiscType, Variable.MiscVariable> gameSettings,
+            ICreaturesController creaturesController, IEntityPositionLookup entityPositionLookup, IMapController mapController,
+            ILevelInfo levelInfo, IObjectsController objectsController, IShotsController shotsController,
+            CreatureControlState saved, Task failedTask) {
         super(entityId, entityData, objectsController, mapController);
         this.navigationService = navigationService;
         this.taskManager = taskManager;
@@ -133,7 +178,13 @@ public final class CreatureController extends EntityController implements ICreat
         this.entityPositionLookup = entityPositionLookup;
         this.levelInfo = levelInfo;
         this.shotsController = shotsController;
-        this.stateMachine = new DefaultStateMachine<>(this);
+        this.stateMachine = saved == null ? new DefaultStateMachine<>(this)
+                : new toniarts.openkeeper.game.controller.state.RestoredStateMachine<>(this, saved.current(), saved.previous(), saved.global());
+        if (saved != null) {
+            motionless = saved.motionless();nextPayCheck = saved.nextPayCheck();failedNavigationTask = failedTask;
+            failedNavigationStart = saved.failedStart();failedNavigationTarget = saved.failedTarget();failedNavigationTime = saved.failedTime();
+            for (var path : saved.heartPaths()) failedHeartPaths.put(path.roomId(), new FailedHeartPath(path.start(), path.time()));
+        }
     }
 
     @Override
@@ -351,11 +402,11 @@ public final class CreatureController extends EntityController implements ICreat
     }
 
     @Override
-    public void findWork(Consumer<Boolean> workResult) {
+    public void findWork(WorkContinuation continuation) {
 
         // See if we have some available work
         if (isWorker()) {
-            taskManager.addToUnemployedWorkerQueue(this, workResult);
+            taskManager.addToUnemployedWorkerQueue(this, continuation);
             return;
         }
 
@@ -363,7 +414,7 @@ public final class CreatureController extends EntityController implements ICreat
         if (owner == Player.NEUTRAL_PLAYER_ID || owner == Player.GOOD_PLAYER_ID) {
 
             // Currently no creature specific jobs offered for neutral or good players
-            workResult.accept(false);
+            continuation.complete(this, false);
             return;
         }
 
@@ -380,19 +431,19 @@ public final class CreatureController extends EntityController implements ICreat
 
         // Choose
         if (!jobs.isEmpty()) {
-            workResult.accept(taskManager.assignTask(this, chooseOnWeight(jobs).getJobType()));
+            continuation.complete(this, taskManager.assignTask(this, chooseOnWeight(jobs).getJobType()));
             return;
         }
 
-        workResult.accept(false);
+        continuation.complete(this, false);
     }
 
-    private static Creature.JobPreference chooseOnWeight(List<Creature.JobPreference> items) {
+    private Creature.JobPreference chooseOnWeight(List<Creature.JobPreference> items) {
         double completeWeight = 0.0;
         for (Creature.JobPreference item : items) {
             completeWeight += item.getChance();
         }
-        double r = FastMath.rand.nextDouble() * completeWeight;
+        double r = creaturesController.getRandom().nextDouble() * completeWeight;
         double countWeight = 0.0;
         for (Creature.JobPreference item : items) {
             countWeight += item.getChance();
@@ -424,6 +475,23 @@ public final class CreatureController extends EntityController implements ICreat
         return getGold() >= getMaxGold() && isWorker();
     }
 
+    private double nextPayCheck;
+
+    @Override
+    public boolean collectPay() {
+        if (gameTimer.getGameTime() < nextPayCheck || !PaydaySystem.eligible(entityData, entityId)) return false;
+        Task current = getAssignedTask();
+        if (current != null && current.getTaskType() == TaskType.COLLECT_PAY) return false;
+        var delay = gameSettings.get(Variable.MiscVariable.MiscType.DELAY_BEFORE_PAY_REEVALUATION_SECONDS);
+        nextPayCheck = gameTimer.getGameTime() + (delay == null ? 4 : Math.max(0.1, delay.getValue()));
+        var salary = entityData.getComponent(entityId, CreatureSalary.class);
+        if (salary != null && salary.employer == getOwnerId() && salary.owed > 0 && taskManager.assignPaydayTask(this)) {
+            navigateToAssignedTask();
+            return true;
+        }
+        return false;
+    }
+
     @Override
     public boolean dropGoldToTreasury() {
         if (getGold() > 0 && getOwnerId() >= Player.KEEPER1_ID && isWorker()) {
@@ -441,19 +509,36 @@ public final class CreatureController extends EntityController implements ICreat
         return entityData.getComponent(entityId, Navigation.class) == null;
     }
 
+    private static final double FAILED_TASK_PATH_RETRY_SECONDS = 1;
+    private Task failedNavigationTask;
+    private Point failedNavigationStart;
+    private Point failedNavigationTarget;
+    private double failedNavigationTime;
+
     @Override
     public void navigateToAssignedTask() {
         Task assignedTask = getAssignedTask();
-        if (assignedTask != null) {
-            Vector2f loc = assignedTask.getTarget(this);
-            if (!isNear(loc)) {
-                //workNavigationRequired = false;
-
-                if (loc != null) {
-                    Point destination = WorldUtils.vectorToPoint(loc);
-                    createNavigation(getCreatureCoordinates(), destination, assignedTask.isFaceTarget() ? assignedTask.getTaskLocation() : null);
-                }
-            }
+        Vector2f loc = assignedTask == null ? null : assignedTask.getTarget(this);
+        if (loc == null || isNear(loc)) {
+            failedNavigationTask = null;
+            return;
+        }
+        Point start = getCreatureCoordinates();
+        Point destination = WorldUtils.vectorToPoint(loc);
+        double now = gameTimer.getGameTime();
+        // WORK retries whenever stopped. A blocked task must not run a full-map search
+        // every tick. Changed tasks/positions/targets retry immediately; an unchanged
+        // route retries within one game second so opened doors and dug paths recover.
+        if (assignedTask == failedNavigationTask && start.equals(failedNavigationStart)
+                && destination.equals(failedNavigationTarget) && now >= failedNavigationTime
+                && now < failedNavigationTime + FAILED_TASK_PATH_RETRY_SECONDS) return;
+        if (createNavigation(start, destination, assignedTask.isFaceTarget() ? assignedTask.getTaskLocation() : null)) {
+            failedNavigationTask = assignedTask;
+            failedNavigationStart = start;
+            failedNavigationTarget = destination;
+            failedNavigationTime = now;
+        } else {
+            failedNavigationTask = null;
         }
     }
 
@@ -483,7 +568,26 @@ public final class CreatureController extends EntityController implements ICreat
 
     @Override
     public void dropGold() {
-        // TODO:
+        synchronized (GameWorldController.GOLD_LOCK) {
+            Gold carried = entityData.getComponent(entityId, Gold.class);
+            if (carried == null || carried.gold <= 0) {
+                return;
+            }
+            int maxPile = (int) gameSettings.get(Variable.MiscVariable.MiscType.MAX_GOLD_PILE_OUTSIDE_TREASURY).getValue();
+            if (maxPile <= 0) {
+                throw new IllegalStateException("Loose gold pile capacity must be positive");
+            }
+            Point coordinates = getCreatureCoordinates();
+            short owner = getOwnerId();
+            int remaining = carried.gold;
+            while (remaining > 0) {
+                int amount = Math.min(remaining, maxPile);
+                objectsController.addLooseGold(owner, coordinates.x, coordinates.y, amount, maxPile);
+                remaining -= amount;
+                // Debit only completed piles, so a failed spawn leaves the rest in the purse.
+                entityData.setComponent(entityId, new Gold(remaining, carried.maxGold));
+            }
+        }
     }
 
     @Override
@@ -499,39 +603,140 @@ public final class CreatureController extends EntityController implements ICreat
     }
 
     @Override
-    public ICreatureController getAttackTarget() {
-        AttackTarget attackTarget = entityData.getComponent(entityId, AttackTarget.class);
-        ICreatureController attackTargetController = null;
-        if (attackTarget == null || isIncapacitated(attackTarget.entityId)
-                || isFleeing(attackTarget.entityId) || isCaptive(attackTarget.entityId)) {
+    public IEntityController getAttackTarget() {
+        AttackTarget previous = entityData.getComponent(entityId, AttackTarget.class);
+        if (previous != null && isAttackableCreature(previous.entityId)) {
+            return creaturesController.createController(previous.entityId);
+        }
 
-            // Pick a new target
-            // TODO: is there any preference? Now just take the nearest
-            // TODO: creatures only now
-            EntityId nearestEnemy = null;
-            float nearestDistance = Float.MAX_VALUE;
-            for (EntityId entity : entityPositionLookup.getSensedEntities(entityId)) {
-                if (creaturesController.isValidEntity(entity)
-                        && isEnemy(entity)
-                        && !(isIncapacitated(entity) || isFleeing(entity) || isCaptive(entity))
-                        && (hasPathToEntity(entity) || isWithinAttackDistance(entity))) {
-                    float distance = getDistanceToCreature(entity);
-                    if (distance < nearestDistance) {
-                        nearestDistance = distance;
-                        nearestEnemy = entity;
-                    }
+        // Defenders take precedence over a heart, including while already attacking it.
+        EntityId nearestEnemy = null;
+        float nearestDistance = Float.MAX_VALUE;
+        var sensed = entityPositionLookup.getSensedEntities(entityId);
+        for (EntityId target : sensed) {
+            if (isAttackableCreature(target) && (isWithinAttackDistance(target) || hasPathToEntity(target))) {
+                float distance = getDistanceToCreature(target);
+                if (nearestEnemy == null || distance < nearestDistance || distance == nearestDistance && target.compareTo(nearestEnemy) < 0) {
+                    nearestDistance = distance;
+                    nearestEnemy = target;
                 }
             }
-            if (nearestEnemy != null) {
-                attackTargetController = creaturesController.createController(nearestEnemy);
-                setAttackTarget(nearestEnemy);
-            } else {
-                setAttackTarget(null);
-            }
-        } else {
-            attackTargetController = creaturesController.createController(attackTarget.entityId);
         }
-        return attackTargetController;
+        if (nearestEnemy != null) {
+            setAttackTarget(nearestEnemy);
+            return creaturesController.createController(nearestEnemy);
+        }
+        if (previous != null && heartRoom(previous.entityId) != null && isEnemy(previous.entityId)
+                && (isWithinAttackDistance(previous.entityId) || heartApproach(heartRoom(previous.entityId)) != null)) {
+            return entityPositionLookup.getEntityController(previous.entityId);
+        }
+        for (EntityId target : sensed) {
+            IRoomController heart = heartRoom(target);
+            if (heart != null && isEnemy(target)
+                    && (isWithinAttackDistance(target) || heartApproach(heart) != null)) {
+                float distance = getDistanceToCreature(target);
+                if (nearestEnemy == null || distance < nearestDistance || distance == nearestDistance && target.compareTo(nearestEnemy) < 0) {
+                    nearestDistance = distance;
+                    nearestEnemy = target;
+                }
+            }
+        }
+        setAttackTarget(nearestEnemy);
+        return nearestEnemy == null ? null : entityPositionLookup.getEntityController(nearestEnemy);
+    }
+
+    private boolean isAttackableCreature(EntityId target) {
+        Health health = entityData.getComponent(target, Health.class);
+        return health != null && health.health > 0 && creaturesController.isValidEntity(target) && isEnemy(target)
+                && entityData.getComponent(target, Position.class) != null
+                && !(isIncapacitated(target) || isFleeing(target) || isCaptive(target));
+    }
+
+    private IRoomController heartRoom(EntityId target) {
+        var object = entityData.getComponent(target, ObjectComponent.class);
+        if (object == null || object.objectId != FiveByFiveRotatedController.OBJECT_HEART_ID) return null;
+        Position position = entityData.getComponent(target, Position.class);
+        Health health = entityData.getComponent(target, Health.class);
+        if (position == null || health == null || health.health <= 0) return null;
+        IRoomController room = mapController.getRoomControllerByCoordinates(WorldUtils.vectorToPoint(position.position));
+        return room != null && room.isDungeonHeart() && !room.isDestroyed()
+                && room.getFloorFurniture().contains(target) ? room : null;
+    }
+
+    private record FailedHeartPath(Point start, double time) { }
+    private final Map<EntityId, FailedHeartPath> failedHeartPaths = new java.util.HashMap<>();
+
+    private Point heartApproach(IRoomController heart) {
+        Point start = getCreatureCoordinates(), center = heart.getRoomInstance().getCenter();
+        float range = getPreferredAttackDistance();
+        Navigation current = entityData.getComponent(entityId, Navigation.class);
+        if (current != null && center.equals(current.faceTarget)) {
+            if (heart.getRoomInstance().getCoordinates().contains(current.target)
+                    && heart.isTileAccessible(null, current.target)
+                    && canAttackHeartFrom(current.target.x, current.target.y, range, center)
+                    && remainingRouteIsAccessible(current)) return current.target;
+            entityData.removeComponent(entityId, Navigation.class);
+        }
+        double now = gameTimer.getGameTime();
+        FailedHeartPath failed = failedHeartPaths.get(heart.getEntityId());
+        if (failed != null && failed.start.equals(start) && now >= failed.time && now - failed.time < 1) return null;
+        // The central 3x3 is impassable. Short-range melee must avoid unreachable corner swings.
+        Point destination = heart.getRoomInstance().getCoordinates().stream()
+                .filter(p -> heart.isTileAccessible(null, p) && canAttackHeartFrom(p.x, p.y, range, center))
+                .sorted(Comparator.<Point>comparingDouble(p -> p.distance(start)).thenComparingInt(p -> p.y).thenComparingInt(p -> p.x))
+                .filter(p -> p.equals(start) || navigationService.findPath(start, p, this) != null)
+                .findFirst().orElse(null);
+        if (destination == null) failedHeartPaths.put(heart.getEntityId(), new FailedHeartPath(new Point(start.x, start.y), now));
+        else failedHeartPaths.remove(heart.getEntityId());
+        return destination;
+    }
+
+    private boolean remainingRouteIsAccessible(Navigation route) {
+        Vector3f position = getPosition();
+        int nearest = 0;
+        float distance = Float.MAX_VALUE;
+        for (int i = 0; i < route.navigationPath.size(); i++) {
+            var waypoint = route.navigationPath.get(i);
+            float candidate = waypoint.dst2(position.x, position.z);
+            if (candidate < distance) { nearest = i; distance = candidate; }
+        }
+        for (int i = nearest; i < route.navigationPath.size(); i++) {
+            var waypoint = route.navigationPath.get(i);
+            var tile = mapController.getMapData().getTile(WorldUtils.vectorToPoint(waypoint));
+            if (tile == null || !navigationService.isAccessible(null, tile, this)) return false;
+        }
+        return true;
+    }
+
+    private boolean canAttackHeartFrom(float x, float z, float range, Point center) {
+        // Measure to the central 3x3 footprint, not the below-floor model origin.
+        float dx = Math.max(0, Math.abs(x - center.x) - 1.5f);
+        float dz = Math.max(0, Math.abs(z - center.y) - 1.5f);
+        return range >= 0 && dx * dx + dz * dz <= range * range
+                && clearHeartAttackLine(WorldUtils.vectorToPoint(new Vector2f(x, z)), center);
+    }
+
+    private boolean clearHeartAttackLine(Point from, Point target) {
+        int x = from.x, y = from.y, dx = target.x - x, dy = target.y - y;
+        int nx = Math.abs(dx), ny = Math.abs(dy), sx = Integer.signum(dx), sy = Integer.signum(dy);
+        int ix = 0, iy = 0;
+        // Supercover tile ray: both neighbors must be clear at a diagonal corner.
+        while (ix < nx || iy < ny) {
+            long horizontal = (1L + 2L * ix) * ny, vertical = (1L + 2L * iy) * nx;
+            if (horizontal == vertical) {
+                if (blocksHeartAttack(x + sx, y) || blocksHeartAttack(x, y + sy)) return false;
+                x += sx; y += sy; ix++; iy++;
+            } else if (horizontal < vertical) { x += sx; ix++; }
+            else { y += sy; iy++; }
+            if (blocksHeartAttack(x, y)) return false;
+        }
+        return true;
+    }
+
+    private boolean blocksHeartAttack(int x, int y) {
+        var tile = mapController.getMapData().getTile(x, y);
+        return tile == null || mapController.getTerrain(tile).getFlags().contains(Terrain.TerrainFlag.SOLID)
+                || entityPositionLookup.isTileBlocked(tile, getOwnerId());
     }
 
     private boolean hasPathToEntity(EntityId entity) {
@@ -612,6 +817,11 @@ public final class CreatureController extends EntityController implements ICreat
     }
 
     private boolean isInRange(float range, EntityId target) {
+        IRoomController heart = heartRoom(target);
+        if (heart != null) {
+            Vector3f position = getPosition();
+            return canAttackHeartFrom(position.x, position.z, range, heart.getRoomInstance().getCenter());
+        }
         return range >= getDistanceToCreature(target) || (isStopped() && isAtSameTile(target));
     }
 
@@ -640,6 +850,8 @@ public final class CreatureController extends EntityController implements ICreat
 
     @Override
     public void executeAttack(EntityId attackTarget) {
+        // Targets can be captured, picked up or destroyed between selection and execution.
+        if (!isAttackableCreature(attackTarget) && (heartRoom(attackTarget) == null || !isEnemy(attackTarget))) return;
 
         // TODO: how to apply the damage? Create a component for THIS creature that adds the damage to enemy after the countdown is finished?
         // Always prefer melee if in range
@@ -650,7 +862,7 @@ public final class CreatureController extends EntityController implements ICreat
                 stateMachine.changeState(CreatureState.MELEE_ATTACK);
 
                 // Set the damage
-                setDamage(attackTarget, creatureMeleeAttack.damage);
+                EntityController.setDamage(entityData, attackTarget, creatureMeleeAttack.damage, getOwnerId());
             }
         } else {
             Optional<CreatureSpell> attack = getPreferredAttackSpell(attackTarget);
@@ -671,7 +883,7 @@ public final class CreatureController extends EntityController implements ICreat
 
                 // TODO: Of course not like that, the shot is created and it does what it does
                 // Set the damage
-                setDamage(attackTarget, creatureSpell.getShotData1());
+                EntityController.setDamage(entityData, attackTarget, creatureSpell.getShotData1(), getOwnerId());
             }
         }
     }
@@ -703,6 +915,17 @@ public final class CreatureController extends EntityController implements ICreat
 
     @Override
     public void navigateToAttackTarget(EntityId attackTarget) {
+        IRoomController heart = heartRoom(attackTarget);
+        if (heart != null) {
+            if (!isEnemy(attackTarget)) return;
+            Point destination = heartApproach(heart);
+            Navigation current = entityData.getComponent(entityId, Navigation.class);
+            if (destination != null && !destination.equals(getCreatureCoordinates())
+                    && (current == null || !destination.equals(current.target))) {
+                createNavigation(getCreatureCoordinates(), destination, heart.getRoomInstance().getCenter());
+            }
+            return;
+        }
         Vector3f targetPosition = getPosition(entityData, attackTarget);
         if (targetPosition != null) {
 
@@ -972,20 +1195,22 @@ public final class CreatureController extends EntityController implements ICreat
 
     @Override
     public void addGold(int amount) {
-        Gold gold = entityData.getComponent(entityId, Gold.class);
+        synchronized (GameWorldController.GOLD_LOCK) {
+            Gold gold = entityData.getComponent(entityId, Gold.class);
 
-        // Drop excess gold, we can only carry so much
-        int maxGoldCanAdd = gold.maxGold - gold.gold;
-        int goldToAdd = Math.min(amount, maxGoldCanAdd);
-        int looseGold = amount - goldToAdd;
+            // Drop excess gold, we can only carry so much
+            int maxGoldCanAdd = Math.max(0, gold.maxGold - gold.gold);
+            int goldToAdd = Math.min(amount, maxGoldCanAdd);
+            int looseGold = amount - goldToAdd;
 
-        if (goldToAdd > 0) {
-            entityData.setComponent(entityId, new Gold(gold.gold + goldToAdd, gold.maxGold));
-        }
+            if (goldToAdd > 0) {
+                entityData.setComponent(entityId, new Gold(gold.gold + goldToAdd, gold.maxGold));
+            }
 
-        if (looseGold > 0) {
-            Point coordinates = getCreatureCoordinates();
-            objectsController.addLooseGold(getOwnerId(), coordinates.x, coordinates.y, looseGold, (int) gameSettings.get(Variable.MiscVariable.MiscType.MAX_GOLD_PILE_OUTSIDE_TREASURY).getValue());
+            if (looseGold > 0) {
+                Point coordinates = getCreatureCoordinates();
+                objectsController.addLooseGold(getOwnerId(), coordinates.x, coordinates.y, looseGold, (int) gameSettings.get(Variable.MiscVariable.MiscType.MAX_GOLD_PILE_OUTSIDE_TREASURY).getValue());
+            }
         }
     }
 
@@ -1001,8 +1226,10 @@ public final class CreatureController extends EntityController implements ICreat
 
     @Override
     public void substractGold(int amount) {
-        Gold gold = entityData.getComponent(entityId, Gold.class);
-        entityData.setComponent(entityId, new Gold(gold.gold - amount, gold.maxGold));
+        synchronized (GameWorldController.GOLD_LOCK) {
+            Gold gold = entityData.getComponent(entityId, Gold.class);
+            entityData.setComponent(entityId, new Gold(gold.gold - amount, gold.maxGold));
+        }
     }
 
     @Override
@@ -1379,12 +1606,14 @@ public final class CreatureController extends EntityController implements ICreat
 
     @Override
     public void giveObject(IObjectController object) {
-        if (object.getType() == AbstractRoomController.ObjectType.GOLD) {
-            addGold(entityData.getComponent(object.getEntityId(), Gold.class).gold);
-            entityData.removeComponent(object.getEntityId(), Gold.class);
-            object.remove();
-        } else {
-            logger.log(Level.WARNING, "Object {0} receiving not specified!", object.getType());
+        synchronized (GameWorldController.GOLD_LOCK) {
+            if (object.getType() == AbstractRoomController.ObjectType.GOLD) {
+                addGold(entityData.getComponent(object.getEntityId(), Gold.class).gold);
+                entityData.removeComponent(object.getEntityId(), Gold.class);
+                object.remove();
+            } else {
+                logger.log(Level.WARNING, "Object {0} receiving not specified!", object.getType());
+            }
         }
     }
 

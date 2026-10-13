@@ -37,20 +37,30 @@ import toniarts.openkeeper.utils.WorldUtils;
  *
  * @author Toni Helenius <helenius.toni@gmail.com>
  */
-public final class KillPlayer extends AbstractObjectiveTask {
+public final class KillPlayer extends AbstractObjectiveTask implements toniarts.openkeeper.game.task.CreatureTargetTask {
 
     protected final short targetPlayerId;
-    protected final ICreatureController creature;
+    protected final toniarts.openkeeper.game.task.TaskTarget<ICreatureController> creature;
     protected final ILevelInfo levelInfo;
 
-    public KillPlayer(final INavigationService navigationService, final IMapController mapController, final ILevelInfo levelInfo, short targetPlayerId, ICreatureController creature) {
-        super(navigationService, mapController, levelInfo.getPlayer(targetPlayerId).getDungeonHeartLocation(), creature.getOwnerId());
+    public KillPlayer(toniarts.openkeeper.game.task.TaskIdentityAllocator taskIds, final INavigationService navigationService, final IMapController mapController, final ILevelInfo levelInfo, short targetPlayerId, ICreatureController creature) {
+        super(taskIds, navigationService, mapController, heartLocation(levelInfo, targetPlayerId), creature.getOwnerId());
 
         this.targetPlayerId = targetPlayerId;
-        this.creature = creature;
+        this.creature = toniarts.openkeeper.game.task.TaskTarget.bound(creature);
         this.levelInfo = levelInfo;
         createSubTasks();
     }
+
+    public KillPlayer(toniarts.openkeeper.game.task.TaskIdentityAllocator ids, toniarts.openkeeper.game.data.TaskBaseState saved,
+            INavigationService navigation, IMapController map, Point point, short player, ILevelInfo level,
+            short targetPlayer, com.simsilica.es.EntityId targetCreature) {
+        super(ids, saved, navigation, map, point, player);
+        targetPlayerId = targetPlayer;levelInfo = level;creature = toniarts.openkeeper.game.task.TaskTarget.pending(targetCreature);
+    }
+
+    @Override public toniarts.openkeeper.game.task.TaskTarget<ICreatureController> creatureTarget() {return creature;}
+    public short getTargetPlayerId() {return targetPlayerId;}
 
     @Override
     public boolean isValid(ICreatureController creature) {
@@ -64,8 +74,12 @@ public final class KillPlayer extends AbstractObjectiveTask {
 
     @Override
     public Vector2f getTarget(ICreatureController creature) {
+        if (isPlayerDestroyed()) return null;
+        var room = mapController.getRoomControllerByCoordinates(getTaskLocation());
+        if (room == null || room.isDestroyed() || room.getOwnerId() != targetPlayerId) return null;
         Point location = creature.getCreatureCoordinates();
-        List<Point> points = mapController.getRoomControllerByCoordinates(getTaskLocation()).getRoomInstance().getCoordinates();
+        List<Point> points = room.getRoomInstance().getCoordinates();
+        if (points.isEmpty()) return null;
         Point result = points.get(0);
         double temp = result.distance(location);
 
@@ -73,6 +87,7 @@ public final class KillPlayer extends AbstractObjectiveTask {
             // TODO check is point accessible by creature?
             if (point.distance(location) < temp) {
                 result = point;
+                temp = point.distance(location);
             }
         }
 
@@ -85,14 +100,24 @@ public final class KillPlayer extends AbstractObjectiveTask {
 
     }
 
+    private static Point heartLocation(ILevelInfo levelInfo, short playerId) {
+        var player = levelInfo.getPlayer(playerId);
+        return player == null ? null : player.getDungeonHeartLocation();
+    }
+
     private boolean isPlayerDestroyed() {
-        return levelInfo.getPlayer(targetPlayerId).isDestroyed();
+        var player = levelInfo.getPlayer(targetPlayerId);
+        return player == null || player.isDestroyed() || player.getDungeonHeartLocation() == null
+                || !player.getDungeonHeartLocation().equals(getTaskLocation());
     }
 
     private void createSubTasks() {
+        var creature = this.creature.get();
 
         // See if we can navigate there
-        GraphPath<IMapTileInformation> outPath = navigationService.findPath(creature.getCreatureCoordinates(), WorldUtils.vectorToPoint(getTarget(creature)), creature.getParty() != null ? creature.getParty() : creature);
+        Vector2f target = getTarget(creature);
+        if (target == null) return;
+        GraphPath<IMapTileInformation> outPath = navigationService.findPath(creature.getCreatureCoordinates(), WorldUtils.vectorToPoint(target), creature.getParty() != null ? creature.getParty() : creature);
         if (outPath != null) {
             Iterator<IMapTileInformation> iter = outPath.iterator();
             IMapTileInformation lastPoint = null;
@@ -104,22 +129,15 @@ public final class KillPlayer extends AbstractObjectiveTask {
 
                     // Add task to last accessible point
                     if (i != 1 && first && lastPoint != null) {
-                        addSubTask(new ObjectiveTaskDecorator(getId(), new GoToTask(navigationService, mapController, lastPoint.getLocation(), playerId)));
+                        addSubTask(new ObjectiveTaskDecorator(getId(), new GoToTask(taskIds, navigationService, mapController, lastPoint.getLocation(), playerId)));
                         first = false;
                     }
 
                     // See if we should dig
                     Terrain terrain = levelInfo.getLevelData().getTerrain(tile.getTerrainId());
                     if (terrain.getFlags().contains(Terrain.TerrainFlag.SOLID) && (creature.isWorker() || (creature.getParty() != null && creature.getParty().isWorkersAvailable())) && (terrain.getFlags().contains(Terrain.TerrainFlag.DWARF_CAN_DIG_THROUGH) || terrain.getFlags().contains(Terrain.TerrainFlag.ATTACKABLE))) {
-                        addSubTask(new ObjectiveTaskDecorator(getId(), new ObjectiveDigTileTask(navigationService, mapController, tile.getLocation(), playerId)) {
-
-                            @Override
-                            public boolean isWorkerPartyTask() {
-                                return true;
-                            }
-
-                        });
-                        addSubTask(new ObjectiveTaskDecorator(getId(), new GoToTask(navigationService, mapController, tile.getLocation(), playerId)));
+                        addSubTask(new ObjectiveTaskDecorator(getId(), new ObjectiveDigTileTask(taskIds, navigationService, mapController, tile.getLocation(), playerId), true));
+                        addSubTask(new ObjectiveTaskDecorator(getId(), new GoToTask(taskIds, navigationService, mapController, tile.getLocation(), playerId)));
                     } else {
 
                         // Hmm, this is it, should we have like attack target type tasks? Or let the AI just figure out itself

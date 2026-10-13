@@ -34,60 +34,54 @@ public final class EntitySteeringFactory {
     private EntitySteeringFactory() {
     }
 
-    public static EntitySteeringBehavior navigateToPoint(List<Vector2> path, final Point faceTarget, final ISteerableEntity steerable, final Point p) {
-        if (path.size() > 1 || faceTarget != null) {
-
-            EntitySteeringBehavior prioritySteering = new EntitySteeringBehavior(steerable);
-
-            if (path.size() > 1) {
-                // Add regular avoidance
-//                CollisionAvoidance<Vector2> ca = new CollisionAvoidance<>(creature, new ProximityBase<Vector2>(creature, null) {
-//
-//                    @Override
-//                    public int findNeighbors(Proximity.ProximityCallback<Vector2> callback) {
-//                        List<CreatureControl> creatures = new ArrayList<>(creature.getVisibleCreatures());
-//                        int neighborCount = 0;
-//                        int agentCount = creatures.size();
-//                        for (int i = 0; i < agentCount; i++) {
-//                            Steerable<Vector2> currentAgent = creatures.get(i);
-//
-//                            // Skip if this is us, when sharing collission avoidance i.e. this can contain us
-//                            if (!currentAgent.equals(owner)) {
-//                                if (callback.reportNeighbor(currentAgent)) {
-//                                    neighborCount++;
-//                                }
-//                            }
-//                        }
-//
-//                        return neighborCount;
-//                    }
-//                });
-//                prioritySteering.add(ca);
-
-                // Navigate
-                FollowPath<Vector2, LinePath.LinePathParam> followPath = new FollowPath(steerable,
-                        new LinePath<>(SteeringUtils.pathToArray(path), true), 0.2f);
-                followPath.setDecelerationRadius(0.2f);
-                followPath.setArrivalTolerance(0.1f);
-                prioritySteering.add(followPath);
-            }
-
-            if (faceTarget != null) {
-
-                // Add reach orientation
-                ReachOrientation orient = new ReachOrientation(steerable,
-                        new TargetLocation(WorldUtils.pointToVector2(faceTarget),
-                                WorldUtils.pointToVector2(p)));
-                orient.setDecelerationRadius(0.2f);
-                orient.setTimeToTarget(0.001f);
-                orient.setAlignTolerance(0.1f);
-                prioritySteering.add(orient);
-            }
-
-            return prioritySteering;
+    /** Immutable geometry used by the active behavior, independently of later Navigation writes. */
+    public record Waypoint(float x, float y) {
+        public Waypoint {
+            if (!Float.isFinite(x) || !Float.isFinite(y)) throw new IllegalArgumentException("Invalid waypoint");
         }
-
-        return null;
+        public Vector2 vector() { return new Vector2(x, y); }
     }
 
+    public record Plan(List<Waypoint> path, Float facing) {
+        public Plan {
+            path = List.copyOf(path);
+            if (path.size() > 65536 || (facing != null && !Float.isFinite(facing))) throw new IllegalArgumentException("Invalid steering plan");
+        }
+        public boolean active() { return path.size() > 1 || facing != null; }
+    }
+
+    public static Plan plan(List<Vector2> path, Point faceTarget, Point target) {
+        Float facing = faceTarget == null ? null : new TargetLocation(WorldUtils.pointToVector2(faceTarget),
+                WorldUtils.pointToVector2(target)).getOrientation();
+        return new Plan(path.stream().map(p -> new Waypoint(p.x, p.y)).toList(), facing);
+    }
+
+    public static EntitySteeringBehavior navigateToPoint(List<Vector2> path, Point faceTarget, ISteerableEntity steerable, Point target) {
+        return navigate(plan(path, faceTarget, target), steerable);
+    }
+
+    public static EntitySteeringBehavior navigate(Plan plan, ISteerableEntity steerable) {
+        if (!plan.active()) return null;
+        var priority = new EntitySteeringBehavior(steerable);
+        if (plan.path().size() > 1) {
+            // Private vectors keep LinePath geometry and its cached segment lengths consistent.
+            var path = plan.path().stream().map(Waypoint::vector).toList();
+            var follow = new FollowPath<Vector2, LinePath.LinePathParam>(steerable,
+                    new LinePath<>(SteeringUtils.pathToArray(path), true), 0.2f);
+            follow.setDecelerationRadius(0.2f);
+            follow.setArrivalTolerance(0.1f);
+            priority.add(follow);
+        }
+        if (plan.facing() != null) {
+            var orient = new ReachOrientation<Vector2>(steerable, new TargetLocation(plan.facing()));
+            orient.setDecelerationRadius(0.2f);
+            orient.setTimeToTarget(0.001f);
+            orient.setAlignTolerance(0.1f);
+            priority.add(orient);
+        }
+        // In gdx-ai 1.8.2 the selected child, path parameter, internal target and
+        // acceleration are overwritten before use each calculation. They are scratch,
+        // not continuation state. Recheck this contract when upgrading gdx-ai.
+        return priority;
+    }
 }

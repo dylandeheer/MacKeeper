@@ -27,6 +27,8 @@ import toniarts.openkeeper.game.component.Placeable;
 import toniarts.openkeeper.game.component.Position;
 import toniarts.openkeeper.game.component.Stored;
 import toniarts.openkeeper.game.controller.GameWorldController;
+import toniarts.openkeeper.game.controller.IGameWorldController;
+import toniarts.openkeeper.utils.WorldUtils;
 import toniarts.openkeeper.game.controller.IMapController;
 import toniarts.openkeeper.game.controller.IPlayerController;
 import toniarts.openkeeper.game.controller.room.AbstractRoomController;
@@ -50,14 +52,16 @@ public final class LooseObjectSystem implements IGameLogicUpdatable {
     private final EntitySet looseObjectEntities;
 
     private final EntityData entityData;
+    private final IGameWorldController world;
     private final SafeArrayList<EntityId> looseObjectEntityIds;
     private final IMapController mapController;
     private final Map<Short, IPlayerController> playerControllers;
     private final IEntityPositionLookup entityPositionLookup;
 
     public LooseObjectSystem(EntityData entityData, IMapController mapController, Map<Short, IPlayerController> playerControllers,
-            IEntityPositionLookup entityPositionLookup) {
+            IEntityPositionLookup entityPositionLookup, IGameWorldController world) {
         this.entityData = entityData;
+        this.world = world;
         this.mapController = mapController;
         this.playerControllers = playerControllers;
         this.entityPositionLookup = entityPositionLookup;
@@ -108,12 +112,17 @@ public final class LooseObjectSystem implements IGameLogicUpdatable {
             Entity entity = looseObjectEntities.getEntity(entityId);
             ObjectComponent objectComponent = entity.get(ObjectComponent.class);
             if (objectComponent.objectType != null && roomController.hasObjectControl(objectComponent.objectType) && !roomController.getObjectControl(objectComponent.objectType).isFullCapacity()) {
-                short ownerId = roomController.getOwnerId();
                 if (objectComponent.objectType == AbstractRoomController.ObjectType.GOLD) {
                     synchronized (GameWorldController.GOLD_LOCK) {
+                        // Capture/pickup can occur while this system is waiting for the lock.
+                        IRoomController currentRoom = mapController.getRoomControllerByCoordinates(point);
                         Gold gold = entityData.getComponent(entityId, Gold.class);
-                        int goldLeft = (int) roomController.getObjectControl(AbstractRoomController.ObjectType.GOLD).addItem(gold.gold, point);
-                        playerControllers.get(ownerId).getGoldControl().addGold(gold.gold - goldLeft);
+                        Position position = entityData.getComponent(entityId, Position.class);
+                        if (currentRoom == null || currentRoom.isRemoved() || currentRoom.isDestroyed()
+                                || !playerControllers.containsKey(currentRoom.getOwnerId()) || gold == null || position == null
+                                || entityData.getComponent(entityId, Stored.class) != null
+                                || !WorldUtils.vectorToPoint(position.position).equals(point)) continue;
+                        int goldLeft = world.addGold(currentRoom.getOwnerId(), point, gold.gold);
                         if (goldLeft == 0) {
                             entityData.removeEntity(entityId);
                         } else {

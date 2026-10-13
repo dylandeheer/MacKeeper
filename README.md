@@ -1,53 +1,45 @@
-OpenKeeper
-=================
+# MacKeeper
 
-An open source remake of the Dungeon Keeper II game and engine.
+MacKeeper is an experimental macOS fork of [OpenKeeper](https://github.com/tonihele/OpenKeeper), the open-source Dungeon Keeper II engine reimplementation. It uses Java 25 and jMonkeyEngine 3.9. Original Bullfrog source code is not included.
 
-Goal is to fully implement the game (version 1.7 with 3 bonus packs) as open source cross platform version, with minimal or no changes at all, using the original game assets. So it will require the original game to play / develop. Future development could have fan made graphics (to at least enable standalone version) and features.
+**This is development work, not a complete or campaign-verified game.** Keeper AI, save/load, creature behavior and campaign compatibility still have substantial upstream gaps. See [implementation status](docs/IMPLEMENTATION.md).
 
-OpenKeeper is written in Java using [JMonkeyEngine](http://jmonkeyengine.org/). Currently we are using JME 3.9 + Java 25.
+You need your own Dungeon Keeper II game data. Original game assets are not distributed with MacKeeper. The source retains OpenKeeper's GPL-3.0-or-later license and attribution; the upstream introduction is preserved in [UPSTREAM.md](docs/UPSTREAM.md).
 
-Builds are available from the CI:
+## Build and run
 
-[![Build Status](https://github.com/tonihele/OpenKeeper/actions/workflows/gradle.yml/badge.svg)](../../actions)
+Install a JDK 25 for your Mac's architecture, set `JAVA_HOME`, then run:
 
-[Here is my YouTube channel where I sometimes publish videos of the progress](https://www.youtube.com/user/Kaljis83/videos).
+```sh
+./gradlew test installDist
+build/install/MacKeeper/bin/MacKeeper --check-assets --data-dir '/path/to/Dungeon Keeper 2'
+build/install/MacKeeper/bin/MacKeeper --data-dir '/path/to/Dungeon Keeper 2'
+```
 
-Contact
-========
+The launcher first prepares the assets in a separate setup process, then starts the game with macOS's required first-thread configuration. `--help` prints the available options. `-nomovies` skips intro movies. New installations use a resizable 1280×800 window with VSync.
 
-For persistent discussion and/or feedback, try [this forum at keeperklan.com](https://keeperklan.com/forums/101-OpenKeeper). Also we have opened a [Discord channel](https://discord.gg/e2Dnqkn).
+To produce a self-contained development app with a bundled Java runtime:
 
-Contributing
-=============
+```sh
+scripts/package-macos.sh
+```
 
-We are always looking for talented people to join us. I'll try to create as many issues I possibly can and keep them simple and small. You can start from these or come join us on IRC or email. Pull requests are always welcome! See [how to set up the project](https://github.com/tonihele/OpenKeeper/wiki/How-to-set-up-OpenKeeper).
+The script prints the generated `MacKeeper.app` path under `build/macos/`. It builds for the current JDK architecture. It does not create a Developer ID signed or notarized release.
 
-Please keep in mind:
- - Learn to use GIT (forking, pull requests, etc)
- - Coding style
-    - Global variables on top
-    - Javadoc on at least public & protected methods
-    - Organize imports
-    - Default Netbeans code formatting
-    - Code header (the license)
+## Your data
 
-- One feature per branch / commit
-- If in doubt, ask! :)
+Settings, converted assets, screenshots and logs are stored in `~/Library/Application Support/MacKeeper`. Source game files are read without modification. `-Dmackeeper.home=/another/path` overrides the writable data directory when passed to Java (or through the generated script's `JAVA_OPTS`).
 
-License
-==========
+The launcher can detect an installed Steam game or a console depot in the default Steam library. Console downloads split common files and language files into different folders; these must be combined into one complete data directory before playing. A file-presence check alone does not establish that the download is complete or the game works.
 
-GNU GPLv3 or later. You should add license.txt to your IDE to appear as automatic header in code files.
+## Controls
 
-Resources
-=========
+Escape opens the pause menu during a game and leaves possession when possessing a creature. The original OpenKeeper controls and UI remain otherwise largely unchanged. A full Mac interaction redesign is still pending.
 
- * [Reversal of DK2 Binary File Formats](http://keeperklan.com/threads/4623-Reversal-of-DKII-Binary-File-Formats)
- * [DK2 texture formats](http://keeperklan.com/threads/220-DK2-texture-format)
- * [Jadex AgentKeeper, a Dungeon Keeper like game](https://code.google.com/p/jadex-agentkeeper/)
- * [kwd, library for loading kwd/klb files](https://github.com/werkt/kwd)
- * [Sound & Video formats](http://wiki.multimedia.cx/index.php?title=Electronic_Arts_Formats)
- * [A write-up about the walls in DK2](http://simonschreibt.de/gat/dungeon-keeper-2-walls/)
- * [DK2 editor manual, contains a lot of hints on how the game should work](http://keeper.lubiki.pl/dk2_docs/dk2_editor_manual.htm)
+## Development
 
+Run `./gradlew test` for synthetic, asset-free tests. Nifty GUI is pinned to an immutable commit and Gradle dependency versions are locked. When intentionally updating dependencies, review changes from `./gradlew test installDist --write-locks`.
+
+Keep proprietary assets, local game settings and generated bundles out of Git. The bundled engine is GPL-3.0-or-later; dependencies retain their own licenses. Dungeon Keeper II is owned by its respective rights holders. This project is not affiliated with them or the unrelated MacKeeper utility product.
+
+Dungeon-heart combat and defeat behavior, owned-data verification and remaining limits are recorded in [docs/DUNGEON-HEART.md](docs/DUNGEON-HEART.md).

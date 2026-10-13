@@ -38,12 +38,22 @@ public final class FetchObjectTask extends AbstractTileTask {
     private final IObjectController gameObject;
     private final TaskManager taskManager;
 
-    public FetchObjectTask(final TaskManager taskManager, final INavigationService navigationService, final IMapController mapController, final IObjectController objectController, short playerId) {
-        super(navigationService, mapController, WorldUtils.vectorToPoint(objectController.getPosition()), playerId);
+    public FetchObjectTask(toniarts.openkeeper.game.task.TaskIdentityAllocator taskIds, final TaskManager taskManager, final INavigationService navigationService, final IMapController mapController, final IObjectController objectController, short playerId) {
+        super(taskIds, navigationService, mapController, WorldUtils.vectorToPoint(objectController.getPosition()), playerId);
 
         this.taskManager = taskManager;
         this.gameObject = objectController;
     }
+
+    public FetchObjectTask(toniarts.openkeeper.game.task.TaskIdentityAllocator ids, toniarts.openkeeper.game.data.TaskBaseState saved,
+            INavigationService navigation, IMapController map, toniarts.openkeeper.utils.Point point, short player,
+            IObjectController object, TaskManager manager) {
+        super(ids, saved, navigation, map, point, player);
+        gameObject = java.util.Objects.requireNonNull(object);
+        taskManager = manager;
+    }
+
+    public IObjectController getObjectController() {return gameObject;}
 
     @Override
     public Vector2f getTarget(ICreatureController creature) {

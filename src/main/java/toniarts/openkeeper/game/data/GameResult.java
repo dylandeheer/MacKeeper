@@ -17,6 +17,9 @@
 package toniarts.openkeeper.game.data;
 
 import java.util.HashMap;
+import java.util.Collections;
+import java.util.EnumMap;
+import java.util.Objects;
 import java.util.Map;
 
 /**
@@ -46,13 +49,68 @@ public final class GameResult {
         ATTEMPTS_AT_LEVEL,
     };
 
+    /** Immutable values, retaining numeric types and explicitly present null statistics. */
+    public record State(Map<ResultType, Object> values) {
+        public State {
+            Objects.requireNonNull(values);
+            var copy = new EnumMap<ResultType, Object>(ResultType.class);
+            values.forEach((key, value) -> {
+                Objects.requireNonNull(key);
+                if (value != null) {
+                    if (key == ResultType.LEVEL_WON) {
+                        if (!(value instanceof Boolean)) throw new IllegalArgumentException("Invalid outcome");
+                    } else {
+                        if (!(value instanceof Byte || value instanceof Short || value instanceof Integer
+                                || value instanceof Long || value instanceof Float || value instanceof Double))
+                            throw new IllegalArgumentException("Unsupported result statistic");
+                        double number = ((Number) value).doubleValue();
+                        if (!Double.isFinite(number) || key == ResultType.TIME_TAKEN && number < 0)
+                            throw new IllegalArgumentException("Invalid result statistic");
+                    }
+                }
+                copy.put(key, value);
+            });
+            values = Collections.unmodifiableMap(copy);
+        }
+    }
+
     private Map<ResultType, Object> data = null;
+
+    public synchronized State captureState() {
+        return new State(data == null ? Map.of() : data);
+    }
+
+    public static GameResult restoreState(State state) {
+        var result = new GameResult();
+        result.data = new EnumMap<>(ResultType.class);
+        result.data.putAll(Objects.requireNonNull(state).values());
+        return result;
+    }
 
     public GameResult() {
 
     }
 
-    public <T> T getData(ResultType key) {
+    public static GameResult completed(boolean win, double elapsedSeconds) {
+        if (!Double.isFinite(elapsedSeconds) || elapsedSeconds < 0) {
+            throw new IllegalArgumentException("Invalid elapsed game time");
+        }
+        GameResult result = new GameResult();
+        result.setData(ResultType.LEVEL_WON, win);
+        result.setData(ResultType.TIME_TAKEN, elapsedSeconds);
+        return result;
+    }
+
+    public boolean isWon() {
+        return Boolean.TRUE.equals(getData(ResultType.LEVEL_WON));
+    }
+
+    public double getElapsedSeconds() {
+        Number time = getData(ResultType.TIME_TAKEN);
+        return time == null ? 0 : time.doubleValue();
+    }
+
+    public synchronized <T> T getData(ResultType key) {
         if (data == null) {
             return null;
         }
@@ -61,7 +119,7 @@ public final class GameResult {
         return (T) s;
     }
 
-    public void setData(ResultType key, Object value) {
+    public synchronized void setData(ResultType key, Object value) {
         if (data == null) {
             data = new HashMap<>();
         }

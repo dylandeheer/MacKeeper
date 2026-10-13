@@ -18,8 +18,6 @@ package toniarts.openkeeper.game.state;
 
 import com.jme3.app.Application;
 import com.jme3.app.state.AppStateManager;
-import com.jme3.cinematic.events.CinematicEvent;
-import com.jme3.cinematic.events.CinematicEventListener;
 import com.jme3.math.Vector3f;
 import com.simsilica.es.EntityId;
 import toniarts.openkeeper.game.data.CampaignLevel;
@@ -33,8 +31,6 @@ import java.util.Map;
 import java.util.TreeMap;
 import javax.annotation.Nullable;
 import toniarts.openkeeper.Main;
-import toniarts.openkeeper.game.controller.IPlayerController;
-import toniarts.openkeeper.game.controller.PlayerController;
 import toniarts.openkeeper.game.data.CampaignLevel;
 import toniarts.openkeeper.game.data.Keeper;
 import toniarts.openkeeper.game.data.ResearchableEntity;
@@ -47,6 +43,9 @@ import toniarts.openkeeper.game.state.loading.SingleBarLoadingState;
 import toniarts.openkeeper.game.state.lobby.ClientInfo;
 import toniarts.openkeeper.game.state.session.GameSessionClientService;
 import toniarts.openkeeper.game.state.session.GameSessionListener;
+import toniarts.openkeeper.game.state.session.PresentationEvent;
+import toniarts.openkeeper.game.state.session.PresentationQueue;
+import toniarts.openkeeper.game.state.session.QueuedGameSessionListener;
 import toniarts.openkeeper.tools.convert.map.IKwdFile;
 import toniarts.openkeeper.tools.convert.map.TriggerAction;
 import toniarts.openkeeper.tools.convert.map.Variable;
@@ -70,21 +69,37 @@ public final class GameClientState extends AbstractPauseAwareState {
     private static final Logger logger = System.getLogger(GameClientState.class.getName());
 
     private final Main app;
+    private final toniarts.openkeeper.game.state.session.ClientState restored;
+    private int restorePhase;
+    private boolean inputSuppressed;
+    private boolean priorIgnoreMouse, priorIgnoreKeyboard;
 
     private AppStateManager stateManager;
 
     private final IKwdFile kwdFile;
 
     private final Map<Short, Keeper> players = new TreeMap<>();
-    private final Map<Short, IPlayerController> playerControllers = new TreeMap<>();
     private final Object loadingObject = new Object();
     private volatile boolean gameStarted = false;
+    private volatile boolean closing;
+    private volatile Throwable loadFailure;
+    private volatile List<Keeper> preparedPlayers;
+    private Thread dataLoader;
+    private boolean receivedGameData;
+    private boolean mapReady;
+    private boolean readySent;
+    private final java.util.concurrent.CompletableFuture<Void> loadCompletion = new java.util.concurrent.CompletableFuture<>();
 
     private final Short playerId;
     private final boolean multiplayer;
     private IPlayerLoadingProgress loadingState;
     private final GameSessionClientService gameClientService;
-    private final GameSessionListenerImpl gameSessionListener = new GameSessionListenerImpl();
+    private final PresentationQueue pendingPresentation = new PresentationQueue();
+    private final GameSessionListenerImpl presentationTarget = new GameSessionListenerImpl();
+    private final QueuedGameSessionListener gameSessionListener = new QueuedGameSessionListener(pendingPresentation, presentationTarget);
+    private Thread renderThread;
+    private boolean transferBlocked;
+    private boolean modalInputBlocked;
     private IMapInformation mapInformation;
     private IFogOfWarInformation fogOfWarInformation;
     private PlayerState playerState;
@@ -94,6 +109,103 @@ public final class GameClientState extends AbstractPauseAwareState {
     private PlayerMapViewState playerMapViewState;
     private PlayerEntityViewState playerModelViewState;
     private TextParser textParser;
+    @Override
+    public void update(float tpf) {
+        if (closing || transferBlocked || stateManager.getState(GameClientState.class) != this) return;
+        if (loadFailure != null) {
+            logger.log(Level.ERROR, "Failed to load the game", loadFailure);
+            detach();
+            MainMenuState menu = stateManager.getState(MainMenuState.class);
+            if (menu != null) menu.setEnabled(true);
+            return;
+        }
+        if (!gameStarted) {
+            try { advanceLoading(); }
+            catch (RuntimeException failure) { failLoading(failure); }
+            return;
+        }
+        if (playerState == null) return;
+        playerState.updateScreenRouting();
+        if (!loadCompletion.isDone() && playerState.isScreenReady()) loadCompletion.complete(null);
+        pendingPresentation.drain(() -> {
+            PlayerCameraState camera = stateManager.getState(PlayerCameraState.class);
+            return !playerState.isEnabled() || camera == null || camera.isInitialized();
+        }, event -> {
+            try {event.deliver(presentationTarget);}
+            catch (RuntimeException failure) {logger.log(Level.ERROR, "Failed to apply client presentation event " + event.kind(), failure);}
+        });
+    }
+
+    /** Call on the render thread inside the server snapshot boundary for a complete local capture. */
+    public PresentationQueue.State capturePendingPresentation() {
+        requireRenderThread();
+        if (!gameStarted || !isInitialized()) throw new IllegalStateException("Client is not ready for capture");
+        return pendingPresentation.capture();
+    }
+
+    /** Stage pending notifications without rendering or acknowledging them. */
+    public void restorePendingPresentation(PresentationQueue.State state) {
+        requireRenderThread();pendingPresentation.restore(state);
+    }
+
+    /** Capture on the render thread inside the server gate when joining a local session snapshot. */
+    public toniarts.openkeeper.game.state.session.ClientModelState captureClientModel() {
+        requireReadyClient();
+        return new toniarts.openkeeper.game.state.session.ClientModelState(playerId,
+                players.values().stream().map(Keeper::captureState).toList(), pendingPresentation.capture());
+    }
+
+    /** Restore observed model values without consuming pending events or rebuilding views. */
+    public void restoreClientModel(toniarts.openkeeper.game.state.session.ClientModelState saved) {
+        requireReadyClient();
+        if (saved.playerId() != playerId) throw new IllegalArgumentException("Client model belongs to another player");
+        saved.restore(players, pendingPresentation, kwdFile);
+    }
+
+    /** All implemented logical owners, observed on the render thread without draining notifications. */
+    public toniarts.openkeeper.game.state.session.ClientState captureClientState() {
+        requireReadyClient();
+        var screen = playerState.captureScreenState();
+        toniarts.openkeeper.game.state.session.ClientState.Active active = null;
+        if (screen.playerEnabled()) {
+            var camera = stateManager.getState(PlayerCameraState.class);
+            var messages = stateManager.getState(SystemMessageState.class);
+            var interaction = stateManager.getState(toniarts.openkeeper.view.PlayerInteractionState.class);
+            var console = stateManager.getState(toniarts.openkeeper.game.console.ConsoleState.class);
+            if (camera == null || messages == null || interaction == null || console == null || !console.isInitialized())
+                throw new IllegalStateException("Client owners are still loading");
+            active = new toniarts.openkeeper.game.state.session.ClientState.Active(camera.captureState(), messages.captureState(),
+                    playerState.getScreen().captureHudState(), interaction.captureSelection(),
+                    playerState.getScreen().captureCreatureCards(), interaction.captureHandView(), console.isEnabled());
+        }
+        return new toniarts.openkeeper.game.state.session.ClientState(captureClientModel(), playerState.captureProgressState(),
+                screen, playerMapViewState.captureFogState(), stateManager.getState(SoundState.class).captureState(),
+                new toniarts.openkeeper.view.WorldViewState(playerId, kwdFile.getMap().getWidth(), kwdFile.getMap().getHeight(),
+                        playerMapViewState.captureFlashes(), playerModelViewState.captureFlowers()), active);
+    }
+
+    private void requireReadyClient() {
+        requireRenderThread();
+        if (closing || !isInitialized() || !gameStarted || stateManager.getState(GameClientState.class) != this)
+            throw new IllegalStateException("Client is not ready for model restoration");
+    }
+
+    private void requireRenderThread() {
+        if (renderThread == null || Thread.currentThread() != renderThread)
+            throw new IllegalStateException("Client presentation state belongs to the render thread");
+    }
+
+    private boolean activePresentation() {return playerState != null && playerState.isEnabled();}
+
+    /** Audio start effects are typed data, delivered only by this live session's render-thread owner. */
+    public void onSpeechStarted(int speechId, toniarts.openkeeper.game.sound.SoundSnapshot.StartAction action) {
+        requireRenderThread();
+        if (!activePresentation() || stateManager.getState(GameClientState.class) != this) return;
+        SystemMessageState messages = stateManager.getState(SystemMessageState.class);
+        if (messages != null) messages.addMessage(SystemMessageState.MessageType.INFO, String.format("${level.%d}", speechId - 1));
+        if (action.showText()) playerState.setText(speechId, action.introduction(), action.pathId());
+    }
+
 
     /**
      * Single use game states
@@ -106,6 +218,21 @@ public final class GameClientState extends AbstractPauseAwareState {
      * @param campaignLevel the campaign level, or {@code null} for non-campaign
      */
     public GameClientState(IKwdFile level, Short playerId, List<ClientInfo> players, GameSessionClientService gameClientService, Main app, @Nullable CampaignLevel campaignLevel) {
+        this(level, playerId, players, gameClientService, app, campaignLevel, null);
+    }
+
+    public static GameClientState restored(IKwdFile level, toniarts.openkeeper.game.state.session.LocalGameSession service,
+            Main app, toniarts.openkeeper.game.state.session.ClientState saved) {
+        var info = new ClientInfo(0, null, 0);
+        info.setKeeper(saved.model().bind(level).get(saved.model().playerId()));
+        var branch = saved.progress().campaign();
+        return new GameClientState(level, saved.model().playerId(), List.of(info), service, app,
+                branch == null ? null : branch.bind(), saved);
+    }
+
+    private GameClientState(IKwdFile level, Short playerId, List<ClientInfo> players, GameSessionClientService gameClientService,
+            Main app, CampaignLevel campaignLevel, toniarts.openkeeper.game.state.session.ClientState restored) {
+        this.restored = restored;
         this.kwdFile = level;
         this.gameClientService = gameClientService;
         this.playerId = playerId;
@@ -135,8 +262,25 @@ public final class GameClientState extends AbstractPauseAwareState {
     }
 
     @Override
+    public void stateAttached(AppStateManager manager) {
+        super.stateAttached(manager);
+        stateManager = manager;
+        if (closing) manager.detach(this);
+    }
+
+    @Override
     public void initialize(final AppStateManager stateManager, final Application app) {
+        super.initialize(stateManager, app);
         this.stateManager = stateManager;
+        renderThread = Thread.currentThread();
+        if (closing) return;
+        if (restored != null) {
+            priorIgnoreMouse = this.app.getNifty().isIgnoreMouseEvents();
+            priorIgnoreKeyboard = this.app.getNifty().isIgnoreKeyboardEvents();
+            this.app.getNifty().setIgnoreMouseEvents(true);this.app.getNifty().setIgnoreKeyboardEvents(true);
+            inputSuppressed = true;
+            gameSessionListener.onGameDataLoaded(restored.model().bind(kwdFile).values());
+        }
 
         // Attach the loading state finally
         if (!gameStarted) {
@@ -154,36 +298,186 @@ public final class GameClientState extends AbstractPauseAwareState {
     }
 
     private void detachRelatedAppStates() {
-        stateManager.detach(playerModelViewState);
-        stateManager.detach(playerMapViewState);
-        stateManager.detach(playerState);
+        if (playerModelViewState != null) stateManager.detach(playerModelViewState);
+        if (playerMapViewState != null) {
+            playerMapViewState.cancelLoading();
+            stateManager.detach(playerMapViewState);
+            // JME never calls cleanup for a state detached before its initialization.
+            if (!playerMapViewState.isInitialized()) playerMapViewState.cleanup();
+        }
+        if (playerState != null) {
+            EndGameState end = stateManager.getState(EndGameState.class);
+            if (end != null && end.belongsTo(playerState)) stateManager.detach(end);
+            stateManager.detach(playerState);
+            if (!playerState.isInitialized()) playerState.cleanup();
+        }
     }
 
-    /**
-     * If you are getting rid of the game state, use this so that all the
-     * related states are detached on the same render loop. Otherwise the app
-     * might crash.
-     */
+    /** Cancel first so obsolete workers and queued completion callbacks cannot publish a session. */
     public void detach() {
-
-        // If we are stuck loading
         synchronized (loadingObject) {
+            if (closing) return;
+            closing = true;
+            preparedPlayers = null;
+            if (dataLoader != null) dataLoader.interrupt();
             loadingObject.notifyAll();
         }
+        gameClientService.removeGameSessionListener(gameSessionListener);
+        // JME skips cleanup if cancellation precedes initialization; retire the server here too.
+        gameClientService.exitGame();
+        loadCompletion.completeExceptionally(new java.util.concurrent.CancellationException("Game loading cancelled"));
+        if (stateManager != null) {
+            stateManager.detach(this);
+            if (loadingState != null) stateManager.detach(loadingState);
+            detachRelatedAppStates();
+            SoundState sound = stateManager.getState(SoundState.class);
+            if (sound != null && sound.isInitialized()) sound.unbindSession(this);
+            restoreInputPolicy();
+        }
+        pendingPresentation.close();
+        playerState = null;playerMapViewState = null;playerModelViewState = null;
+    }
 
-        stateManager.detach(this);
-        detachRelatedAppStates();
+    /** Completion follows settled HUD routing, not merely receipt of server data. */
+    public java.util.concurrent.CompletionStage<Void> loadingCompletion() { return loadCompletion.minimalCompletionStage(); }
 
-        playerState = null;
-        playerMapViewState = null;
-        playerModelViewState = null;
+    private void failLoading(Throwable failure) {
+        synchronized (loadingObject) {
+            if (closing || loadFailure != null) return;
+            loadFailure = failure;loadingObject.notifyAll();
+        }
+        loadCompletion.completeExceptionally(failure);
+    }
+
+    private void advanceLoading() {
+        if (preparedPlayers != null && playerState == null) {
+            List<Keeper> prepared = preparedPlayers;preparedPlayers = null;
+            createViews(prepared);
+        }
+        if (!readySent && mapReady && playerState != null && playerState.isInitialized()
+                && playerMapViewState.isInitialized() && playerModelViewState.isInitialized()) {
+            app.getRenderManager().preloadScene(app.getRootNode());
+            if (restored != null) {advanceRestore();return;}
+            readySent = true;gameClientService.loadComplete();
+        }
+    }
+
+    private void createViews(List<Keeper> received) {
+        requireRenderThread();
+        for (Keeper keeper : received) {
+            keeper.setPlayer(kwdFile.getPlayer(keeper.getId()));players.put(keeper.getId(), keeper);
+        }
+        playerState = restored == null
+                ? new PlayerState(playerId, kwdFile, gameClientService.getEntityData(), false, app, campaignLevel)
+                : new PlayerState(playerId, kwdFile, gameClientService.getEntityData(), false, app, campaignLevel, restored.progress());
+        playerMapViewState = new PlayerMapViewState(app, kwdFile, app.getAssetManager(), received,
+                gameClientService.getEntityData(), playerId, () -> { if (!closing) mapReady = true; },
+                gameSessionListener::onEnemySighted, GameClientState.this::failLoading, restored == null ? null : restored.fog()) {
+            private float lastProgress;
+            @Override protected void updateProgress(float progress) {
+                if (closing) return;
+                presentationTarget.onLoadStatusUpdate(progress, playerId);
+                if (progress - lastProgress >= .01f) {gameClientService.loadStatus(progress);lastProgress = progress;}
+            }
+        };
+        mapInformation = playerMapViewState.getMapInformation();
+        fogOfWarInformation = playerMapViewState.getFogOfWarInformation();
+        textParser = new TextParserService(mapInformation, playerMapViewState.getRoomsInformation());
+        playerModelViewState = new PlayerEntityViewState(kwdFile, app.getAssetManager(), gameClientService.getEntityData(),
+                playerId, textParser, app.getRootNode(), mapInformation.getMapData(), fogOfWarInformation);
+        if (restored != null) playerModelViewState.setEnabled(false);
+        playerMapViewState.addFogOfWarTilesDirtyListener(playerModelViewState::onTilesDirty);
+        stateManager.attach(playerState);stateManager.attach(playerMapViewState);stateManager.attach(playerModelViewState);
+    }
+
+    /** Input stays unavailable until the replacement client has all owners and its requested screen. */
+    public boolean isAcceptingInput() {return isReadyForReplacement() && !modalInputBlocked;}
+
+    /** Modal save controls may hold input while a fully loaded local game is prepared for replacement. */
+    public boolean isReadyForReplacement() {return gameStarted && !closing && !transferBlocked;}
+
+    public void setModalInputBlocked(boolean blocked) {
+        requireRenderThread();
+        if (closing || stateManager.getState(GameClientState.class) != this)
+            throw new IllegalStateException("Modal input belongs to the current client");
+        resetTransientInput();modalInputBlocked = blocked;
+    }
+
+    /** Temporary transfer ownership suppresses raw input and pending-event delivery without retiring the client. */
+    public void setTransferBlocked(boolean blocked) {
+        requireRenderThread();
+        if (closing || stateManager.getState(GameClientState.class) != this)
+            throw new IllegalStateException("Transfer belongs to the current client");
+        resetTransientInput();transferBlocked = blocked;
+    }
+
+    private void resetTransientInput() {
+        var camera = stateManager.getState(PlayerCameraState.class);
+        if (camera != null && camera.isInitialized()) camera.resetTransferInput();
+        var interaction = stateManager.getState(toniarts.openkeeper.view.PlayerInteractionState.class);
+        if (interaction != null && interaction.isInitialized()) interaction.resetTransferInput();
+        var end = stateManager.getState(EndGameState.class);
+        if (end != null && end.isInitialized() && end.belongsTo(playerState)) end.restoreAwaitingInput();
+    }
+
+    private void restoreInputPolicy() {
+        if (!inputSuppressed) return;
+        app.getNifty().resetMouseInputEvents();
+        app.getNifty().setIgnoreMouseEvents(priorIgnoreMouse);app.getNifty().setIgnoreKeyboardEvents(priorIgnoreKeyboard);
+        inputSuppressed = false;
+    }
+
+    private void advanceRestore() {
+        if (restorePhase == 0) {
+            if (restored.active() != null) playerState.setEnabled(true);
+            else stateManager.attach(EndGameState.restored(playerState));
+            restorePhase = 1;return;
+        }
+        playerState.updateScreenRouting();
+        if (restorePhase == 1) {
+            if (restored.active() != null) {
+                if (!playerState.isScreenReady() || stateManager.getState(PlayerCameraState.class) == null
+                        || !stateManager.getState(PlayerCameraState.class).isInitialized()
+                        || stateManager.getState(toniarts.openkeeper.view.PlayerInteractionState.class) == null
+                        || !stateManager.getState(toniarts.openkeeper.view.PlayerInteractionState.class).isInitialized()
+                        || stateManager.getState(SystemMessageState.class) == null
+                        || !stateManager.getState(SystemMessageState.class).isInitialized()) return;
+            } else {
+                EndGameState end = stateManager.getState(EndGameState.class);
+                if (end == null || !end.isInitialized()) return;
+            }
+            playerState.restoreScreenState(restored.screen());restorePhase = 2;return;
+        }
+        if (!playerState.isScreenReady()) return;
+        // Bind every owner before starting server threads or admitting pending notifications/input.
+        restored.model().restore(players, pendingPresentation, kwdFile);
+        playerMapViewState.restoreFogState(restored.fog());
+        playerMapViewState.restoreFlashes(restored.worldView().flash());
+        playerModelViewState.restoreFlowers(restored.worldView().flowers());
+        var active = restored.active();
+        if (active != null) {
+            playerState.getScreen().restoreHudState(active.hud());
+            playerState.getScreen().restoreCreatureCards(active.cards());
+            stateManager.getState(toniarts.openkeeper.game.console.ConsoleState.class).setEnabled(active.consoleEnabled());
+            var interaction = stateManager.getState(toniarts.openkeeper.view.PlayerInteractionState.class);
+            interaction.restoreSelection(active.interaction());interaction.restoreHandView(active.hand());
+            stateManager.getState(SystemMessageState.class).restoreState(active.messages());
+            stateManager.getState(PlayerCameraState.class).restoreState(active.camera());
+        }
+        SoundState sound = stateManager.getState(SoundState.class);
+        sound.bindSession(this, kwdFile, playerId);sound.restoreState(restored.sound());
+        playerState.restoreScreenState(restored.screen());
+        playerMapViewState.resumeUpdates();playerModelViewState.setEnabled(true);
+        readySent = true;
+        synchronized (loadingObject) {gameStarted = true;loadingObject.notifyAll();}
+        ((toniarts.openkeeper.game.state.session.LocalGameSession) gameClientService).setCommandAdmission(true);
+        restoreInputPolicy();gameClientService.loadComplete();
     }
 
     @Override
     public void cleanup() {
 
-        // Signal our exit & close all the connections
-        gameClientService.exitGame();
+        // Close network connections; detach signals session exit exactly once.
         ConnectionState cs = stateManager.getState(ConnectionState.class);
         if (cs != null) {
             cs.disconnect();
@@ -240,27 +534,15 @@ public final class GameClientState extends AbstractPauseAwareState {
 
     private void onGameLoadComplete() {
 
-        // Set initialized
-        GameClientState.this.initialized = true;
-
-        // Set the processors
-        GameClientState.this.app.setViewProcessors();
+        if (!closing && loadFailure == null && gameStarted) app.setViewProcessors();
     }
 
     private void onGameLoad() {
-        try {
-
-            // The game is actually loaded elsewhere but for the visuals we need this
-            if (!gameStarted) {
-                synchronized (loadingObject) {
-                    if (!gameStarted) {
-                        loadingObject.wait();
-                    }
-                }
+        synchronized (loadingObject) {
+            while (!gameStarted && !closing && loadFailure == null) {
+                try {loadingObject.wait();}
+                catch (InterruptedException interrupted) {Thread.currentThread().interrupt();return;}
             }
-
-        } catch (Exception e) {
-            logger.log(Level.ERROR, "Failed to load the game!", e);
         }
     }
 
@@ -285,10 +567,6 @@ public final class GameClientState extends AbstractPauseAwareState {
         return players.values();
     }
 
-    public IPlayerController getPlayerController(short playerId) {
-        return playerControllers.get(playerId);
-    }
-
     /**
      * Get level variable value
      *
@@ -309,113 +587,46 @@ public final class GameClientState extends AbstractPauseAwareState {
         return textParser;
     }
 
-    private final class GameSessionListenerImpl implements GameSessionListener {
+    private final class GameSessionListenerImpl implements PresentationEvent.Target {
 
-        private final Object mapDataLoadingObject = new Object();
-        private volatile boolean mapDataLoaded = false;
+        @Override public void onLoadFailed(String message) {failLoading(new IllegalStateException(message));}
 
         @Override
         public void onGameDataLoaded(Collection<Keeper> players) {
-
-            // This might take awhile, don't block
-            Thread loadingThread = new Thread(() -> {
-                AssetUtils.prewarmAssets(kwdFile, app.getAssetManager(), app);
-                for (Keeper keeper : players) {
-                    keeper.setPlayer(kwdFile.getPlayer(keeper.getId()));
-                    GameClientState.this.players.put(keeper.getId(), keeper);
-                    GameClientState.this.playerControllers.put(keeper.getId(), new PlayerController(kwdFile, keeper, kwdFile.getImp(), gameClientService.getEntityData(), kwdFile.getVariables()));
-                }
-
-                // Create player state
-                playerState = new PlayerState(playerId, kwdFile, gameClientService.getEntityData(), false, app, campaignLevel);
-
-                playerMapViewState = new PlayerMapViewState(app, kwdFile, app.getAssetManager(), players, gameClientService.getEntityData(), playerId,
-                        () -> {
-                            synchronized (mapDataLoadingObject) {
-                                mapDataLoaded = true;
-                                mapDataLoadingObject.notifyAll();
-                            }
-                        }, (entityId) -> {
-                            app.enqueue(() -> {
-                                SystemMessageState systemMessageState = stateManager.getState(SystemMessageState.class);
-                                if (systemMessageState != null) {
-                                    systemMessageState.addMessage(SystemMessageState.MessageType.FIGHT, "Enemy creature sighted!");
-                                }
-                            });
-                        }) {
-
-                    private float lastProgress = 0;
-
-                    @Override
-                    protected void updateProgress(float progress) {
-
-                        // Update ourselves
-                        onLoadStatusUpdate(progress, playerId);
-
-                        if (progress - lastProgress >= 0.01f) {
-                            gameClientService.loadStatus(progress);
-                            lastProgress = progress;
+            synchronized (loadingObject) {
+                if (closing || receivedGameData) return;
+                receivedGameData = true;
+                List<Keeper> received = List.copyOf(players);
+                dataLoader = new Thread(() -> {
+                    try {
+                        AssetUtils.prewarmAssets(kwdFile, app.getAssetManager(), app);
+                        synchronized (loadingObject) {
+                            if (!closing && loadFailure == null) preparedPlayers = received;
                         }
-                    }
-                };
-                mapInformation = playerMapViewState.getMapInformation();
-                fogOfWarInformation = playerMapViewState.getFogOfWarInformation();
-                textParser = new TextParserService(mapInformation, playerMapViewState.getRoomsInformation());
-                playerModelViewState = new PlayerEntityViewState(kwdFile, app.getAssetManager(), gameClientService.getEntityData(), playerId, textParser, app.getRootNode(), mapInformation.getMapData(), fogOfWarInformation);
-                playerMapViewState.addFogOfWarTilesDirtyListener(playerModelViewState::onTilesDirty);
-
-                // Attach the states
-                stateManager.attach(playerState);
-                stateManager.attach(playerMapViewState);
-                stateManager.attach(playerModelViewState);
-
-                // Wait until loaded
-                if (!mapDataLoaded) {
-                    synchronized (mapDataLoadingObject) {
-                        if (!mapDataLoaded) {
-                            try {
-                                mapDataLoadingObject.wait();
-                            } catch (InterruptedException ex) {
-                                System.getLogger(GameClientState.class.getName()).log(Level.ERROR, "Map data loading interrupted!", ex);
-                            }
-                        }
-                    }
-                }
-
-                // Loaded up, send our ready signal on the next frame to ensure all the states are attached
-                app.enqueue(() -> {
-
-                    // Prewarm the whole scene
-                    app.getRenderManager().preloadScene(app.getRootNode());
-
-                    // Signal our readiness
-                    gameClientService.loadComplete();
-                });
-
-            }, "GameDataClientLoader");
-            loadingThread.start();
+                    } catch (RuntimeException failure) {failLoading(failure);}
+                }, "GameDataClientLoader");
+                dataLoader.start();
+            }
         }
 
         @Override
         public void onLoadComplete(short keeperId) {
-            loadingState.setProgress(1f, keeperId);
+            if (!closing && loadingState != null) loadingState.setProgress(1f, keeperId);
         }
 
         @Override
         public void onLoadStatusUpdate(float progress, short keeperId) {
-            loadingState.setProgress(progress, keeperId);
+            if (!closing && loadingState != null) loadingState.setProgress(progress, keeperId);
         }
 
         @Override
         public void onGameStarted() {
-
-            // Release loading state from memory
-            loadingState = null;
-
-            stateManager.getState(SoundState.class).setKwdFile(kwdFile);
-            stateManager.getState(SoundState.class).setEnabled(true);
-
+            if (restored != null) return;
             app.enqueue(() -> {
+                if (closing || gameStarted || loadFailure != null || stateManager.getState(GameClientState.class) != GameClientState.this || playerState == null) return;
+                SoundState sound = stateManager.getState(SoundState.class);
+                sound.bindSession(GameClientState.this, kwdFile, playerId);
+                sound.setEnabled(true);
                 playerState.setEnabled(true);
 
                 // Release the lock and enter to the game phase
@@ -447,30 +658,19 @@ public final class GameClientState extends AbstractPauseAwareState {
         }
 
         @Override
-        public void onGoldChange(short keeperId, int gold) {
-            getPlayer(keeperId).setGold(gold);
-
-            // FIXME: See in what thread we are
-            if (playerState != null && playerState.getPlayerId() == keeperId) {
-                app.enqueue(() -> {
-                    playerState.onGoldChange(keeperId, gold);
-                });
-            }
+        public void onGoldChange(short keeperId, long gold, int goldReserve) {
+            Keeper keeper = getPlayer(keeperId);
+            if (keeper == null) return;
+            keeper.setGold(gold);keeper.setGoldReserve(goldReserve);
+            if (playerState != null && playerState.getPlayerId() == keeperId) playerState.onGoldChange(keeperId, gold, goldReserve);
         }
 
         @Override
         public void onManaChange(short keeperId, int mana, int manaLoose, int manaGain) {
             Keeper keeper = getPlayer(keeperId);
-            keeper.setMana(mana);
-            keeper.setManaGain(manaGain);
-            keeper.setManaLoose(manaLoose);
-
-            // FIXME: See in what thread we are
-            if (playerState != null && playerState.getPlayerId() == keeperId) {
-                app.enqueue(() -> {
-                    playerState.onManaChange(keeperId, mana, manaLoose, manaGain);
-                });
-            }
+            if (keeper == null) return;
+            keeper.setMana(mana);keeper.setManaGain(manaGain);keeper.setManaLoose(manaLoose);
+            if (playerState != null && playerState.getPlayerId() == keeperId) playerState.onManaChange(keeperId, mana, manaLoose, manaGain);
         }
 
         @Override
@@ -485,80 +685,64 @@ public final class GameClientState extends AbstractPauseAwareState {
 
         @Override
         public void onGamePaused() {
-            app.enqueue(() -> {
-                playerState.onPaused(true);
-            });
+            if (activePresentation()) playerState.onPaused(true);
         }
 
         @Override
         public void onGameResumed() {
-            app.enqueue(() -> {
-                playerState.onPaused(false);
-            });
+            if (activePresentation()) playerState.onPaused(false);
         }
 
         @Override
         public void onSetWidescreen(boolean enable) {
-            playerState.setWideScreen(enable);
+            if (activePresentation()) playerState.setWideScreen(enable);
         }
 
         @Override
-        public void onGameEnded(boolean win) {
-            app.enqueue(() -> playerState.endGame(win));
+        public void onGameEnded(boolean win, double elapsedSeconds) {
+            if (playerState != null) playerState.endGame(win, elapsedSeconds);
         }
 
         @Override
         public void onPlaySpeech(int speechId, boolean showText, boolean introduction, int pathId) {
-
-            // TODO: Refactor these, we don't maybe want this logic here, borderline visuals
-            stateManager.getState(SoundState.class).attachLevelSpeech(speechId, () -> {
-                stateManager.getState(SystemMessageState.class).addMessage(SystemMessageState.MessageType.INFO, String.format("${level.%d}", speechId - 1));
-                if (showText) {
-                    playerState.setText(speechId, introduction, pathId);
-                }
-            });
+            SoundState sound = stateManager.getState(SoundState.class);
+            if (!activePresentation() || sound == null) return;
+            sound.attachLevelSpeech(speechId, new toniarts.openkeeper.game.sound.SoundSnapshot.StartAction(showText, introduction, pathId));
         }
 
         @Override
         public void onDoTransition(short pathId, Vector3f start) {
-
-            // TODO: Refactor
-            stateManager.getState(PlayerCameraState.class).doTransition(pathId, start, new CinematicEventListener() {
-                @Override
-                public void onPlay(CinematicEvent cinematic) {
-
-                }
-
-                @Override
-                public void onPause(CinematicEvent cinematic) {
-
-                }
-
-                @Override
-                public void onStop(CinematicEvent cinematic) {
-                    gameClientService.transitionEnd();
-                }
-            });
+            PlayerCameraState camera = stateManager.getState(PlayerCameraState.class);
+            if (!activePresentation() || camera == null) {
+                // Terminal screens can remove the camera while the session continues.
+                gameClientService.transitionEnd();return;
+            }
+            camera.doTransition(pathId, start, true);
         }
 
         @Override
         public void onFlashButton(TriggerAction.MakeType buttonType, short targetId, TriggerAction.ButtonType targetButtonType, boolean enabled, int time) {
-            playerState.flashButton(buttonType, targetId, targetButtonType, enabled, time);
+            if (activePresentation()) playerState.flashButton(buttonType, targetId, targetButtonType, enabled, time);
         }
 
         @Override
         public void onRotateViewAroundPoint(Vector3f point, boolean relative, int angle, int time) {
-            playerState.rotateViewAroundPoint(point, relative, angle, time);
+            if (activePresentation()) playerState.rotateViewAroundPoint(point, relative, angle, time);
         }
 
         @Override
         public void onShowMessage(int textId) {
-            playerState.showMessage(textId);
+            if (activePresentation()) playerState.showMessage(textId);
+        }
+
+        @Override
+        public void onShowObjective(int objectiveId) {
+            if (playerState != null) playerState.showObjective(objectiveId);
         }
 
         @Override
         public void onZoomViewToPoint(Vector3f point) {
-            playerState.zoomToPoint(point);
+            if (activePresentation()) playerState.zoomToPoint(point);
         }
 
         @Override
@@ -568,7 +752,7 @@ public final class GameClientState extends AbstractPauseAwareState {
 
         @Override
         public void onZoomViewToEntity(EntityId entityId) {
-            playerState.zoomToEntity(entityId, true);
+            if (activePresentation()) playerState.zoomToEntity(entityId, true);
         }
 
         @Override
@@ -587,9 +771,8 @@ public final class GameClientState extends AbstractPauseAwareState {
             Keeper keeper = getPlayer(keeperId);
             setResearchableEntity(researchableEntity, getResearchableEntitiesList(keeper, researchableEntity));
 
-            // FIXME: See in what thread we are
             if (notifier != null && playerState != null && playerState.getPlayerId() == keeperId) {
-                app.enqueue(notifier);
+                notifier.run();
             }
         }
 
@@ -662,8 +845,14 @@ public final class GameClientState extends AbstractPauseAwareState {
         }
 
         @Override
+        public void onEnemySighted(EntityId entityId) {
+            SystemMessageState messages = stateManager.getState(SystemMessageState.class);
+            if (messages != null) messages.addMessage(SystemMessageState.MessageType.FIGHT, "Enemy creature sighted!");
+        }
+
+        @Override
         public void setPossession(EntityId target) {
-            playerState.setPossession(target);
+            if (activePresentation()) playerState.setPossession(target);
             setPossessedCreature(target);
         }
     }

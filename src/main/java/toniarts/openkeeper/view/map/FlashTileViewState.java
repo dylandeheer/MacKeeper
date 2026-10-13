@@ -24,7 +24,8 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
-import toniarts.openkeeper.Main;
+import java.util.function.BiConsumer;
+import toniarts.openkeeper.view.WorldViewState;
 
 /**
  * Simple app state that keeps tile flashing
@@ -36,33 +37,48 @@ public final class FlashTileViewState extends AbstractAppState {
     private float tick = 0;
     public static final float FLASH_PERIOD = 0.5f;
     private boolean flashed = false;
-    private final MapViewController mapViewController;
+    private final BiConsumer<Boolean, List<Point>> paint;
+    private final Set<Point> painted = new HashSet<>();
+    private AppStateManager states;
+    private Thread renderThread;
     private final Set<Point> points = new HashSet<>();
-    private Main app;
+
 
     public FlashTileViewState(final MapViewController mapViewController) {
-        this.mapViewController = mapViewController;
+        this(mapViewController::flashTile);
+    }
+
+    FlashTileViewState(BiConsumer<Boolean, List<Point>> paint) {this.paint = paint;}
+
+    public WorldViewState.Flash captureState() {
+        requireOwner();return new WorldViewState.Flash(isEnabled(), tick, flashed, points, painted);
+    }
+
+    public void restoreState(WorldViewState.Flash saved) {
+        requireOwner();
+        paint.accept(false, new ArrayList<>(painted));
+        paint.accept(true, new ArrayList<>(saved.painted()));
+        points.clear();points.addAll(saved.points());painted.clear();painted.addAll(saved.painted());
+        tick = saved.tick();flashed = saved.phase();setEnabled(saved.enabled());
+    }
+
+    private void requireOwner() {
+        if (!isInitialized() || renderThread != Thread.currentThread() || states.getState(FlashTileViewState.class) != this)
+            throw new IllegalStateException("Tile flashing belongs to the active render-thread map");
     }
 
     @Override
     public void initialize(final AppStateManager stateManager, final Application app) {
         super.initialize(stateManager, app);
 
-        this.app = (Main) app;
+        states = stateManager;renderThread = Thread.currentThread();
     }
 
     public boolean attach(List<Point> points, boolean enabled) {
-        if (enabled) {
-            return this.points.addAll(points);
-        } else {
-            app.enqueue(() -> {
-
-                mapViewController.flashTile(false, points);
-
-                return null;
-            });
-            return this.points.removeAll(points);
-        }
+        requireOwner();
+        if (enabled) return this.points.addAll(points);
+        paint.accept(false, List.copyOf(points));painted.removeAll(points);
+        return this.points.removeAll(points);
     }
 
     @Override
@@ -74,7 +90,8 @@ public final class FlashTileViewState extends AbstractAppState {
         if (tick > FLASH_PERIOD) {
             tick -= FLASH_PERIOD;
             flashed = !flashed;
-            mapViewController.flashTile(flashed, new ArrayList<>(points));
+            paint.accept(flashed, new ArrayList<>(points));
+            painted.clear();if (flashed) painted.addAll(points);
         }
 
         tick += tpf;

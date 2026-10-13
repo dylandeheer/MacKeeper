@@ -18,6 +18,8 @@ package toniarts.openkeeper.game.controller.player;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Objects;
+import java.util.function.IntFunction;
 import toniarts.openkeeper.tools.convert.map.Creature;
 
 /**
@@ -30,6 +32,50 @@ public final class PlayerStatsControl {
     private final Map<Creature, Integer> slapsMap = new HashMap<>();
     private final Map<Creature, Integer> pickUpsMap = new HashMap<>();
     private final Map<Creature, Integer> dropsMap = new HashMap<>();
+
+    /** Creature definitions are rebound by ID; zero-count key presence is retained. */
+    public record State(Map<Short, Integer> slaps, Map<Short, Integer> pickups, Map<Short, Integer> drops) {
+        public State {
+            slaps = checked(slaps);pickups = checked(pickups);drops = checked(drops);
+        }
+        private static Map<Short, Integer> checked(Map<Short, Integer> values) {
+            values = Map.copyOf(values);
+            if (values.size() > 256) throw new IllegalArgumentException("Too many creature statistics");
+            values.forEach((id, count) -> {
+                if (id < 0 || id > 255 || count < 0) throw new IllegalArgumentException("Invalid creature statistic");
+            });
+            return values;
+        }
+    }
+
+    public State captureState() {
+        return new State(capture(slapsMap), capture(pickUpsMap), capture(dropsMap));
+    }
+
+    private static Map<Short, Integer> capture(Map<Creature, Integer> source) {
+        Map<Short, Integer> values = new HashMap<>();
+        source.forEach((creature, count) -> {
+            if (values.put(creature.getCreatureId(), count) != null) throw new IllegalStateException("Duplicate creature statistic ID");
+        });
+        return values;
+    }
+
+    public static PlayerStatsControl restoreState(State state, IntFunction<Creature> definitions) {
+        Objects.requireNonNull(state);Objects.requireNonNull(definitions);
+        PlayerStatsControl result = new PlayerStatsControl();
+        restore(state.slaps(), result.slapsMap, definitions);
+        restore(state.pickups(), result.pickUpsMap, definitions);
+        restore(state.drops(), result.dropsMap, definitions);
+        return result;
+    }
+
+    private static void restore(Map<Short, Integer> source, Map<Creature, Integer> target, IntFunction<Creature> definitions) {
+        source.forEach((id, count) -> {
+            Creature definition = definitions.apply(id);
+            if (definition == null || definition.getCreatureId() != id) throw new IllegalArgumentException("Unknown saved creature ID: " + id);
+            target.put(definition, count);
+        });
+    }
 
     public boolean hasSlapped() {
         return !slapsMap.isEmpty();
@@ -48,7 +94,7 @@ public final class PlayerStatsControl {
         if (count == null) {
             count = 0;
         }
-        count++;
+        count = Math.incrementExact(count);
         map.put(creature, count);
     }
 

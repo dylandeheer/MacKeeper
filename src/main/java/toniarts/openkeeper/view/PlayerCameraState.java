@@ -34,10 +34,14 @@ import com.jme3.scene.Spatial;
 import toniarts.openkeeper.utils.Point;
 import java.util.HashSet;
 import java.util.Set;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.List;
+import java.util.ArrayList;
+import toniarts.openkeeper.view.camera.CameraState;
 import toniarts.openkeeper.Main;
 import toniarts.openkeeper.cinematics.Cinematic;
 import toniarts.openkeeper.game.control.Container;
-import toniarts.openkeeper.game.control.IContainer;
 import toniarts.openkeeper.game.data.ActionPoint;
 import toniarts.openkeeper.game.data.Settings;
 import toniarts.openkeeper.game.data.Settings.Setting;
@@ -63,12 +67,15 @@ public final class PlayerCameraState extends AbstractPauseAwareState implements 
     private AppStateManager stateManager;
     private InputManager inputManager;
 
-    private final IContainer container;
+    private Container container;
     private PlayerCamera camera;
     private Camera storedCamera;
     private final Player player;
 
     private final Set<Integer> keys = new HashSet<>();
+    private final Map<Cinematic, Boolean> transitions = new LinkedHashMap<>();
+    private Thread renderThread;
+    private boolean closing;
 
     // Extra keys
     private static final float ZOOM_MOUSE = 0.08f;
@@ -113,6 +120,8 @@ public final class PlayerCameraState extends AbstractPauseAwareState implements 
     @Override
     public void initialize(final AppStateManager stateManager, final Application app) {
         super.initialize(stateManager, app);
+        renderThread = Thread.currentThread();
+        closing = false;
         this.app = (Main) app;
         this.stateManager = this.app.getStateManager();
         inputManager = this.app.getInputManager();
@@ -215,44 +224,99 @@ public final class PlayerCameraState extends AbstractPauseAwareState implements 
     }
 
     public void doTransition(int sweepFileId, final ActionPoint point) {
-        this.doTransition(sweepFileId, WorldUtils.ActionPointToVector3f(point), null);
+        this.doTransition(sweepFileId, WorldUtils.ActionPointToVector3f(point), false);
     }
 
-    public void doTransition(int sweepFileId, final Vector3f start, final CinematicEventListener listener) {
-        String sweepFile = "EnginePath" + sweepFileId;
+    public void doTransition(int sweepFileId, final Vector3f start, boolean acknowledgeSession) {
+        PlayerState transitionPlayer = stateManager.getState(PlayerState.class);
+        GameClientState transitionSession = stateManager.getState(GameClientState.class);
+        if (closing || transitionPlayer == null || transitionSession == null) return;
+        Cinematic cinematic = new Cinematic(app, "EnginePath" + sweepFileId, start);
+        bindTransition(cinematic, acknowledgeSession, transitionPlayer, transitionSession);
+        transitionPlayer.setTransitionEnd(false);
+        stateManager.attach(cinematic);
+        cinematic.play();
+    }
 
-        // Do cinematic transition
-        Cinematic c = new Cinematic(app, sweepFile, start);
-        c.addListener(new CinematicEventListener() {
-            @Override
-            public void onPlay(CinematicEvent cinematic) {
-                PlayerCameraState.this.cameraStore();
-                stateManager.getState(PlayerState.class).setWideScreen(true);
-                inputManager.setCursorVisible(false);
+    private void bindTransition(Cinematic cinematic, boolean acknowledgeSession,
+            PlayerState transitionPlayer, GameClientState transitionSession) {
+        transitions.put(cinematic, acknowledgeSession);
+        cinematic.addListener(new CinematicEventListener() {
+            @Override public void onPlay(CinematicEvent event) {
+                if (closing || stateManager.getState(PlayerState.class) != transitionPlayer) return;
+                cameraStore();transitionPlayer.setWideScreen(true);inputManager.setCursorVisible(false);
             }
-
-            @Override
-            public void onPause(CinematicEvent cinematic) {
-            }
-
-            @Override
-            public void onStop(CinematicEvent cinematic) {
-                stateManager.getState(PlayerState.class).setTransitionEnd(true);
-                stateManager.getState(PlayerState.class).setWideScreen(false);
-                inputManager.setCursorVisible(true);
-                PlayerCameraState.this.cameraRestore();
+            @Override public void onPause(CinematicEvent event) {}
+            @Override public void onStop(CinematicEvent event) {
+                if (transitions.remove(cinematic) == null || stateManager.getState(PlayerState.class) != transitionPlayer
+                        || stateManager.getState(GameClientState.class) != transitionSession) return;
+                transitionPlayer.setTransitionEnd(true);
+                if (!closing) {
+                    transitionPlayer.setWideScreen(false);inputManager.setCursorVisible(true);cameraRestore();
+                }
+                // A replaced owner must never acknowledge the new session's transition.
+                if (acknowledgeSession) transitionSession.getGameClientService().transitionEnd();
             }
         });
-        if (listener != null) {
-            c.addListener(listener);
+    }
+
+    public CameraState captureState() {
+        requireSnapshotOwner();
+        List<CameraState.Movement> movements = new ArrayList<>();
+        for (int i = 0; i < container.getNumControls(); i++) {
+            movements.add(switch (container.getControl(i)) {
+                case PlayerCameraControl zoom -> zoom.captureState();
+                case PlayerCameraRotateControl rotate -> rotate.captureState();
+                default -> throw new IllegalStateException("Unsupported camera movement control");
+            });
         }
-        // GuiEvent ce = new GuiEvent(app.getNifty(), PlayerState.CINEMATIC_SCREEN_ID);
-        // c.addCinematicEvent(0, ce);
-        // SoundEvent se = new SoundEvent(sweepFile);
-        // c.addCinematicEvent(0, se);
-        stateManager.getState(PlayerState.class).setTransitionEnd(false);
-        stateManager.attach(c);
-        c.play();
+        List<CameraState.Sweep> sweeps = new ArrayList<>();
+        transitions.forEach((cinematic, acknowledge) -> sweeps.add(new CameraState.Sweep(cinematic.captureState(), acknowledge)));
+        return new CameraState(player.getPlayerId(), isEnabled(), CameraState.View.capture(app.getCamera()),
+                storedCamera == null ? null : CameraState.View.capture(storedCamera), CameraState.Frame.capture(app.getListener()),
+                inputManager.isCursorVisible(), stateManager.getState(PlayerState.class).isTransitionEnd(), movements, sweeps);
+    }
+
+    /** Validate and prepare every replacement before retiring any current camera action. */
+    public void restoreState(CameraState state) {
+        requireSnapshotOwner();
+        if (state.playerId() != player.getPlayerId()) throw new IllegalArgumentException("Camera belongs to another player");
+        PlayerState owner = stateManager.getState(PlayerState.class);
+        GameClientState session = stateManager.getState(GameClientState.class);
+        Camera target = app.getCamera();
+        Camera preparedView = state.view().restore(target.getWidth(), target.getHeight());
+        Camera preparedStored = state.storedView() == null ? null : state.storedView().restore(target.getWidth(), target.getHeight());
+        Container preparedControls = new Container();
+        for (var movement : state.movements()) preparedControls.addControl(switch (movement) {
+            case CameraState.Zoom zoom -> PlayerCameraControl.restore(zoom, camera);
+            case CameraState.Rotate rotate -> PlayerCameraRotateControl.restore(rotate, camera);
+        });
+        Map<Cinematic, Boolean> preparedSweeps = new LinkedHashMap<>();
+        for (var sweep : state.sweeps()) preparedSweeps.put(Cinematic.restore(sweep.playback(), app.getAssetManager(),
+                target, app.getListener(), app.getRootNode(), stateManager), sweep.acknowledgeSession());
+
+        // No play/stop hooks while replacing: HUD presentation is restored by its own owner.
+        for (var sweep : List.copyOf(transitions.keySet())) sweep.discard();
+        transitions.clear();container = preparedControls;storedCamera = preparedStored;
+        unregisterInput();keys.clear();super.setEnabled(state.enabled());
+        if (state.enabled()) registerInput();
+        CameraState.View.capture(preparedView).apply(target);
+        state.audioListener().apply(app.getListener());inputManager.setCursorVisible(state.cursorVisible());
+        owner.setTransitionEnd(state.transitionEnd());
+        preparedSweeps.forEach((sweep, acknowledge) -> {
+            bindTransition(sweep, acknowledge, owner, session);stateManager.attach(sweep);
+        });
+    }
+
+    /** A temporary transfer must not retain modifiers whose releases arrived while input was blocked. */
+    public void resetTransferInput() {requireSnapshotOwner();keys.clear();}
+
+    private void requireSnapshotOwner() {
+        if (!isInitialized() || closing || Thread.currentThread() != renderThread
+                || stateManager.getState(PlayerCameraState.class) != this
+                || stateManager.getState(PlayerState.class) == null || stateManager.getState(GameClientState.class) == null) {
+            throw new IllegalStateException("Camera capture and restoration require the active render-thread owner");
+        }
     }
 
     public void zoomToPoint(Vector3f point) {
@@ -265,6 +329,9 @@ public final class PlayerCameraState extends AbstractPauseAwareState implements 
 
     @Override
     public void cleanup() {
+        closing = true;
+        for (Cinematic transition : java.util.List.copyOf(transitions.keySet())) transition.cancel();
+        transitions.clear();
 
         // Unregister controls
         unregisterInput();
@@ -279,7 +346,7 @@ public final class PlayerCameraState extends AbstractPauseAwareState implements 
         // Update the container
         container.update(tpf);
 
-        updateEdgeScroll(tpf);
+        if (acceptsSessionInput()) updateEdgeScroll(tpf);
 
         // Update audio listener position
         app.getListener().setLocation(app.getCamera().getLocation());
@@ -368,9 +435,15 @@ public final class PlayerCameraState extends AbstractPauseAwareState implements 
         inputManager.removeListener(this);
     }
 
+    private boolean acceptsSessionInput() {
+        if (!isInitialized() || !isEnabled() || stateManager.getState(PlayerCameraState.class) != this) return false;
+        GameClientState client = stateManager.getState(GameClientState.class);
+        return client != null && client.isAcceptingInput();
+    }
+
     @Override
     public void onAction(String name, boolean isPressed, float tpf) {
-        if (!isEnabled()) {
+        if (!acceptsSessionInput()) {
             return;
         }
 
@@ -420,7 +493,7 @@ public final class PlayerCameraState extends AbstractPauseAwareState implements 
 
     @Override
     public void onAnalog(String name, float value, float tpf) {
-        if (!isEnabled()) {
+        if (!acceptsSessionInput()) {
             return;
         }
 

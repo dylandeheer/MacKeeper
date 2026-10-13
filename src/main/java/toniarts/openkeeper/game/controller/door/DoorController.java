@@ -40,6 +40,16 @@ public final class DoorController extends EntityController implements IDoorContr
         this.door = door;
     }
 
+    public short getDefinitionId() { return door.getDoorId(); }
+
+    public static DoorController restoreBinding(com.simsilica.es.EntityId id, short definition,
+            toniarts.openkeeper.game.save.GameEntityData data, toniarts.openkeeper.tools.convert.map.IKwdFile kwd,
+            IObjectsController objects, IMapController map) {
+        var door = kwd.getDoorById(definition);
+        if (!data.wasAllocated(id) || door == null) throw new IllegalArgumentException("Missing door definition/allocation");
+        return new DoorController(id, data, door, objects, map);
+    }
+
     @Override
     public boolean isDestroyed() {
         Health health = entityData.getComponent(entityId, Health.class);

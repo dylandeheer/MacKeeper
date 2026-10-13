@@ -16,7 +16,6 @@
  */
 package toniarts.openkeeper.game.map;
 
-import com.jme3.math.FastMath;
 import com.simsilica.es.EntityComponent;
 import com.simsilica.es.EntityData;
 import com.simsilica.es.EntityId;
@@ -45,11 +44,11 @@ public final class MapTileController extends AbstractMapTileInformation implemen
         this.entityData = entityData;
     }
 
-    public static void setAttributesFromTerrain(EntityData entityData, IMapTileInformation mapTile, Terrain terrain) {
-        setAttributesFromTerrain(entityData, mapTile.getEntityId(), entityData.getComponent(mapTile.getEntityId(), MapTile.class), terrain);
+    public static void setAttributesFromTerrain(EntityData entityData, IMapTileInformation mapTile, Terrain terrain, java.util.random.RandomGenerator random) {
+        setAttributesFromTerrain(entityData, mapTile.getEntityId(), entityData.getComponent(mapTile.getEntityId(), MapTile.class), terrain, random);
     }
 
-    protected static void setAttributesFromTerrain(EntityData entityData, EntityId entity, MapTile mapTileComponent, Terrain terrain) {
+    protected static void setAttributesFromTerrain(EntityData entityData, EntityId entity, MapTile mapTileComponent, Terrain terrain, java.util.random.RandomGenerator random) {
 
         // Health
         Health health = new Health(terrain.getStartingHealth(), terrain.getMaxHealth());
@@ -63,7 +62,7 @@ public final class MapTileController extends AbstractMapTileInformation implemen
         // Randomize the texture index, the terrain can change for sure but the changed types have no random textures
         // But for the principle, let it be here
         if (terrain.getFlags().contains(Terrain.TerrainFlag.RANDOM_TEXTURE)) {
-            mapTileComponent.randomTextureIndex = FastMath.nextRandomInt(0, terrain.getTextureFrames() - 1);
+            mapTileComponent.randomTextureIndex = random.nextInt(terrain.getTextureFrames());
         }
 
         entityData.setComponents(entity, health, gold, mana, mapTileComponent);

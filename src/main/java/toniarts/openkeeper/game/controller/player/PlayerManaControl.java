@@ -35,10 +35,14 @@ public final class PlayerManaControl {
 
     public PlayerManaControl(Keeper keeper,
             Map<Variable.MiscVariable.MiscType, Variable.MiscVariable> gameSettings) {
-        this.keeper = keeper;
-
+        this(keeper);
         this.keeper.setMaxMana((int) gameSettings.get(MiscType.MAXIMUM_MANA_THRESHOLD).getValue());
     }
+
+    private PlayerManaControl(Keeper keeper) { this.keeper = keeper; }
+
+    /** Keep the restored limit instead of replacing it with the map default. */
+    public static PlayerManaControl restoreState(Keeper keeper) { return new PlayerManaControl(keeper); }
 
     /**
      * Updates gain and loose and adds/removes mana accordingly to the player
@@ -47,6 +51,7 @@ public final class PlayerManaControl {
      * @param loose mana loose
      */
     public void updateMana(int gain, int loose) {
+        if (keeper.isDestroyed()) { gain = 0; loose = 0; }
 
         keeper.setManaGain(gain);
         keeper.setManaLoose(loose);

@@ -61,10 +61,10 @@ public abstract class DKFolderSelector extends javax.swing.JFrame {
         statusIcon = new javax.swing.JLabel();
 
         setDefaultCloseOperation(javax.swing.WindowConstants.DISPOSE_ON_CLOSE);
-        setTitle("OpenKeeper");
+        setTitle("MacKeeper — Choose game files");
         setResizable(false);
 
-        jLabel1.setText("<html>OpenKeeper needs the original Dungeon Keeper II files in order to work. Please select the Dungeon Keeper II installation folder to continue.</html>");
+        jLabel1.setText("<html>MacKeeper uses the files from your own copy of Dungeon Keeper II.<br>Select its installation folder or downloaded Steam depot. The original files will not be changed.</html>");
 
         selectFolderButton.setText("Select Dungeon Keeper II installation folder...");
         selectFolderButton.addActionListener(new java.awt.event.ActionListener() {
@@ -142,7 +142,7 @@ public abstract class DKFolderSelector extends javax.swing.JFrame {
             } else {
                 continueButton.setEnabled(false);
                 icon = new ImageIcon(Main.class.getResource("/Interface/Images/Action-button-stop-icon.png"));
-                statusIcon.setToolTipText("The selected folder is invalid!");
+                statusIcon.setToolTipText("Missing: " + String.join(", ", GameData.missingFiles(fc.getSelectedFile().toPath())));
             }
             statusIcon.setIcon(icon);
             statusIcon.setVisible(true);

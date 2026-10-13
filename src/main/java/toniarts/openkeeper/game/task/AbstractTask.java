@@ -41,7 +41,8 @@ public abstract class AbstractTask implements Task {
 
     private static final Logger logger = System.getLogger(AbstractTask.class.getName());
     
-    private static final AtomicLong ID_GENENERATOR = new AtomicLong();
+    protected final TaskIdentityAllocator taskIds;
+    private Map<com.simsilica.es.EntityId, Float> pendingAssignees;
 
     private final long id;
     private final Instant taskCreated;
@@ -49,11 +50,45 @@ public abstract class AbstractTask implements Task {
     protected final IMapController mapController;
     private final Map<ICreatureController, Float> assignees = new HashMap<>();
 
-    public AbstractTask(final INavigationService navigationService, final IMapController mapController) {
-        this.taskCreated = Instant.now();
-        this.navigationService = navigationService;
-        this.mapController = mapController;
-        this.id = ID_GENENERATOR.getAndIncrement();
+    public AbstractTask(TaskIdentityAllocator taskIds, final INavigationService navigationService, final IMapController mapController) {
+        this(taskIds, taskIds.allocate(), navigationService, mapController);
+    }
+
+    private AbstractTask(TaskIdentityAllocator taskIds, TaskIdentityAllocator.Identity identity,
+            INavigationService navigationService, IMapController mapController) {
+        this.taskIds = taskIds;this.id = identity.id();this.taskCreated = identity.created();
+        this.navigationService = navigationService;this.mapController = mapController;
+    }
+
+    protected AbstractTask(TaskIdentityAllocator taskIds, toniarts.openkeeper.game.data.TaskBaseState saved,
+            INavigationService navigationService, IMapController mapController) {
+        this(taskIds, saved.identity(), navigationService, mapController);
+        taskIds.validateRestored(saved.identity());pendingAssignees = saved.assignees();
+    }
+
+    public toniarts.openkeeper.game.data.TaskBaseState captureBaseState() {
+        requireBound();
+        var values = new java.util.TreeMap<com.simsilica.es.EntityId, Float>();
+        assignees.forEach((creature, duration) -> {
+            if (values.put(creature.getEntityId(), duration) != null) throw new IllegalStateException("Aliased task assignee");
+        });
+        return new toniarts.openkeeper.game.data.TaskBaseState(new TaskIdentityAllocator.Identity(id, taskCreated), values);
+    }
+
+    /** Link task shells after creature controllers exist, without assign() callbacks or duration reset. */
+    public void bindRestoredAssignees(java.util.function.Function<com.simsilica.es.EntityId, ICreatureController> creatures) {
+        if (pendingAssignees == null) throw new IllegalStateException("Task is not awaiting assignee binding");
+        var bound = new HashMap<ICreatureController, Float>();
+        pendingAssignees.forEach((id, duration) -> {
+            var creature = creatures.apply(id);
+            if (creature == null || !id.equals(creature.getEntityId()) || bound.put(creature, duration) != null)
+                throw new IllegalArgumentException("Missing/mismatched task assignee");
+        });
+        assignees.putAll(bound);pendingAssignees = null;
+    }
+
+    private void requireBound() {
+        if (pendingAssignees != null) throw new IllegalStateException("Task assignees are not bound");
     }
 
     @Override
@@ -68,6 +103,7 @@ public abstract class AbstractTask implements Task {
      * @return the execution duration
      */
     protected float getExecutionDuration(ICreatureController creature) {
+        requireBound();
         return assignees.get(creature);
     }
 
@@ -78,6 +114,7 @@ public abstract class AbstractTask implements Task {
      * @param duration the execution duration to store
      */
     protected void setExecutionDuration(ICreatureController creature, float duration) {
+        requireBound();
         assignees.put(creature, duration);
     }
 
@@ -93,6 +130,7 @@ public abstract class AbstractTask implements Task {
 
     @Override
     public void assign(ICreatureController creature, boolean setToCreature) {
+        requireBound();
         if (assignees.size() == getMaxAllowedNumberOfAsignees()) {
             logger.log(Level.WARNING, "Task already has the maximum number of assignees!");
         }
@@ -104,11 +142,13 @@ public abstract class AbstractTask implements Task {
 
     @Override
     public void unassign(ICreatureController creature) {
+        requireBound();
         assignees.remove(creature);
     }
 
     @Override
     public int getAssigneeCount() {
+        requireBound();
         return assignees.size();
     }
 
@@ -128,7 +168,8 @@ public abstract class AbstractTask implements Task {
     }
 
     public int compareTo(AbstractTask t) {
-        return getTaskCreated().compareTo(t.getTaskCreated());
+        int order = getTaskCreated().compareTo(t.getTaskCreated());
+        return order != 0 ? order : Long.compare(getId(), t.getId());
     }
 
     @Override

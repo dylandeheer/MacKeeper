@@ -29,6 +29,7 @@ import toniarts.openkeeper.game.controller.room.AbstractRoomController.ObjectTyp
 import toniarts.openkeeper.game.controller.room.IRoomController;
 import toniarts.openkeeper.game.data.Keeper;
 import toniarts.openkeeper.game.listener.MapListener;
+import toniarts.openkeeper.game.listener.DungeonBreachListener;
 import toniarts.openkeeper.game.listener.RoomListener;
 import toniarts.openkeeper.game.map.IMapData;
 import toniarts.openkeeper.game.map.IMapInformation;
@@ -40,6 +41,8 @@ import toniarts.openkeeper.game.map.MapTileController;
 import toniarts.openkeeper.tools.convert.map.IKwdFile;
 import toniarts.openkeeper.tools.convert.map.Player;
 import toniarts.openkeeper.tools.convert.map.Terrain;
+import toniarts.openkeeper.tools.convert.map.Room;
+import toniarts.openkeeper.utils.WorldUtils;
 import toniarts.openkeeper.tools.convert.map.Variable;
 import toniarts.openkeeper.utils.Point;
 
@@ -68,6 +71,7 @@ public final class MapController extends Container implements IMapController {
     private final ILevelInfo levelInfo;
 
     private final Map<EntityId, IRoomController> roomControllers = new HashMap<>();
+    private final SafeArrayList<DungeonBreachListener> breachListeners = new SafeArrayList<>(DungeonBreachListener.class);
     private final SafeArrayList<MapListener> mapListeners = new SafeArrayList<>(MapListener.class);
     private final Map<Short, SafeArrayList<RoomListener>> roomListeners = new HashMap<>();
 
@@ -85,17 +89,99 @@ public final class MapController extends Container implements IMapController {
             Map<Variable.MiscVariable.MiscType, Variable.MiscVariable> gameSettings,
             IGameTimer gameTimer, EntityData entityData, ILevelInfo levelInfo) {
 
+        this(kwdFile, objectsController, gameSettings, gameTimer, entityData, levelInfo,
+                new MapData(kwdFile, entityData, levelInfo.getPlayers().values(), objectsController.getRandom()));
+        loadRooms();
+    }
+
+    private MapController(IKwdFile kwdFile, IObjectsController objectsController,
+            Map<Variable.MiscVariable.MiscType, Variable.MiscVariable> gameSettings,
+            IGameTimer gameTimer, EntityData entityData, ILevelInfo levelInfo, IMapData mapData) {
         this.kwdFile = kwdFile;
         this.objectsController = objectsController;
-        this.mapData = new MapData(kwdFile, entityData, levelInfo.getPlayers().values());
+        this.mapData = mapData;
         this.gameSettings = gameSettings;
         this.gameTimer = gameTimer;
         this.entityData = entityData;
-        this.mapInformation = new MapInformation(mapData, kwdFile, levelInfo.getPlayers().values());
+        this.mapInformation = new MapInformation<>(mapData, kwdFile, levelInfo.getPlayers().values(), roomControllers::get);
         this.levelInfo = levelInfo;
 
-        // Load rooms
-        loadRooms();
+
+    }
+
+    public java.util.List<toniarts.openkeeper.game.data.RoomState> captureRoomStates() {
+        return roomControllers.values().stream().sorted(java.util.Comparator.comparing(IRoomController::getEntityId))
+                .map(room -> ((toniarts.openkeeper.game.controller.room.AbstractRoomController) room).captureState()).toList();
+    }
+
+    /** Staged map and room bindings. Container controls/listeners are bound separately. */
+    public static MapController restore(IKwdFile definition, IObjectsController objects,
+            Map<Variable.MiscVariable.MiscType, Variable.MiscVariable> settings, IGameTimer timer,
+            EntityData data, ILevelInfo level, java.util.List<toniarts.openkeeper.game.data.RoomState> states) {
+        var map = MapData.restore(definition, data);
+        MapController result = new MapController(definition, objects, settings, timer, data, level, map);
+        java.util.Set<EntityId> roomIds = new java.util.HashSet<>();
+        java.util.Set<Point> coordinates = new java.util.HashSet<>();
+        for (var state : states) {
+            if (!roomIds.add(state.entityId())) throw new IllegalArgumentException("Duplicate saved room");
+            for (Point point : state.coordinates()) {
+                var tile = map.getTile(point);
+                if (tile == null || !state.entityId().equals(tile.getRoomId()) || !coordinates.add(point)) {
+                    throw new IllegalArgumentException("Saved room/tile relationship differs");
+                }
+            }
+        }
+        if (!roomIds.equals(data.findEntities(null, toniarts.openkeeper.game.component.RoomComponent.class))) {
+            throw new IllegalArgumentException("Saved room inventory differs");
+        }
+        for (var tile : map) {
+            if (tile.getRoomId() != null && (!roomIds.contains(tile.getRoomId()) || !coordinates.contains(tile.getLocation()))) {
+                throw new IllegalArgumentException("Unbound saved room tile");
+            }
+        }
+        for (var state : states) {
+            var room = RoomControllerFactory.restoreRoom(data, definition, state, objects, settings, timer);
+            result.roomControllers.put(room.getEntityId(), room);
+        }
+        java.util.Set<EntityId> storageIds = new java.util.HashSet<>(), members = new java.util.HashSet<>();
+        for (var state : states) for (var storage : state.storage().values()) {
+            if (!storageIds.add(storage.entityId())) throw new IllegalArgumentException("Storage belongs to multiple rooms");
+            for (var contents : storage.objectsByCoordinate().values()) for (var id : contents) {
+                if (!members.add(id)) throw new IllegalArgumentException("Entity stored in multiple locations");
+            }
+        }
+        for (var id : data.findEntities(null, toniarts.openkeeper.game.component.Storage.class)) {
+            var storage = data.getComponent(id, toniarts.openkeeper.game.component.Storage.class);
+            if (roomIds.contains(storage.room) && !storageIds.contains(id)) throw new IllegalArgumentException("Unbound saved storage");
+        }
+        for (var id : data.findEntities(null, toniarts.openkeeper.game.component.Stored.class)) {
+            var stored = data.getComponent(id, toniarts.openkeeper.game.component.Stored.class);
+            if (roomIds.contains(stored.room)
+                    && toniarts.openkeeper.game.controller.room.storage.AbstractRoomObjectControl.isIndexedStorage(stored.objectType)
+                    && !members.contains(id)) throw new IllegalArgumentException("Unbound saved stored item");
+        }
+        return result;
+    }
+
+    public java.util.List<FlashTileControl.State> captureFlashControls() {
+        java.util.List<FlashTileControl.State> result = new ArrayList<>();
+        for (var control : controls.getArray()) {
+            if (!(control instanceof FlashTileControl flash)) throw new IllegalStateException("Unregistered map control: " + control.getClass().getName());
+            result.add(flash.captureState());
+        }
+        return java.util.List.copyOf(result);
+    }
+
+    /** Bind deadlines only; saved tile flags already reside in the entity store. */
+    public void restoreFlashControls(java.util.List<FlashTileControl.State> states) {
+        if (!controls.isEmpty()) throw new IllegalStateException("Map already has controls");
+        if (states.size() > 65_536) throw new IllegalArgumentException("Too many map controls");
+        var restored = new java.util.ArrayList<FlashTileControl>();
+        for (var state : states) {
+            for (Point point : state.points()) if (mapData.getTile(point) == null) throw new IllegalArgumentException("Flash tile outside map");
+            restored.add(FlashTileControl.restoreState(state));
+        }
+        restored.forEach(this::addControl);
     }
 
     private void loadRooms() {
@@ -162,6 +248,9 @@ public final class MapController extends Container implements IMapController {
     private void findRoom(Point p, RoomInstance roomInstance) {
         IMapTileController tile = getMapData().getTile(p);
 
+        if (tile == null || tile.getOwnerId() != roomInstance.getOwnerId()) {
+            return;
+        }
         // Get the terrain
         Terrain terrain = kwdFile.getTerrain(tile.getTerrainId());
         if (!terrain.getFlags().contains(Terrain.TerrainFlag.ROOM)) {
@@ -194,6 +283,16 @@ public final class MapController extends Container implements IMapController {
     @Override
     public IMapData getMapData() {
         return mapData;
+    }
+
+    @Override
+    public void addBreachListener(DungeonBreachListener listener) {
+        if (!breachListeners.contains(listener)) breachListeners.add(listener);
+    }
+
+    @Override
+    public void removeBreachListener(DungeonBreachListener listener) {
+        breachListeners.remove(listener);
     }
 
     @Override
@@ -535,6 +634,16 @@ public final class MapController extends Container implements IMapController {
 //                        WorldUtils.pointToVector3f(point).addLocal(0, MapViewController.FLOOR_HEIGHT, 0),
 //                        terrain.getDestroyedEffectId(), false);
 //            }
+            short previousOwner = tile.getOwnerId();
+            boolean breached = previousOwner != playerId
+                    && terrain.getFlags().contains(Terrain.TerrainFlag.SOLID)
+                    && terrain.getFlags().contains(Terrain.TerrainFlag.OWNABLE)
+                    && terrain.getTerrainId() != terrain.getDestroyedTypeTerrainId();
+            if (breached) {
+                for (DungeonBreachListener listener : breachListeners.getArray()) {
+                    listener.onDungeonBreached(previousOwner, playerId);
+                }
+            }
             changeTerrain(tile, terrain.getDestroyedTypeTerrainId());
 
 //            updateRoomWalls(tile);
@@ -642,35 +751,38 @@ public final class MapController extends Container implements IMapController {
             IMapTileController roomTile = getMapData().getTile(p);
             if (applyDamage(roomTile, damagePerTile)) {
 
-                // If one of the tiles runs out (everyone should run out of the same time, unless a new tile has recently being added..)
-                for (Point p2 : roomTiles) {
-                    roomTile = getMapData().getTile(p2);
-                    roomTile.setOwnerId(playerId); // Claimed!
-                    applyHealing(roomTile, tile.getMaxHealth());
-
-//                    effectManager.load(worldNode,
-//                            WorldUtils.pointToVector3f(point).addLocal(0, MapViewController.FLOOR_HEIGHT, 0),
-//                            tile.getTerrain().getMaxHealthEffectId(), false);
-//
-//                    // FIXME ROOM_CLAIM_ID is realy claim effect?
-//                    effectManager.load(worldNode,
-//                            WorldUtils.pointToVector3f(p2).addLocal(0, MapViewController.FLOOR_HEIGHT, 0),
-//                            room.getRoom().getEffects().get(EffectManagerState.ROOM_CLAIM_ID), false);
-                    // TODO: Claimed room wall tiles lose the claiming I think?
-                }
-
-                // Notify
-                notifyTileChange(roomTiles);
-                room.captured(playerId);
-                room.setHealth(room.getMaxHealth());
-                notifyOnCapturedByEnemy(owner, room);
-                notifyOnCaptured(playerId, room);
+                changeRoomOwner(point, playerId);
                 return;
             }
             currentHealth += roomTile.getHealth();
         }
 
         room.setHealth(currentHealth);
+    }
+
+    @Override
+    public boolean changeRoomOwner(Point point, short playerId) {
+        // Capture and keeper actions share the same lock as gold storage changes.
+        synchronized (GameWorldController.GOLD_LOCK) {
+            IRoomController room = getRoomControllerByCoordinates(point);
+            if (room == null || room.isDestroyed() || levelInfo.getPlayer(playerId) == null
+                    || room.getOwnerId() == playerId) {
+                return false;
+            }
+            short previousOwner = room.getOwnerId();
+            List<Point> coordinates = room.getRoomInstance().getCoordinates();
+            for (Point coordinate : coordinates) {
+                IMapTileController tile = mapData.getTile(coordinate);
+                tile.setOwnerId(playerId);
+                tile.setHealth(tile.getMaxHealth());
+            }
+            room.captured(playerId);
+            room.setHealth(room.getMaxHealth());
+            notifyOnCapturedByEnemy(previousOwner, room);
+            notifyOnCaptured(playerId, room);
+            notifyTileChange(coordinates);
+            return true;
+        }
     }
 
     public int mineGold(IMapTileController tile, int amount) {
@@ -692,7 +804,7 @@ public final class MapController extends Container implements IMapController {
     private void changeTerrain(IMapTileController tile, short terrainId) {
         tile.setTerrainId(terrainId);
         Terrain terrain = getTerrain(tile);
-        MapTileController.setAttributesFromTerrain(entityData, tile, terrain);
+        MapTileController.setAttributesFromTerrain(entityData, tile, terrain, objectsController.getRandom());
 
         // If the terrain is not taggable anymore, reset the tagging data
         if (!terrain.getFlags().contains(Terrain.TerrainFlag.TAGGABLE)) {
@@ -719,6 +831,58 @@ public final class MapController extends Container implements IMapController {
         }
 
         notifyTileChange(tile.getLocation());
+    }
+
+    @Override
+    public boolean collapseHeroGate(Point point) {
+        synchronized (GameWorldController.GOLD_LOCK) {
+            IRoomController room = getCollapsibleHeroGate(point);
+            if (room == null || room.isDestroyed()) return false;
+            room.destroy();
+            room.setHealth(0);
+            for (Point coordinate : room.getRoomInstance().getCoordinates()) {
+                mapData.getTile(coordinate).setHealth(0);
+            }
+            notifyTileChange(room.getRoomInstance().getCoordinates());
+            return true;
+        }
+    }
+
+    @Override
+    public boolean destroyDungeonHeart(Point point) {
+        synchronized (GameWorldController.GOLD_LOCK) {
+            IRoomController room = getRoomControllerByCoordinates(point);
+            if (room == null || !room.isDungeonHeart() || room.isDestroyed()) return false;
+            room.destroy();
+            room.setHealth(0);
+            for (Point coordinate : room.getRoomInstance().getCoordinates()) mapData.getTile(coordinate).setHealth(0);
+            notifyOnSold(room.getOwnerId(), room);
+            notifyTileChange(room.getRoomInstance().getCoordinates());
+            return true;
+        }
+    }
+
+    private IRoomController getCollapsibleHeroGate(Point point) {
+        IRoomController room = getRoomControllerByCoordinates(point);
+        if (room != null) return room.getRoom().isHeroGate() ? room : null;
+        IMapTileController tile = mapData.getTile(point);
+        if (tile == null || !getTerrain(tile).getFlags().contains(Terrain.TerrainFlag.SOLID)) return null;
+
+        // Level 7 targets the wall immediately beside its southern 3x1 gate.
+        // Accept a unique adjacent wall gate; never guess between multiple gates.
+        IRoomController candidate = null;
+        for (Point neighbor : WorldUtils.getSurroundingTiles(mapData, point, false)) {
+            IRoomController adjacent = getRoomControllerByCoordinates(neighbor);
+            if (adjacent == null || adjacent.getRoom().getTileConstruction() != Room.TileConstruction.HERO_GATE_3_BY_1) continue;
+            if (candidate != null && candidate != adjacent) return null;
+            candidate = adjacent;
+        }
+        return candidate;
+    }
+
+    @Override
+    public IRoomController getRoomInformation(EntityId entityId) {
+        return roomControllers.get(entityId);
     }
 
     private float getLevelVariable(Variable.MiscVariable.MiscType variable) {

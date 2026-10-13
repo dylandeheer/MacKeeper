@@ -107,7 +107,8 @@ public final class MainMenuState extends AbstractAppState {
      * multiplayer.
      */
     private IKwdFile debriefingLevel;
-    private boolean debriefingIsCampaign;
+    private CampaignLevel debriefingCampaignLevel;
+    private GameResult debriefingResult;
 
     /**
      * The campaign level that was just won and for which the level cutscene (mentor speech + movie)
@@ -122,6 +123,8 @@ public final class MainMenuState extends AbstractAppState {
     private EntityData mainMenuEntityData;
     private MainMenuEntityViewState mainMenuEntityViewState;
     private GameController gameController;
+    private boolean retired;
+    private SingleBarLoadingState menuLoader;
     private final MainMenuConnectionErrorListener connectionErrorListener = new MainMenuConnectionErrorListener();
 
     /**
@@ -155,56 +158,46 @@ public final class MainMenuState extends AbstractAppState {
      */
     private void loadMenuScene(final SingleBarLoadingState loadingScreen, final AssetManager assetManager,
             final Main app) throws IOException {
-        // On the direct startup path this runs from the constructor, before the
-        // state is attached and initialize() sets this field, yet refreshCampaignMap()
-        // below already needs it
-        this.assetManager = assetManager;
-
-        // Load the 3D Front end
-        frontEndKwd = KwdFile.load("FrontEnd3DLevel");
-        if (loadingScreen != null) {
-            loadingScreen.setProgress(0.25f);
-        }
-        AssetUtils.prewarmAssets(frontEndKwd, assetManager, app);
-
-        // Load 3D Front end sound
-        SoundsLoader.load(frontEndKwd.getGameLevel().getSoundCategory(), false);
-
-        // Attach the 3D Front end
-        mainMenuEntityData = new DefaultEntityData();
-        menuNode = new Node("Main menu");
-        gameController = new GameController(frontEndKwd, Collections.emptyList(), mainMenuEntityData, frontEndKwd.getVariables(), new MainMenuPlayerService());
-        gameController.createNewGame();
-
-        // Create the actual map
-        // DKII applies different decoration rules to the front end than to playable level maps.
-        // Front-end effects are handled separately, so do not generate automatic wall torches here.
-        MapViewController mapLoader = new MapViewController(assetManager, frontEndKwd,
-                gameController.getGameWorldController().getMapController(), Player.KEEPER1_ID, false) {
-
-            @Override
-            protected void updateProgress(float progress) {
-                if (loadingScreen != null) {
-                    loadingScreen.setProgress(0.25f + progress * 0.75f);
+        // Build privately: cleanup must never stop a controller that the worker is still using.
+        IKwdFile definition = KwdFile.load("FrontEnd3DLevel");
+        if (loadingScreen != null) loadingScreen.setProgress(0.25f);
+        AssetUtils.prewarmAssets(definition, assetManager, app);
+        SoundsLoader.load(definition.getGameLevel().getSoundCategory(), false);
+        EntityData data = new DefaultEntityData();
+        Node scene = new Node("Main menu");
+        GameController controller = new GameController(definition, Collections.emptyList(), data,
+                definition.getVariables(), new MainMenuPlayerService());
+        boolean published = false;
+        try {
+            controller.createNewGame();
+            MapViewController mapLoader = new MapViewController(assetManager, definition,
+                    controller.getGameWorldController().getMapController(), Player.KEEPER1_ID, false) {
+                @Override protected void updateProgress(float progress) {
+                    if (loadingScreen != null) loadingScreen.setProgress(0.25f + progress * 0.75f);
                 }
+            };
+            scene.attachChild(mapLoader.load(assetManager, definition));
+            refreshCampaignMap(scene, assetManager);
+            MainMenuEntityViewState view = new MainMenuEntityViewState(definition, assetManager, data,
+                    Player.KEEPER1_ID, new TextParserService(controller.getGameWorldController().getMapController(), null), scene);
+            view.setEnabled(false);
+            MapSelector selector = new MapSelector();
+            synchronized (this) {
+                if (retired) return;
+                this.assetManager = assetManager;
+                frontEndKwd = definition;
+                mainMenuEntityData = data;
+                menuNode = scene;
+                gameController = controller;
+                mainMenuEntityViewState = view;
+                mapSelector = selector;
+                app.getStateManager().attach(view);
+                published = true;
             }
-
-        };
-        menuNode.attachChild(mapLoader.load(assetManager, frontEndKwd));
-
-        // Reflect current campaign progress (playable levels / arrow wiring) as soon
-        // as the menu scene exists, not only on first visit to selectCampaignLevel.
-        refreshCampaignMap();
-
-        if (loadingScreen != null) {
-            loadingScreen.setProgress(1.0f);
+            if (loadingScreen != null) loadingScreen.setProgress(1.0f);
+        } finally {
+            if (!published) controller.stop();
         }
-        mainMenuEntityViewState = new MainMenuEntityViewState(frontEndKwd, assetManager, mainMenuEntityData, Player.KEEPER1_ID, new TextParserService(gameController.getGameWorldController().getMapController(), null), menuNode);
-        mainMenuEntityViewState.setEnabled(false);
-        app.getStateManager().attach(mainMenuEntityViewState);
-
-        // Init the skirmish and multiplayer maps selector
-        mapSelector = new MapSelector();
     }
 
     @Override
@@ -254,6 +247,12 @@ public final class MainMenuState extends AbstractAppState {
 
     @Override
     public void cleanup() {
+        // Fence publication first; joining the loader below must happen outside this lock.
+        synchronized (this) { retired = true; }
+        if (menuLoader != null) {
+            stateManager.detach(menuLoader);
+            menuLoader = null;
+        }
         if (mainMenuEntityViewState != null) {
             stateManager.detach(mainMenuEntityViewState);
             mainMenuEntityViewState = null;
@@ -282,6 +281,7 @@ public final class MainMenuState extends AbstractAppState {
      * Initialize the start menu, sets the menu scene in place & sets the controls and start screen
      */
     private void initializeMainMenu() {
+        if (retired || !isEnabled() || menuNode == null || mainMenuEntityViewState == null) return;
 
         // Set the processors & scene
         mainMenuEntityViewState.setEnabled(true);
@@ -291,6 +291,7 @@ public final class MainMenuState extends AbstractAppState {
         boolean debriefing = pendingDebriefing;
 
         app.enqueue(() -> {
+            if (retired || !isEnabled()) return null;
 
             // Start screen, do this here since another state may have just changed to empty screen -> have to do it like this, delayed
             if (debriefing) {
@@ -324,7 +325,7 @@ public final class MainMenuState extends AbstractAppState {
     public void setEnabled(boolean enabled) {
         super.setEnabled(enabled);
 
-        if (!isInitialized()) {
+        if (!isInitialized() || retired) {
             return;
         }
 
@@ -334,6 +335,7 @@ public final class MainMenuState extends AbstractAppState {
         if (enabled) {
 
             // If this is the first time, we might have to load the menu
+            if (menuLoader != null) return;
             if (menuNode == null) {
 
                 // Set up the loading screen
@@ -350,9 +352,11 @@ public final class MainMenuState extends AbstractAppState {
 
                     @Override
                     public void onLoadComplete() {
+                        menuLoader = null;
                         initializeMainMenu();
                     }
                 };
+                menuLoader = loader;
                 stateManager.attach(loader);
             } else {
                 initializeMainMenu();
@@ -362,7 +366,7 @@ public final class MainMenuState extends AbstractAppState {
             // Save the camera position so that we can restore it (e.g. for the debriefing screen) when re-enabling the menu
             storedCamera = app.getCamera().clone();
 
-            stateManager.getState(MainMenuEntityViewState.class).setEnabled(false);
+            if (mainMenuEntityViewState != null) mainMenuEntityViewState.setEnabled(false);
             if (menuNode != null && rootNode != null) {
 
                 // Detach our start menu
@@ -586,11 +590,15 @@ public final class MainMenuState extends AbstractAppState {
      * based on the current campaign progression stored in Settings.
      */
     protected void refreshCampaignMap() {
-        if (menuNode != null) {
-            menuNode.depthFirstTraversal(spatial -> {
+        refreshCampaignMap(menuNode, assetManager);
+    }
+
+    private static void refreshCampaignMap(Node scene, AssetManager assets) {
+        if (scene != null) {
+            scene.depthFirstTraversal(spatial -> {
                 if ("Map".equals(spatial.getName()) && spatial instanceof com.jme3.scene.Node mapNode) {
                     HeroGateFrontEndConstructor.applyCampaignProgression(mapNode);
-                    HeroGateFrontEndConstructor.applyProgressTextures(mapNode, assetManager);
+                    HeroGateFrontEndConstructor.applyProgressTextures(mapNode, assets);
                 }
             });
         }
@@ -666,19 +674,16 @@ public final class MainMenuState extends AbstractAppState {
      * @param result the game result
      * @param level the level that was just played; may be {@code null} to fall back to
      * {@link #selectedLevel}
-     * @param campaign whether the played level was a campaign level
+     * @param campaignLevel the played campaign identity, or null for other modes
      */
-    public void doDebriefing(GameResult result, IKwdFile level, boolean campaign) {
+    public void doDebriefing(GameResult result, IKwdFile level, CampaignLevel campaignLevel) {
         debriefingLevel = level != null ? level : (selectedLevel != null ? selectedLevel.getKwdMap().load() : null);
-        debriefingIsCampaign = campaign || selectedLevel instanceof CampaignLevel;
+        debriefingCampaignLevel = campaignLevel;
+        debriefingResult = result;
         pendingDebriefing = result != null;
 
-        // FIXME: GameResult has no win/lose data yet (see showDebriefing()), so for now every
-        // completed campaign level is treated as won, same as the debriefing screen does
-        boolean levelWon = true;
-        pendingCutsceneLevel = (pendingDebriefing && debriefingIsCampaign && levelWon
-                && selectedLevel instanceof CampaignLevel lvl && lvl.getType() == CampaignLevel.LevelType.Level)
-                ? lvl : null;
+        pendingCutsceneLevel = (pendingDebriefing && result.isWon() && campaignLevel != null
+                && campaignLevel.getType() == CampaignLevel.LevelType.Level) ? campaignLevel : null;
 
         setEnabled(true);
 
@@ -715,15 +720,19 @@ public final class MainMenuState extends AbstractAppState {
      * @return {@code true} if it is a campaign level debriefing
      */
     public boolean isDebriefingCampaign() {
-        return debriefingIsCampaign;
+        return debriefingCampaignLevel != null;
     }
 
-    /**
-     * Clear the level used for the debriefing screen, called when leaving the debriefing
-     */
+    public GameResult getDebriefingResult() { return debriefingResult; }
+
+    public CampaignLevel getDebriefingCampaignLevel() { return debriefingCampaignLevel; }
+
+    /** Clear the retained result and level when leaving the debriefing. */
     void clearDebriefing() {
         debriefingLevel = null;
-        debriefingIsCampaign = false;
+        debriefingCampaignLevel = null;
+        debriefingResult = null;
+        pendingCutsceneLevel = null;
     }
 
     /**
@@ -811,6 +820,11 @@ public final class MainMenuState extends AbstractAppState {
         }
 
         @Override
+        public void showObjective(int objectiveId, short playerId) {
+            throw new UnsupportedOperationException("Objectives are unavailable in the main menu.");
+        }
+
+        @Override
         public void zoomViewToPoint(Vector3f point, short playerId) {
             throw new UnsupportedOperationException("Not supported yet.");
         }
@@ -836,7 +850,7 @@ public final class MainMenuState extends AbstractAppState {
         }
 
         @Override
-        public void endGame(boolean win, short playerId) {
+        public void endGame(boolean win, short playerId, double elapsedSeconds) {
             throw new UnsupportedOperationException("Not supported yet.");
         }
 

@@ -178,7 +178,8 @@ public final class HeroGateFrontEndConstructor extends RoomConstructor {
             CampaignLevel secretLevel = new CampaignLevel(CampaignLevel.LevelType.Secret, x);
             Settings.SecretLevelStatus status = Settings.getInstance().getSecredLevelStatus(secretLevel);
             if (x == 5 || status == Settings.SecretLevelStatus.DISCOVERED
-                    || status == Settings.SecretLevelStatus.IN_PROGRESS) {
+                    || status == Settings.SecretLevelStatus.IN_PROGRESS
+                    || status == Settings.SecretLevelStatus.COMPLETED) {
                 attachAndCreateLevel(map, CampaignLevel.LevelType.Secret, x, null, assetManager, start, p);
             }
         }

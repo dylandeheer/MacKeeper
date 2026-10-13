@@ -50,7 +50,7 @@ public abstract class AbstractRoomObjectControl<V> implements IRoomObjectControl
     protected final IRoomController parent;
     protected final EntityData entityData;
     private final IGameTimer gameTimer;
-    protected final Map<Point, Collection<EntityId>> objectsByCoordinate = new HashMap<>();
+    protected final Map<Point, Collection<EntityId>> objectsByCoordinate = new java.util.LinkedHashMap<>();
     private final EntityId entityId;
 
     public AbstractRoomObjectControl(IKwdFile kwdFile, IRoomController parent, EntityData entityData,
@@ -60,8 +60,52 @@ public abstract class AbstractRoomObjectControl<V> implements IRoomObjectControl
         this.entityData = entityData;
         this.gameTimer = gameTimer;
 
-        entityId = entityData.createEntity();
-        entityData.setComponent(entityId, new Storage(parent.getEntityId(), objectType, 0, calculateMaxCapacity()));
+        var saved = parent instanceof AbstractRoomController room ? room.storageForRestore(objectType) : null;
+        if (saved == null) {
+            entityId = entityData.createEntity();
+            entityData.setComponent(entityId, new Storage(parent.getEntityId(), objectType, 0, calculateMaxCapacity()));
+        } else {
+            entityId = saved.entityId();
+            Storage storage = entityData.getComponent(entityId, Storage.class);
+            if (storage == null || !parent.getEntityId().equals(storage.room) || storage.objectType != objectType) {
+                throw new IllegalArgumentException("Saved storage does not match room/type");
+            }
+            long capacity = 0;
+            for (var entry : saved.objectsByCoordinate().entrySet()) {
+                for (EntityId id : entry.getValue()) {
+                    var stored = entityData.getComponent(id, Stored.class);
+                    if (stored == null || !parent.getEntityId().equals(stored.room) || stored.objectType != objectType) {
+                        throw new IllegalArgumentException("Saved item belongs to another room/storage or no longer exists: " + id);
+                    }
+                    if (objectType == AbstractRoomController.ObjectType.GOLD) {
+                        var gold = entityData.getComponent(id, toniarts.openkeeper.game.component.Gold.class);
+                        if (gold == null || gold.gold < 0) throw new IllegalArgumentException("Missing/invalid stored gold");
+                        capacity += gold.gold;
+                    } else {
+                        if (entityData.getComponent(id, ObjectComponent.class) == null
+                                && entityData.getComponent(id, toniarts.openkeeper.game.component.CreatureComponent.class) == null) {
+                            throw new IllegalArgumentException("Missing stored object/creature");
+                        }
+                        capacity++;
+                    }
+                }
+                objectsByCoordinate.put(entry.getKey(), new java.util.ArrayList<>(entry.getValue()));
+            }
+            if (isIndexedStorage(objectType) && capacity != storage.currentCapacity) {
+                throw new IllegalArgumentException("Saved storage capacity differs from its contents");
+            }
+        }
+    }
+
+    public static boolean isIndexedStorage(AbstractRoomController.ObjectType type) {
+        return type == AbstractRoomController.ObjectType.GOLD || type == AbstractRoomController.ObjectType.LAIR
+                || type == AbstractRoomController.ObjectType.SPELL_BOOK || type == AbstractRoomController.ObjectType.FOOD;
+    }
+
+    public final toniarts.openkeeper.game.data.RoomState.StorageState captureState() {
+        Map<Point, java.util.List<EntityId>> values = new java.util.LinkedHashMap<>();
+        objectsByCoordinate.forEach((point, ids) -> values.put(point, java.util.List.copyOf(ids)));
+        return new toniarts.openkeeper.game.data.RoomState.StorageState(entityId, values);
     }
 
     protected abstract int getObjectsPerTile();

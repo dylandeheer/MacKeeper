@@ -36,7 +36,12 @@ public final class LibraryController extends NormalRoomController {
 
     public LibraryController(EntityId entityId, EntityData entityData, IKwdFile kwdFile, RoomInstance roomInstance, IObjectsController objectsController,
             IGameTimer gameTimer) {
-        super(entityId, entityData, kwdFile, roomInstance, objectsController, ObjectType.RESEARCHER);
+        this(entityId, entityData, kwdFile, roomInstance, objectsController, gameTimer, true);
+    }
+
+    public LibraryController(EntityId entityId, EntityData entityData, IKwdFile kwdFile, RoomInstance roomInstance, IObjectsController objectsController,
+            IGameTimer gameTimer, boolean initialize) {
+        super(entityId, entityData, kwdFile, roomInstance, objectsController, ObjectType.RESEARCHER, initialize);
 
         this.gameTimer = gameTimer;
     }

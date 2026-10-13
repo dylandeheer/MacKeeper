@@ -41,6 +41,10 @@ import java.util.Set;
  */
 public interface IKwdFile extends IKwdInfo {
 
+    /** Exact source content for save compatibility; synthetic definitions may not provide it. */
+    default MapSource getMapSource() {throw new IllegalStateException("Map source identity unavailable");}
+
+
     /**
      * Get the terrain with the specified ID
      *

@@ -132,8 +132,10 @@ public final class Utils {
      *
      * @return name for your creature
      */
-    public static String generateCreatureName() {
-        return CREATURE_NAMES[RANDOM.nextInt(CREATURE_NAMES.length)];
+    public static String generateCreatureName() { return generateCreatureName(RANDOM); }
+
+    public static String generateCreatureName(RandomGenerator random) {
+        return CREATURE_NAMES[random.nextInt(CREATURE_NAMES.length)];
     }
 
     /**
@@ -141,8 +143,10 @@ public final class Utils {
      *
      * @return blood type for your creature
      */
-    public static String generateBloodType() {
-        return BLOOD_TYPES[RANDOM.nextInt(BLOOD_TYPES.length)];
+    public static String generateBloodType() { return generateBloodType(RANDOM); }
+
+    public static String generateBloodType(RandomGenerator random) {
+        return BLOOD_TYPES[random.nextInt(BLOOD_TYPES.length)];
     }
 
     /**
@@ -152,14 +156,16 @@ public final class Utils {
      * @param list list
      * @return random item from the list or {@code null} if the list is empty
      */
-    public static <T> T getRandomItem(List<T> list) {
+    public static <T> T getRandomItem(List<T> list) { return getRandomItem(list, RANDOM); }
+
+    public static <T> T getRandomItem(List<T> list, RandomGenerator random) {
         if (list.isEmpty()) {
             return null;
         }
         if (list.size() == 1) {
             return list.get(0);
         }
-        return list.get(RANDOM.nextInt(list.size()));
+        return list.get(random.nextInt(list.size()));
     }
 
     /**
@@ -169,12 +175,15 @@ public final class Utils {
      * @param collection list
      * @return random item from the collection or {@code null} if the list is empty
      */
-    public static <T> Optional<T> getRandomItem(Collection<T> collection) {
-        return collection.stream().skip(RANDOM.nextInt(collection.size())).findFirst();
+    public static <T> Optional<T> getRandomItem(Collection<T> collection) { return getRandomItem(collection, RANDOM); }
+
+    public static <T> Optional<T> getRandomItem(Collection<T> collection, RandomGenerator random) {
+        if (collection.isEmpty()) return Optional.empty();
+        return collection.stream().skip(random.nextInt(collection.size())).findFirst();
     }
 
     /**
-     * Returns the random generator used by the game
+     * Returns the presentation/helper generator. Simulation callers pass their world generator explicitly.
      *
      * @return random generator
      */

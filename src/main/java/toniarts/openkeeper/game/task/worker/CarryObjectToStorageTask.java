@@ -40,12 +40,23 @@ public final class CarryObjectToStorageTask extends AbstractCapacityCriticalRoom
     private final IObjectController gameObject;
     private boolean executed = false;
 
-    public CarryObjectToStorageTask(final INavigationService navigationService, final IMapController mapController, Point p, short playerId, IRoomController room,
+    public CarryObjectToStorageTask(toniarts.openkeeper.game.task.TaskIdentityAllocator taskIds, final INavigationService navigationService, final IMapController mapController, Point p, short playerId, IRoomController room,
             TaskManager taskManager, IObjectController gameObject) {
-        super(navigationService, mapController, p, playerId, room, taskManager);
+        super(taskIds, navigationService, mapController, p, playerId, room, taskManager);
 
         this.gameObject = gameObject;
     }
+
+    public CarryObjectToStorageTask(toniarts.openkeeper.game.task.TaskIdentityAllocator ids, toniarts.openkeeper.game.data.TaskBaseState saved,
+            INavigationService navigation, IMapController map, toniarts.openkeeper.utils.Point point, short player,
+            IObjectController object, IRoomController room, TaskManager manager, boolean executed) {
+        super(ids, saved, navigation, map, point, player, room, manager);
+        gameObject = java.util.Objects.requireNonNull(object);
+        this.executed = executed;
+    }
+
+    public IObjectController getObjectController() {return gameObject;}
+    public boolean hasExecuted() {return executed;}
 
     @Override
     public Vector2f getTarget(ICreatureController creature) {

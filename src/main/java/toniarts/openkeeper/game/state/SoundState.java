@@ -18,299 +18,188 @@ package toniarts.openkeeper.game.state;
 
 import com.jme3.app.Application;
 import com.jme3.app.state.AppStateManager;
-import com.jme3.audio.AudioData.DataType;
-import com.jme3.audio.AudioNode;
-import com.jme3.audio.AudioSource;
-import java.io.File;
+import com.jme3.audio.*;
 import java.lang.System.Logger;
 import java.lang.System.Logger.Level;
-import java.util.ArrayDeque;
-import java.util.Iterator;
-import java.util.Queue;
+import java.nio.ByteBuffer;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.*;
 import toniarts.openkeeper.Main;
 import toniarts.openkeeper.game.data.Settings;
-import toniarts.openkeeper.game.sound.MentorType;
-import toniarts.openkeeper.game.sound.SoundCategory;
-import toniarts.openkeeper.game.sound.SoundFile;
-import toniarts.openkeeper.game.sound.SoundGroup;
+import toniarts.openkeeper.game.sound.*;
+import toniarts.openkeeper.game.sound.SoundSnapshot.*;
 import toniarts.openkeeper.tools.convert.AssetsConverter;
 import toniarts.openkeeper.tools.convert.map.IKwdFile;
 import toniarts.openkeeper.tools.modelviewer.SoundsLoader;
 
-/**
- * This state plays different sounds
- *
- * @author ArchDemon
- */
+/** Render-thread audio owner. Queued speech contains data, never callbacks from an old session. */
 public final class SoundState extends AbstractPauseAwareState {
-
     public enum Background {
-        AMBIENCE("AMBIENCE"),
-        OPTIONS("OPTIONS"),
-        MUSIC("MUSIC"),
-        ONE_SHOT_ATMOS("ONE_SHOT_ATMOS");
-
-        private final String name;
-
-        private Background(String name) {
-            this.name = name;
-        }
-
-        public String getName() {
-            return this.name;
-        }
+        AMBIENCE, OPTIONS, MUSIC, ONE_SHOT_ATMOS;
+        public String getName() {return name();}
     }
-
-    private static final Logger logger = System.getLogger(SoundState.class.getName());
-    
+    private static final Logger logger=System.getLogger(SoundState.class.getName());
     private Main app;
     private AppStateManager stateManager;
-    private AudioNode speechNode = null;
-    private AudioNode backgroundNode = null;
-    private IKwdFile kwdFile;
+    private Thread renderThread;
+    private GameClientState owner;
+    private short playerId;
+    private String levelCategory;
+    private Background backgroundCategory=Background.MUSIC;
+    private List<String> playlist=List.of();
+    private int nextTrack;
+    private final ArrayDeque<Speech> speechQueue=new ArrayDeque<>();
+    private Speech activeSpeech;
+    private Clip speechNode,backgroundNode;
+    private record Clip(String file, String fingerprint, AudioNode node) {}
 
-    /**
-     * AMBIENCE(341) | OPTIONS_MUSIC(838) | MUSIC(343, 345) | maybe ONE_SHOT_ATMOS(746)
-     */
-    private final BackgroundState backgroundState = new BackgroundState("MUSIC");
-    private final Queue<Speech> speechQueue = new ArrayDeque<>();
-
-    public SoundState(boolean enabled) {
-        this.setEnabled(enabled);
+    public SoundState(boolean enabled) {super.setEnabled(enabled);}
+    @Override public void initialize(AppStateManager manager,Application application) {
+        super.initialize(manager,application);app=(Main)application;stateManager=manager;renderThread=Thread.currentThread();
+        playlist=loadPlaylist(backgroundCategory);
     }
-
-    @Override
-    public void initialize(final AppStateManager stateManager, final Application app) {
-        super.initialize(stateManager, app);
-
-        this.app = (Main) app;
-        this.stateManager = stateManager;
+    @Override public boolean isPauseable() {return true;}
+    private void requireThread() {
+        if(!isInitialized() || Thread.currentThread()!=renderThread || stateManager.getState(SoundState.class)!=this)
+            throw new IllegalStateException("Audio requires the active render-thread owner");
     }
-
-    @Override
-    public boolean isPauseable() {
-        return true;
+    private void requireSession() {
+        requireThread();
+        if(owner==null || stateManager.getState(GameClientState.class)!=owner) throw new IllegalStateException("Audio session is not bound");
     }
-
-    @Override
-    public final void setEnabled(boolean enabled) {
+    @Override public void setEnabled(boolean enabled) {
+        if(isInitialized()) requireThread();
         super.setEnabled(enabled);
-
-        if (isInitialized()) {
-            app.enqueue(() -> {
-                if (speechNode != null && speechNode.getStatus() != AudioSource.Status.Stopped) {
-                    if (enabled) {
-                        speechNode.play();
-                    } else {
-                        speechNode.pause();
-                    }
-                }
-
-                if (backgroundNode != null && backgroundNode.getStatus() != AudioSource.Status.Stopped) {
-                    if (enabled) {
-                        backgroundNode.play();
-                    } else {
-                        backgroundNode.pause();
-                    }
-                }
-            });
+        if(isInitialized()) {setPlaying(speechNode,enabled);setPlaying(backgroundNode,enabled);}
+    }
+    private static void setPlaying(Clip clip,boolean playing) {
+        if(clip!=null && clip.node().getStatus()!=AudioSource.Status.Stopped) {
+            if(playing) clip.node().play();else clip.node().pause();
         }
     }
-
-    public void setKwdFile(IKwdFile kwdFile) {
-        this.kwdFile = kwdFile;
+    /** Called after guarded client startup reaches the render thread. */
+    public void bindSession(GameClientState session,IKwdFile level,short id) {
+        requireThread();Objects.requireNonNull(session);
+        if(stateManager.getState(GameClientState.class)!=session || id<0 || id>255) throw new IllegalArgumentException("Inactive audio session");
+        String category=Objects.requireNonNullElse(level.getGameLevel().getSoundCategory(),"");
+        if(!category.isEmpty()) SoundSnapshot.category(category);
+        clearSpeech();owner=session;playerId=id;levelCategory=category;
     }
-
+    public void unbindSession(GameClientState session) {
+        requireThread();
+        if(owner!=session) return;
+        clearSpeech();owner=null;levelCategory=null;
+    }
+    private void clearSpeech() {stop(speechNode);speechNode=null;activeSpeech=null;speechQueue.clear();}
+    private static void stop(Clip clip) {if(clip!=null) clip.node().stop();}
     public void changeBackground(Background category) {
-        backgroundState.setCategory(category.getName());
-        app.enqueue(() -> {
-            if (backgroundNode != null) {
-                backgroundNode.stop();
-            }
+        requireThread();var prepared=loadPlaylist(Objects.requireNonNull(category));
+        stop(backgroundNode);backgroundNode=null;backgroundCategory=category;playlist=prepared;nextTrack=0;
+    }
+    private static List<String> loadPlaylist(Background category) {
+        SoundCategory source=SoundsLoader.load(category.getName(),true);
+        if(source==null) throw new IllegalArgumentException("Missing audio category "+category);
+        var result=new ArrayList<String>();
+        source.getGroups().entrySet().stream().sorted(Map.Entry.comparingByKey()).forEach(group -> {
+            for(var file:group.getValue().getFiles()) result.add(assetPath(file.getFilename()));
         });
+        if(result.isEmpty() || result.size()>SoundSnapshot.MAX_ENTRIES) throw new IllegalArgumentException("Invalid audio playlist");
+        return List.copyOf(result);
     }
-
-    /**
-     * Plays mentor speeches for the current level. The speech will be put to a queue and played in
-     * sequence
-     *
-     * @param speechId the speech ID in level resource bundle
-     * @param listener can be {@code null}, allows you to listen when the speech starts playing
-     */
-    public void attachLevelSpeech(int speechId, ISpeechListener listener) {
-        String soundCategory = kwdFile.getGameLevel().getSoundCategory();
-        attachSpeech(soundCategory, speechId, listener);
+    private static String assetPath(String file) {
+        String result=(AssetsConverter.SOUNDS_FOLDER+"/"+file).replace('\\','/');SoundSnapshot.file(result);return result;
     }
-
-    /**
-     * Plays general mentor speeches The speech will be put to a queue and played in sequence
-     *
-     * @param type the speech
-     * @param listener can be {@code null}, allows you to listen when the speech starts playing
-     */
-    public void attachMentorSpeech(MentorType type, ISpeechListener listener) {
-        attachSpeech(SoundCategory.SPEECH_MENTOR, type.getId(), listener);
+    private static String speechFile(String category,boolean global,int id) {
+        var source=SoundsLoader.load(category,global);
+        var group=source==null?null:source.getGroup(id);
+        if(group==null || group.getFiles().isEmpty()) throw new IllegalArgumentException("Missing speech "+category+"/"+id);
+        return assetPath(group.getFiles().getFirst().getFilename());
     }
-
-    private void attachSpeech(String soundCategory, int speechId, ISpeechListener listener) {
-        if (!Main.getUserSettings().getBoolean(Settings.Setting.VOICE_ENABLED)) {
-            return;
-        }
-
+    public void attachLevelSpeech(int id,StartAction action) {requireSession();attachSpeech(levelCategory,false,id,action);}
+    public void attachMentorSpeech(MentorType type) {requireSession();attachSpeech(SoundCategory.SPEECH_MENTOR,true,type.getId(),null);}
+    private void attachSpeech(String category,boolean global,int id,StartAction action) {
+        if(!Main.getUserSettings().getBoolean(Settings.Setting.VOICE_ENABLED)) return;
         try {
-            SoundCategory sc = SoundsLoader.load(soundCategory, false);
-            if (sc == null) {
-                throw new RuntimeException("Sound category " + soundCategory + " not found");
-            }
-
-            String file = AssetsConverter.SOUNDS_FOLDER + File.separator
-                    + sc.getGroup(speechId).getFiles().get(0).getFilename();
-            speechQueue.add(new Speech(speechId, file, listener));
-        } catch (RuntimeException e) {
-            logger.log(Level.WARNING, "Failed to attach speech from category " + soundCategory + " with id " + speechId, e);
+            var speech=new Speech(category,global,id,speechFile(category,global,id),action);
+            if(speechQueue.size()>=SoundSnapshot.MAX_ENTRIES) throw new IllegalStateException("Speech queue is full");
+            speechQueue.add(speech);
+        } catch(RuntimeException e) {logger.log(Level.WARNING,"Failed to attach speech "+category+"/"+id,e);}
+    }
+    public void stopSpeech() {requireThread();stop(speechNode);speechNode=null;activeSpeech=null;}
+    private Clip loadClip(String file,float volume) {
+        var node=new AudioNode(app.getAssetManager(),file,AudioData.DataType.Buffer);
+        node.setLooping(false);node.setPositional(false);node.setVolume(volume);
+        var buffer=(AudioBuffer)node.getAudioData();
+        if(!Float.isFinite(buffer.getDuration()) || buffer.getDuration()<=0) throw new IllegalArgumentException("Empty audio clip");
+        try {
+            var digest=MessageDigest.getInstance("SHA-256");
+            digest.update(ByteBuffer.allocate(12).putInt(buffer.getSampleRate()).putInt(buffer.getChannels()).putInt(buffer.getBitsPerSample()).array());
+            digest.update(buffer.getData().duplicate().rewind());
+            return new Clip(file,HexFormat.of().formatHex(digest.digest()),node);
+        } catch(NoSuchAlgorithmException e) {throw new AssertionError(e);}
+    }
+    private static boolean finished(Clip clip) {return clip==null || clip.node().getStatus()==AudioSource.Status.Stopped;}
+    private static float volume(Settings.Setting kind) {
+        return Main.getUserSettings().getFloat(Settings.Setting.MASTER_VOLUME)*Main.getUserSettings().getFloat(kind);
+    }
+    @Override public void update(float tpf) {
+        if(!isInitialized() || !isEnabled()) return;
+        if(owner!=null && stateManager.getState(GameClientState.class)!=owner) {clearSpeech();owner=null;levelCategory=null;}
+        if(!speechQueue.isEmpty() && finished(speechNode)) {
+            Speech next=speechQueue.peek();Clip prepared=loadClip(next.file(),volume(Settings.Setting.VOICE_VOLUME));
+            speechQueue.remove();speechNode=prepared;activeSpeech=next;speechNode.node().play();
+            if(next.start()!=null && owner!=null) owner.onSpeechStarted(next.id(),next.start());
+        }
+        if(finished(backgroundNode) && Main.getUserSettings().getBoolean(Settings.Setting.MUSIC_ENABLED)) {
+            Clip prepared=loadClip(playlist.get(nextTrack),volume(Settings.Setting.MUSIC_VOLUME));
+            backgroundNode=prepared;nextTrack=(nextTrack+1)%playlist.size();backgroundNode.node().play();
         }
     }
-
-    private void playSpeech(Speech speech) {
-        speechNode = new AudioNode(app.getAssetManager(), speech.file, DataType.Buffer);
-        if (speechNode == null) {
-            logger.log(Level.WARNING, "Audio file {0} not found", speech.file);
-            return;
-        }
-        speechNode.setLooping(false);
-        speechNode.setPositional(false);
-        float volume = Main.getUserSettings().getFloat(Settings.Setting.MASTER_VOLUME)
-                * Main.getUserSettings().getFloat(Settings.Setting.VOICE_VOLUME);
-        speechNode.setVolume(volume);
-        app.enqueue(() -> {
-            speechNode.play();
-            if (speech.listener != null) {
-                speech.listener.onStart();
-            }
-        });
+    private static Playback capture(Clip clip) {
+        if(clip==null) return null;
+        float seconds=clip.node().getPlaybackTime();var status=clip.node().getStatus();
+        if(status==AudioSource.Status.Stopped || seconds>=clip.node().getAudioData().getDuration()) return null;
+        return new Playback(clip.file(),clip.fingerprint(),seconds,status==AudioSource.Status.Playing?Status.PLAYING:Status.PAUSED,clip.node().getVolume());
     }
-
-    public void stopSpeech() {
-        app.enqueue(() -> {
-            if (speechNode != null) {
-                speechNode.stop();
-            }
-        });
+    public SoundSnapshot captureState() {
+        requireSession();var speech=capture(speechNode);
+        return new SoundSnapshot(playerId,levelCategory,isEnabled(),backgroundCategory.name(),playlist,nextTrack,List.copyOf(speechQueue),
+                speech==null?null:new ActiveSpeech(activeSpeech,speech),capture(backgroundNode));
     }
-
-    private void playBackground() {
-        if (!Main.getUserSettings().getBoolean(Settings.Setting.MUSIC_ENABLED)) {
-            return;
-        }
-
-        String file = AssetsConverter.SOUNDS_FOLDER + File.separator + backgroundState.getNext();
-
-        backgroundNode = new AudioNode(app.getAssetManager(), file, DataType.Buffer);
-        if (backgroundNode == null) {
-            logger.log(Level.WARNING, "Audio file {0} not found", file);
-            return;
-        }
-        backgroundNode.setLooping(false);
-        backgroundNode.setPositional(false);
-        float volume = Main.getUserSettings().getFloat(Settings.Setting.MASTER_VOLUME)
-                * Main.getUserSettings().getFloat(Settings.Setting.MUSIC_VOLUME);
-        backgroundNode.setVolume(volume);
-        app.enqueue(() -> {
-            backgroundNode.play();
-        });
+    private void validateSpeech(Speech speech) {
+        if(speech.global()?(!speech.category().equals(SoundCategory.SPEECH_MENTOR)||speech.start()!=null):!speech.category().equals(levelCategory))
+            throw new IllegalArgumentException("Speech belongs to another level/category");
+        if(!speech.file().equals(speechFile(speech.category(),speech.global(),speech.id()))) throw new IllegalArgumentException("Speech file changed");
     }
-
-    @Override
-    public void update(float tpf) {
-        if (!isEnabled() || !isInitialized()) {
-            return;
-        }
-
-        if (!speechQueue.isEmpty()) {
-            if (speechNode == null || speechNode.getStatus() == AudioSource.Status.Stopped) {
-                playSpeech(speechQueue.poll());
-            }
-        }
-
-        if (backgroundNode == null || backgroundNode.getStatus() == AudioSource.Status.Stopped) {
-            playBackground();
-        }
-
-        super.update(tpf);
+    private Clip prepare(Playback playback) {
+        if(playback==null) return null;
+        Clip prepared=loadClip(playback.file(),playback.volume());
+        if(!prepared.fingerprint().equals(playback.fingerprint()) || playback.seconds()>=prepared.node().getAudioData().getDuration())
+            throw new IllegalArgumentException("Audio samples or playback bounds changed");
+        prepared.node().setTimeOffset(playback.seconds());return prepared;
     }
-
-    private static final class BackgroundState {
-
-        private SoundCategory sc;
-
-        private Iterator<SoundGroup> itGroup;
-        private Iterator<SoundFile> itFile;
-
-        public BackgroundState(String category) {
-            this.setCategory(category);
-        }
-
-        public final synchronized void setCategory(String category) {
-            this.sc = SoundsLoader.load(category);
-            if (sc == null) {
-                throw new RuntimeException("Category " + category + " does not exist");
-            }
-
-            if (this.sc.getGroups().isEmpty()) {
-                throw new RuntimeException("We have no groups in category " + category);
-            }
-
-            int total = 0;
-            for (SoundGroup group : this.sc.getGroups().values()) {
-                total += group.getFiles().size();
-            }
-            if (total == 0) {
-                throw new RuntimeException("We have no files in groups in category " + category);
-            }
-
-            itGroup = null;
-            itFile = null;
-        }
-
-        public synchronized String getNext() {
-            if (itGroup == null) {
-                itGroup = sc.getGroups().values().iterator();
-            }
-
-            if (itFile == null) {
-                if (itGroup.hasNext()) {
-                    itFile = itGroup.next().getFiles().iterator();
-                } else {
-                    itGroup = null;
-                    return this.getNext();
-                }
-            }
-
-            if (itFile.hasNext()) {
-                return itFile.next().getFilename();
-            } else {
-                itFile = null;
-                return this.getNext();
-            }
-        }
+    /** Validates and loads both clips before stopping live audio. Active start actions are never replayed. */
+    public void restoreState(SoundSnapshot state) {
+        requireSession();
+        if(state.playerId()!=playerId || !state.levelCategory().equals(levelCategory)) throw new IllegalArgumentException("Audio belongs to another player/level");
+        var category=Background.valueOf(state.backgroundCategory());var installed=loadPlaylist(category);
+        if(!installed.equals(state.playlist())) throw new IllegalArgumentException("Audio playlist changed");
+        state.pending().forEach(this::validateSpeech);
+        if(state.speech()!=null) validateSpeech(state.speech().speech());
+        var speech=prepare(state.speech()==null?null:state.speech().playback());var background=prepare(state.background());
+        stop(speechNode);stop(backgroundNode);
+        speechQueue.clear();speechQueue.addAll(state.pending());activeSpeech=state.speech()==null?null:state.speech().speech();
+        speechNode=speech;backgroundNode=background;backgroundCategory=category;playlist=installed;nextTrack=state.nextTrack();
+        super.setEnabled(state.enabled());
+        activate(speech,state.speech()==null?null:state.speech().playback());activate(background,state.background());
     }
-
-    /**
-         * Simple wrapper for a speech to play
-         */
-        private record Speech(int speechId, String file, ISpeechListener listener) {
-
+    private static void activate(Clip clip,Playback playback) {
+        if(clip==null) return;
+        clip.node().play();if(playback.status()==Status.PAUSED) clip.node().pause();
     }
-
-    /**
-     * A simple listener for getting notified when we actually play the queued speech. If we need
-     * more, we might need to use the Java native audio playing. There are already existing
-     * listeners unlike JME.
-     */
-    public interface ISpeechListener {
-
-        void onStart();
-
+    @Override public void cleanup() {
+        clearSpeech();stop(backgroundNode);backgroundNode=null;owner=null;levelCategory=null;
+        super.cleanup();
     }
-
 }

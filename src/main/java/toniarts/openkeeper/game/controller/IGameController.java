@@ -32,6 +32,8 @@ import toniarts.openkeeper.tools.convert.map.Variable;
  */
 public interface IGameController {
 
+    toniarts.openkeeper.game.random.SimulationRandom getRandom();
+
     /**
      * Breaks alliance between two players
      *
@@ -48,7 +50,11 @@ public interface IGameController {
      */
     void createAlliance(short playerOneId, short playerTwoId);
 
+    /** Campaign/local keeper result (player 3). */
     GameResult getGameResult();
+
+    /** First terminal result for the given player, or null while still playing. */
+    GameResult getGameResult(short playerId);
 
     IPlayerController getPlayerController(short playerId);
 
@@ -69,6 +75,14 @@ public interface IGameController {
      * @param win if true, then he won, if not, well, he lost
      */
     void endGame(short playerId, boolean win);
+
+    int countDoors(short playerId, short typeId, int flags);
+
+    int countTraps(short playerId, short typeId, int flags);
+
+    void markPlayerObjective(short playerId);
+
+    void markCreatureObjective(EntityId creatureId, toniarts.openkeeper.game.data.ObjectiveType objective);
 
     public INavigationService getNavigationService();
 

@@ -35,7 +35,12 @@ public final class LairController extends NormalRoomController {
 
     public LairController(EntityId entityId, EntityData entityData, IKwdFile kwdFile, RoomInstance roomInstance, IObjectsController objectsController,
             IGameTimer gameTimer) {
-        super(entityId, entityData, kwdFile, roomInstance, objectsController, ObjectType.LAIR);
+        this(entityId, entityData, kwdFile, roomInstance, objectsController, gameTimer, true);
+    }
+
+    public LairController(EntityId entityId, EntityData entityData, IKwdFile kwdFile, RoomInstance roomInstance, IObjectsController objectsController,
+            IGameTimer gameTimer, boolean initialize) {
+        super(entityId, entityData, kwdFile, roomInstance, objectsController, ObjectType.LAIR, initialize);
 
         this.gameTimer = gameTimer;
     }

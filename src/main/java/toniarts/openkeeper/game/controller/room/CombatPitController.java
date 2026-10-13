@@ -31,15 +31,23 @@ import toniarts.openkeeper.tools.convert.map.IKwdFile;
 public final class CombatPitController extends DoubleQuadController {
 
     private Point door;
+    @Override protected Point captureDoor() { return door; }
+    @Override protected void restoreDoor(Point value) { door = value; }
 
     public CombatPitController(EntityId entityId, EntityData entityData, IKwdFile kwdFile,
             RoomInstance roomInstance, IObjectsController objectsController) {
-        super(entityId, entityData, kwdFile, roomInstance, objectsController);
+        this(entityId, entityData, kwdFile, roomInstance, objectsController, true);
+    }
+
+    public CombatPitController(EntityId entityId, EntityData entityData, IKwdFile kwdFile,
+            RoomInstance roomInstance, IObjectsController objectsController, boolean initialize) {
+        super(entityId, entityData, kwdFile, roomInstance, objectsController, initialize);
     }
 
     @Override
     public void construct() {
         super.construct();
+        if (isRestoring()) return;
 
         // Store the door position for spawning the creatures in
         door = null;

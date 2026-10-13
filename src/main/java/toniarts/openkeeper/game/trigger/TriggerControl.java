@@ -50,6 +50,10 @@ public class TriggerControl extends Control {
     private static final short LEVEL_SCORE_FLAG_ID = 128;
     private static final short TIME_LIMIT_TIMER_ID = 16;
 
+    private long initialPaydayCycle;
+    private final TriggerTree tree;
+    private final java.util.Map<Integer, Long> observedPaydays = new java.util.HashMap<>();
+
     protected TriggerGenericData trigger;
     protected final TriggerGenericData root;
 
@@ -66,6 +70,7 @@ public class TriggerControl extends Control {
         this.gameController = gameController;
         this.levelInfo = levelInfo;
         this.gameTimer = gameTimer;
+        this.initialPaydayCycle = levelInfo.getPaydayCycle();
         this.mapController = mapController;
         this.creaturesController = creaturesController;
 
@@ -74,6 +79,22 @@ public class TriggerControl extends Control {
             throw new IllegalArgumentException("trigger can not be null");
         }
         trigger = root;
+        tree = new TriggerTree(triggerId, root);
+    }
+
+    public final toniarts.openkeeper.game.save.TriggerSnapshots.State captureState() {
+        return tree.capture(isEnabled(), initialPaydayCycle, observedPaydays, trigger);
+    }
+
+    public final void validateState(toniarts.openkeeper.game.save.TriggerSnapshots.State saved) { tree.validate(saved); }
+
+    /** Bind progress on a newly constructed control; no action or condition is evaluated. */
+    public final void restoreState(toniarts.openkeeper.game.save.TriggerSnapshots.State saved) {
+        tree.validate(saved);
+        trigger = tree.restore(saved);
+        initialPaydayCycle = saved.initialPayday();
+        observedPaydays.clear();observedPaydays.putAll(saved.paydays());
+        setEnabled(saved.enabled());
     }
 
     @Override
@@ -167,7 +188,11 @@ public class TriggerControl extends Control {
             case LEVEL_CREATURES:
                 return false;
             case LEVEL_PAY_DAY:
-                return false;
+                long payday = levelInfo.getPaydayCycle();
+                long observed = observedPaydays.getOrDefault(trigger.getId(), initialPaydayCycle);
+                if (payday <= observed) return false;
+                observedPaydays.put(trigger.getId(), payday);
+                return true;
             case LEVEL_PLAYED:
                 return false;
             default:
@@ -287,9 +312,9 @@ public class TriggerControl extends Control {
                 break;
 
             case COLLAPSE_HERO_GATE:
-                // TODO this
                 p = new Point(trigger.getUserData("posX", int.class) - 1,
                         trigger.getUserData("posY", int.class) - 1);
+                mapController.collapseHeroGate(p);
                 break;
 
             case SET_CREATURE_MOODS:
@@ -303,10 +328,10 @@ public class TriggerControl extends Control {
                 break;
 
             case CHANGE_ROOM_OWNER:
-                // TODO this
                 playerId = trigger.getUserData("playerId", short.class);
                 p = new Point(trigger.getUserData("posX", int.class) - 1,
                         trigger.getUserData("posY", int.class) - 1);
+                mapController.changeRoomOwner(p, playerId);
                 break;
 
             case SET_SLAPS_LIMIT:

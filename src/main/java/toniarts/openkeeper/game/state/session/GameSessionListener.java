@@ -32,6 +32,9 @@ import toniarts.openkeeper.tools.convert.map.TriggerAction;
  */
 public interface GameSessionListener extends MapListener, PlayerListener {
 
+    /** Local preparation failed before readiness; clients must abandon the loading wait. */
+    default void onLoadFailed(String message) {}
+
     /**
      * Client should start to load the game data up visually
      *
@@ -89,7 +92,7 @@ public interface GameSessionListener extends MapListener, PlayerListener {
      * @param win if true, the client won the game, if not, lost
      */
     @Asynchronous
-    public void onGameEnded(boolean win);
+    public void onGameEnded(boolean win, double elapsedSeconds);
 
     /**
      * The client should play a speech
@@ -119,6 +122,9 @@ public interface GameSessionListener extends MapListener, PlayerListener {
 
     @Asynchronous
     public void onShowMessage(int textId);
+
+    @Asynchronous
+    public void onShowObjective(int objectiveId);
 
     @Asynchronous
     public void onZoomViewToPoint(Vector3f point);

@@ -29,7 +29,8 @@ import com.simsilica.mathd.bits.Vec3Bits;
  */
 public final class NetworkConstants {
 
-    public final static int PROTOCOL_VERSION = 1;
+    // Version 2 adds the objective-display callback to the game session interface.
+    public final static int PROTOCOL_VERSION = 10;
     public final static String GAME_NAME = "OpenKeeper";
 
     public final static byte LOBBY_CHANNEL = 0;

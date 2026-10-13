@@ -16,6 +16,9 @@
  */
 package toniarts.openkeeper.game.logic;
 
+import toniarts.openkeeper.game.controller.room.FiveByFiveRotatedController;
+import toniarts.openkeeper.game.component.ObjectComponent;
+import toniarts.openkeeper.game.controller.IGameWorldController;
 import com.jme3.util.SafeArrayList;
 import com.simsilica.es.Entity;
 import com.simsilica.es.EntityData;
@@ -25,7 +28,13 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.Set;
+import java.util.List;
+import java.util.HashSet;
+import java.util.TreeSet;
+import java.util.Comparator;
+import toniarts.openkeeper.game.save.GameEntityData;
+import toniarts.openkeeper.game.save.SnapshotEntitySet;
+import toniarts.openkeeper.game.save.HealthSnapshots;
 import toniarts.openkeeper.game.component.AttackTarget;
 import toniarts.openkeeper.game.component.ChickenAi;
 import toniarts.openkeeper.game.component.CreatureAi;
@@ -35,6 +44,7 @@ import toniarts.openkeeper.game.component.CreatureMood;
 import toniarts.openkeeper.game.component.CreatureRecuperating;
 import toniarts.openkeeper.game.component.CreatureTortured;
 import toniarts.openkeeper.game.component.Damage;
+import toniarts.openkeeper.game.component.LastDamageSource;
 import toniarts.openkeeper.game.component.Death;
 import toniarts.openkeeper.game.component.Health;
 import toniarts.openkeeper.game.component.Interaction;
@@ -73,8 +83,10 @@ public final class HealthSystem extends GameTimeCounter {
     private final ILevelInfo levelInfo;
     private final Map<Short, IPlayerController> playerControllersById;
     private final IMapController mapController;
+    private final IGameWorldController world;
 
-    private final EntitySet healthEntities;
+    private final SnapshotEntitySet healthEntities;
+    private HealthSnapshots.State pendingRestore;
     private final EntitySet damageEntities;
     private final EntitySet imprisonedEntities;
     private final EntitySet torturedEntities;
@@ -84,7 +96,19 @@ public final class HealthSystem extends GameTimeCounter {
     public HealthSystem(EntityData entityData, IEntityPositionLookup entityPositionLookup,
             Map<Variable.MiscVariable.MiscType, Variable.MiscVariable> gameSettings,
             ICreaturesController creaturesController, ILevelInfo levelInfo,
-            Collection<IPlayerController> playerControllers, IMapController mapController) {
+            Collection<IPlayerController> playerControllers, IMapController mapController,
+            IGameWorldController world) {
+        this(entityData, entityPositionLookup, creaturesController, levelInfo, playerControllers, mapController, world,
+                new HealthSnapshots.Settings(
+                        (int) gameSettings.get(Variable.MiscVariable.MiscType.CREATURE_DYING_STATE_DURATION_SECONDS).getValue(),
+                        (int) gameSettings.get(Variable.MiscVariable.MiscType.MODIFY_HEALTH_OF_CREATURE_IN_LAIR_PER_SECOND).getValue(),
+                        (int) gameSettings.get(Variable.MiscVariable.MiscType.PRISON_MODIFY_CREATURE_HEALTH_PER_SECOND).getValue()), null);
+    }
+
+    private HealthSystem(EntityData entityData, IEntityPositionLookup entityPositionLookup,
+            ICreaturesController creaturesController, ILevelInfo levelInfo, Collection<IPlayerController> playerControllers,
+            IMapController mapController, IGameWorldController world, HealthSnapshots.Settings settings, HealthSnapshots.State saved) {
+        this.world = world;
 
         this.entityData = entityData;
         this.entityPositionLookup = entityPositionLookup;
@@ -98,12 +122,15 @@ public final class HealthSystem extends GameTimeCounter {
             playerControllersById.put(player.getKeeper().getId(), player);
         }
 
-        timeToDeath = (int) gameSettings.get(Variable.MiscVariable.MiscType.CREATURE_DYING_STATE_DURATION_SECONDS).getValue();
-        healthRegeneratePerSecondImprisoned = (int) gameSettings.get(Variable.MiscVariable.MiscType.PRISON_MODIFY_CREATURE_HEALTH_PER_SECOND).getValue();
-        healthRegeneratePerSecond = (int) gameSettings.get(Variable.MiscVariable.MiscType.MODIFY_HEALTH_OF_CREATURE_IN_LAIR_PER_SECOND).getValue();
+        timeToDeath = settings.timeToDeath();
+        healthRegeneratePerSecond = settings.regeneration();
+        healthRegeneratePerSecondImprisoned = settings.imprisonedRegeneration();
 
-        healthEntities = entityData.getEntities(Health.class);
-        processAddedEntities(healthEntities);
+        healthEntities = new SnapshotEntitySet(entityData, Health.class);
+        if (saved == null) processAddedEntities(healthEntities);
+        else {
+            timeElapsed = saved.elapsed();entityIds.addAll(saved.observedHealth());pendingRestore = saved;
+        }
 
         damageEntities = entityData.getEntities(Health.class, Damage.class);
 
@@ -117,13 +144,46 @@ public final class HealthSystem extends GameTimeCounter {
         recuperatingEntities = entityData.getEntities(CreatureRecuperating.class, Health.class, CreatureComponent.class);
     }
 
+    public HealthSnapshots.State captureState() {
+        return new HealthSnapshots.State(timeElapsed,
+                new HealthSnapshots.Settings(timeToDeath, healthRegeneratePerSecond, healthRegeneratePerSecondImprisoned),
+                playerControllersById.keySet().stream().sorted().toList(), List.copyOf(entityIds), dirtyHealth(),
+                pendingRestore == null ? ids(recuperatingEntities) : pendingRestore.observedRecuperating());
+    }
+
+    public static HealthSystem restoreState(GameEntityData data, IEntityPositionLookup lookup,
+            ICreaturesController creatures, ILevelInfo level, Collection<IPlayerController> players,
+            IMapController map, IGameWorldController world, HealthSnapshots.State saved) {
+        if (!players.stream().map(p -> p.getKeeper().getId()).sorted().toList().equals(saved.players()))
+            throw new IllegalArgumentException("Health players differ");
+        for (var id : saved.observedHealth()) if (!data.wasAllocated(id)) throw new IllegalArgumentException("Unallocated health observation");
+        for (var id : saved.observedRecuperating()) if (!data.wasAllocated(id)) throw new IllegalArgumentException("Unallocated recovery observation");
+        return new HealthSystem(data, lookup, creatures, level, players, map, world, saved.settings(), saved);
+    }
+
+    private static List<EntityId> ids(Collection<Entity> entities) {
+        return entities.stream().map(Entity::getId).sorted().toList();
+    }
+
+    private List<EntityId> dirtyHealth() {
+        var dirty = new TreeSet<>(healthEntities.pendingChanges(new HashSet<>(entityIds)));
+        if (pendingRestore != null) dirty.addAll(pendingRestore.dirtyHealth());
+        return List.copyOf(dirty);
+    }
+
     @Override
     public void processTick(float tpf) {
         super.processTick(tpf);
-        // Update the registry of all entities with health
-        if (healthEntities.applyChanges()) {
+        // Health changes reset regeneration even when a replacement has equal values.
+        if (pendingRestore != null) {
+            var observed = new HashSet<>(entityIds);var dirty = dirtyHealth();
+            healthEntities.applyChanges();
+            processAddedEntities(healthEntities.stream().filter(e -> !observed.contains(e.getId())).toList());
+            processDeletedEntities(observed.stream().filter(id -> !healthEntities.containsId(id)).toList());
+            processChangedEntities(dirty.stream().filter(healthEntities::containsId).map(healthEntities::getEntity).toList());
+        } else if (healthEntities.applyChanges()) {
             processAddedEntities(healthEntities.getAddedEntities());
-            processDeletedEntities(healthEntities.getRemovedEntities());
+            processDeletedEntities(ids(healthEntities.getRemovedEntities()));
             processChangedEntities(healthEntities.getChangedEntities());
         }
 
@@ -135,9 +195,13 @@ public final class HealthSystem extends GameTimeCounter {
         recuperatingEntities.applyChanges();
 
         // Process special recuperating... event
-        for (Entity entity : recuperatingEntities.getAddedEntities()) {
+        var oldRecovery = pendingRestore == null ? null : new HashSet<>(pendingRestore.observedRecuperating());
+        var addedRecovery = oldRecovery == null ? recuperatingEntities.getAddedEntities()
+                : recuperatingEntities.stream().filter(e -> !oldRecovery.contains(e.getId())).toList();
+        for (Entity entity : addedRecovery.stream().sorted(Comparator.comparing(Entity::getId)).toList()) {
             entityData.removeComponent(entity.getId(), Unconscious.class);
         }
+        pendingRestore = null;
 
         // Bring death to those unfortunate and increase the health of the fortunate
         for (EntityId entityId : entityIds.getArray()) {
@@ -152,12 +216,13 @@ public final class HealthSystem extends GameTimeCounter {
             }
 
             // Normal health related routines
-            Health health = healthEntities.getEntity(entityId).get(Health.class);
+            // Destruction can remove room contents earlier in this same tick.
+            Health health = entityData.getComponent(entityId, Health.class);
             if (health == null) {
                 continue;
             }
 
-            int healthChange = calculateHealthChange(entityId, health, timeElapsed);
+            long healthChange = calculateHealthChange(entityId, health, timeElapsed);
             if (healthChange == 0) {
                 continue;
             }
@@ -166,16 +231,24 @@ public final class HealthSystem extends GameTimeCounter {
             if (health.health + healthChange <= 0) {
                 processHealthDepleted(entityId, health);
             } else {
-                entityData.setComponent(entityId, new Health(Math.min(health.health + healthChange, health.maxHealth), health.maxHealth));
+                entityData.setComponent(entityId, new Health((int) Math.min(health.health + healthChange, health.maxHealth), health.maxHealth));
             }
         }
     }
 
     private void processHealthDepleted(EntityId entityId, Health health) {
 
+        var object = entityData.getComponent(entityId, ObjectComponent.class);
+        if (object != null && object.objectId == FiveByFiveRotatedController.OBJECT_HEART_ID) {
+            Damage damage = damageEntities.getEntity(entityId) == null ? null : damageEntities.getEntity(entityId).get(Damage.class);
+            entityData.setComponent(entityId, new Health(0, health.maxHealth));
+            if (world.destroyDungeonHeart(entityId, damage == null ? (short) 0 : damage.sourcePlayerId)) return;
+        }
+
         // Death or destruction!!!!
         // No body, just vanish from the world
         if (!isLeaveDeadBody(entityId)) {
+            recordCreatureDeath(entityId);
             entityPositionLookup.getEntityController(entityId).remove();
             return;
         }
@@ -197,6 +270,7 @@ public final class HealthSystem extends GameTimeCounter {
             Owner owner = entityData.getComponent(entityId, Owner.class);
             Short creatureId = getRoomCreatureId(entityId);
             if (creatureId != null && !damageEntities.containsId(entityId) && canRiseAsSkeleton(owner, creatureId)) {
+                recordCreatureDeath(entityId);
                 creaturesController.turnCreatureIntoAnother(entityId, owner.controlId, creatureId);
                 return;
             }
@@ -264,14 +338,17 @@ public final class HealthSystem extends GameTimeCounter {
                 .getFlags().contains(Creature.CreatureFlag.GENERATE_DEAD_BODY);
     }
 
-    private int calculateHealthChange(EntityId entityId, Health health, double gameTime) {
-        int delta = 0;
+    private long calculateHealthChange(EntityId entityId, Health health, double gameTime) {
+        long delta = 0;
 
         // Damage (or healing)
         Entity entity = damageEntities.getEntity(entityId);
         if (entity != null) {
             Damage damage = entity.get(Damage.class);
             delta -= damage.damage;
+            if (damage.damage > 0) {
+                entityData.setComponent(entityId, new LastDamageSource(damage.sourcePlayerId));
+            }
 
             // Remove the damage
             entityData.removeComponent(entityId, Damage.class);
@@ -339,7 +416,22 @@ public final class HealthSystem extends GameTimeCounter {
         return delta;
     }
 
+    private void recordCreatureDeath(EntityId entityId) {
+        CreatureComponent creature = entityData.getComponent(entityId, CreatureComponent.class);
+        Owner owner = entityData.getComponent(entityId, Owner.class);
+        if (creature == null || owner == null || entityData.getComponent(entityId, Health.class) == null) return;
+        IPlayerController victim = playerControllersById.get(owner.ownerId);
+        if (victim != null) victim.getKeeper().recordCreatureLoss();
+        LastDamageSource source = entityData.getComponent(entityId, LastDamageSource.class);
+        IPlayerController killer = source == null || source.playerId == 0 ? null : playerControllersById.get(source.playerId);
+        if (killer != null) {
+            boolean hero = levelInfo.getLevelData().getCreature(creature.creatureId).getFlags().contains(Creature.CreatureFlag.IS_GOOD);
+            killer.getKeeper().recordCreatureKill(owner.ownerId, hero);
+        }
+    }
+
     private void processDeath(EntityId entityId) {
+        recordCreatureDeath(entityId);
         entityData.removeComponent(entityId, Health.class);
         entityData.removeComponent(entityId, CreatureAi.class);
         entityData.removeComponent(entityId, ChickenAi.class);
@@ -354,22 +446,22 @@ public final class HealthSystem extends GameTimeCounter {
         entityData.setComponent(entityId, new Death(timeElapsed));
     }
 
-    private void processAddedEntities(Set<Entity> entities) {
-        for (Entity entity : entities) {
+    private void processAddedEntities(Collection<Entity> entities) {
+        for (Entity entity : entities.stream().sorted(Comparator.comparing(Entity::getId)).toList()) {
             int index = Collections.binarySearch(entityIds, entity.getId());
             entityIds.add(~index, entity.getId());
         }
     }
 
-    private void processDeletedEntities(Set<Entity> entities) {
-        for (Entity entity : entities) {
-            int index = Collections.binarySearch(entityIds, entity.getId());
+    private void processDeletedEntities(Collection<EntityId> entities) {
+        for (EntityId id : entities) {
+            int index = Collections.binarySearch(entityIds, id);
             entityIds.remove(index);
         }
     }
 
-    private void processChangedEntities(Set<Entity> entities) {
-        for (Entity entity : entities) {
+    private void processChangedEntities(Collection<Entity> entities) {
+        for (Entity entity : entities.stream().sorted(Comparator.comparing(Entity::getId)).toList()) {
             // If the health is changed (either by us or damage)...
             // Reset the health regen counter
             Regeneration regeneration = entityData.getComponent(entity.getId(), Regeneration.class);

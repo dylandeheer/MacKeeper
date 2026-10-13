@@ -37,7 +37,7 @@ public final class HeroGateTwoByTwoConstructor extends RoomConstructor {
     protected BatchNode constructFloor() {
         BatchNode root = new BatchNode();
         ArtResource artResource = roomInstance.getRoom().getCompleteResource();
-        String modelName = artResource.getName();
+        String modelName = artResource.getName() + (roomInstance.isDestroyed() ? "Destroyed" : "");
 
         // Contruct the tiles
         int i = 0;

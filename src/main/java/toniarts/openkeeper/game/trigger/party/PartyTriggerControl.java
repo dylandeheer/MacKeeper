@@ -38,6 +38,10 @@ public final class PartyTriggerControl extends TriggerControl {
         this.partyController = partyController;
     }
 
+    public toniarts.openkeeper.game.save.TriggerRegistrySnapshots.Entry captureBinding() {
+        return toniarts.openkeeper.game.save.TriggerRegistrySnapshots.Entry.party(captureState(), partyController.getPartyId(), partyController.getId());
+    }
+
     @Override
     protected boolean isActive(TriggerGenericData trigger) {
         boolean result = false;

@@ -25,6 +25,9 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.TreeSet;
+import java.util.LinkedHashMap;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -44,6 +47,8 @@ import toniarts.openkeeper.game.controller.entity.IEntityController;
 import toniarts.openkeeper.game.map.IMapTileInformation;
 import toniarts.openkeeper.tools.convert.map.Terrain;
 import toniarts.openkeeper.utils.WorldUtils;
+import toniarts.openkeeper.game.save.GameEntityData;
+import toniarts.openkeeper.game.save.PositionSnapshots;
 
 /**
  * Maintains a tile based position map of all the entities for a quick lookup
@@ -59,11 +64,18 @@ public final class PositionSystem implements IGameLogicUpdatable, IEntityPositio
     private final Set<EntityId>[][] entitiesByMapTile;
     private final Set<EntityId>[][] obstaclesByMapTile;
     private final Map<EntityId, IMapTileInformation> mapTilesByEntities = new HashMap<>();
-    private final Map<Class, IEntityWrapper<?>> entityWrappers = new HashMap<>();
+    private final Map<Class, IEntityWrapper<?>> entityWrappers = new LinkedHashMap<>();
 
     private final Map<EntityId, Set<EntityId>> sensedEntitiesByEntity = new HashMap<>();
 
+    private boolean reconcileOnNextTick;
+
     public PositionSystem(IMapController mapController, EntityData entityData, ICreaturesController creaturesController, IDoorsController doorsController, IObjectsController objectsController) {
+        this(mapController, entityData, creaturesController, doorsController, objectsController, null);
+    }
+
+    private PositionSystem(IMapController mapController, EntityData entityData, ICreaturesController creaturesController,
+            IDoorsController doorsController, IObjectsController objectsController, PositionSnapshots.State saved) {
         this.entityData = entityData;
         this.mapController = mapController;
         this.objectsController = objectsController;
@@ -77,15 +89,48 @@ public final class PositionSystem implements IGameLogicUpdatable, IEntityPositio
         Set<EntityId>[][] obstacles = new Set[width][height];
         for (int y = 0; y < height; y++) {
             for (int x = 0; x < width; x++) {
-                entities[x][y] = new HashSet<>();
-                obstacles[x][y] = new HashSet<>();
+                entities[x][y] = new TreeSet<>();
+                obstacles[x][y] = new TreeSet<>();
             }
         }
         entitiesByMapTile = entities;
         obstaclesByMapTile = obstacles;
 
         positionedEntities = entityData.getEntities(Position.class);
-        processAddedEntities(positionedEntities);
+        if (saved == null) processAddedEntities(positionedEntities);
+        else {
+            saved.observed().forEach((id, location) -> {
+                mapTilesByEntities.put(id, mapController.getMapData().getTile(location.x(), location.y()));
+                entitiesByMapTile[location.x()][location.y()].add(id);
+                if (location.obstacle()) obstaclesByMapTile[location.x()][location.y()].add(id);
+            });
+            saved.sensed().forEach((id, sensed) -> sensedEntitiesByEntity.put(id, new TreeSet<>(sensed)));
+            reconcileOnNextTick = true;
+        }
+    }
+
+    public PositionSnapshots.State captureState() {
+        var observed = new HashMap<EntityId, PositionSnapshots.Location>();
+        mapTilesByEntities.forEach((id, tile) -> observed.put(id,
+                new PositionSnapshots.Location(tile.getX(), tile.getY(), obstaclesByMapTile[tile.getX()][tile.getY()].contains(id))));
+        var sensed = new HashMap<EntityId, List<EntityId>>();
+        sensedEntitiesByEntity.forEach((id, values) -> sensed.put(id, values.stream().sorted().toList()));
+        return new PositionSnapshots.State(entitiesByMapTile.length, entitiesByMapTile[0].length, observed, sensed);
+    }
+
+    public static PositionSystem restoreState(IMapController map, GameEntityData data, ICreaturesController creatures,
+            IDoorsController doors, IObjectsController objects, PositionSnapshots.State saved) {
+        if (map.getMapData().getWidth() != saved.width() || map.getMapData().getHeight() != saved.height())
+            throw new IllegalArgumentException("Saved spatial dimensions differ");
+        for (var entry : saved.observed().entrySet()) {
+            if (!data.wasAllocated(entry.getKey()) || map.getMapData().getTile(entry.getValue().x(), entry.getValue().y()) == null)
+                throw new IllegalArgumentException("Invalid observed spatial binding");
+        }
+        saved.sensed().forEach((id, values) -> {
+            if (!data.wasAllocated(id) || values.stream().anyMatch(value -> !data.wasAllocated(value)))
+                throw new IllegalArgumentException("Unallocated sensory reference");
+        });
+        return new PositionSystem(map, data, creatures, doors, objects, saved);
     }
 
     @Override
@@ -93,14 +138,21 @@ public final class PositionSystem implements IGameLogicUpdatable, IEntityPositio
         // This is just a cache for a tick
         sensedEntitiesByEntity.clear();
 
-        if (positionedEntities.applyChanges()) {
+        if (reconcileOnNextTick) {
+            var observed = new HashSet<>(mapTilesByEntities.keySet());
+            positionedEntities.applyChanges();
+            processAddedEntities(positionedEntities.stream().filter(entity -> !observed.contains(entity.getId())).toList());
+            removeEntities(observed.stream().filter(id -> !positionedEntities.containsId(id)).toList());
+            processChangedEntities(positionedEntities.stream().filter(entity -> observed.contains(entity.getId())).toList());
+            reconcileOnNextTick = false;
+        } else if (positionedEntities.applyChanges()) {
             processAddedEntities(positionedEntities.getAddedEntities());
-            processDeletedEntities(positionedEntities.getRemovedEntities());
+            removeEntities(positionedEntities.getRemovedEntities().stream().map(Entity::getId).toList());
             processChangedEntities(positionedEntities.getChangedEntities());
         }
     }
 
-    private void processChangedEntities(Set<Entity> entities) {
+    private void processChangedEntities(Collection<Entity> entities) {
         // Update
         for (Entity entity : entities) {
             Point p = WorldUtils.vectorToPoint(entity.get(Position.class).position);
@@ -137,20 +189,15 @@ public final class PositionSystem implements IGameLogicUpdatable, IEntityPositio
         }
     }
 
-    private void processDeletedEntities(Set<Entity> entities) {
-
-        // Remove
-        for (Entity entity : entities) {
-            IMapTileInformation mapTile = mapTilesByEntities.remove(entity.getId());
-
-            int x = mapTile.getX();
-            int y = mapTile.getY();
-            entitiesByMapTile[x][y].remove(entity.getId());
-            obstaclesByMapTile[x][y].remove(entity.getId());
+    private void removeEntities(Collection<EntityId> entities) {
+        for (EntityId id : entities) {
+            IMapTileInformation tile = mapTilesByEntities.remove(id);
+            entitiesByMapTile[tile.getX()][tile.getY()].remove(id);
+            obstaclesByMapTile[tile.getX()][tile.getY()].remove(id);
         }
     }
 
-    private void processAddedEntities(Set<Entity> entities) {
+    private void processAddedEntities(Collection<Entity> entities) {
 
         // Add
         for (Entity entity : entities) {
@@ -257,6 +304,7 @@ public final class PositionSystem implements IGameLogicUpdatable, IEntityPositio
     public void stop() {
         positionedEntities.release();
         mapTilesByEntities.clear();
+        sensedEntitiesByEntity.clear();
         entityWrappers.clear();
         clearMatrix(entitiesByMapTile);
         clearMatrix(obstaclesByMapTile);
@@ -322,7 +370,7 @@ public final class PositionSystem implements IGameLogicUpdatable, IEntityPositio
         }
 
         return sensedEntitiesByEntity.computeIfAbsent(entityId, (id) -> {
-            Set<EntityId> sensedEntities = new HashSet<>();
+            Set<EntityId> sensedEntities = new TreeSet<>();
 
             // Get creatures we sense
             IMapTileInformation tile = getEntityLocation(id);

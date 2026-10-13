@@ -19,7 +19,6 @@ package toniarts.openkeeper.game.controller.creature;
 import com.badlogic.gdx.ai.fsm.StateMachine;
 import com.simsilica.es.EntityId;
 import toniarts.openkeeper.utils.Point;
-import java.util.function.Consumer;
 import toniarts.openkeeper.game.controller.entity.IEntityController;
 import toniarts.openkeeper.game.controller.object.IObjectController;
 import toniarts.openkeeper.game.data.ObjectiveType;
@@ -65,13 +64,15 @@ public interface ICreatureController extends IGameLogicUpdatable, INavigable, IE
 
     public boolean goToSleep();
 
-    public void findWork(Consumer<Boolean> workResult);
+    public void findWork(WorkContinuation continuation);
 
     public boolean isWorker();
 
     public boolean isTooMuchGold();
 
-    public boolean dropGoldToTreasury();
+    boolean dropGoldToTreasury();
+
+    boolean collectPay();
 
     public boolean isStopped();
 
@@ -85,7 +86,7 @@ public interface ICreatureController extends IGameLogicUpdatable, INavigable, IE
 
     public boolean isAssignedTaskValid();
 
-    public ICreatureController getAttackTarget();
+    public IEntityController getAttackTarget();
 
     public boolean isWithinAttackDistance(EntityId attackTarget);
 

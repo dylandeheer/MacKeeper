@@ -22,6 +22,7 @@ import java.util.BitSet;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.Set;
+import java.util.List;
 
 /**
  * The fog-of-war knowledge of a single viewer: which tiles have been
@@ -32,6 +33,53 @@ import java.util.Set;
  * @author Toni Helenius <helenius.toni@gmail.com>
  */
 public final class FogState {
+
+    /** Immutable canonical bitmaps; dirty bits are behavioral history, not a redraw request. */
+    public record Snapshot(short viewerId, int width, int height, boolean enabled,
+            List<Long> explored, List<Long> perceived, List<Long> dirty) {
+        public static final int MAX_TILES = 1_048_576;
+        public Snapshot {
+            if (viewerId < 0 || viewerId > 255 || width < 1 || height < 1
+                    || (long) width * height > MAX_TILES)
+                throw new IllegalArgumentException("Invalid fog dimensions/viewer");
+            explored = words(explored, width * height);
+            perceived = words(perceived, width * height);
+            dirty = words(dirty, width * height);
+        }
+        private static List<Long> words(List<Long> words, int size) {
+            words = List.copyOf(words);
+            if (words.size() > (size + 63) / 64 || (!words.isEmpty() && words.getLast() == 0)
+                    || bits(words).length() > size)
+                throw new IllegalArgumentException("Invalid fog bitmap");
+            return words;
+        }
+    }
+
+    private static List<Long> words(BitSet bits) {
+        return java.util.Arrays.stream(bits.toLongArray()).boxed().toList();
+    }
+
+    private static BitSet bits(List<Long> words) {
+        return BitSet.valueOf(words.stream().mapToLong(Long::longValue).toArray());
+    }
+
+    public Snapshot captureState() {
+        var dirty = new BitSet(width * height);
+        for (Point p : dirtyTiles) dirty.set(index(p.x, p.y));
+        return new Snapshot(viewerId, width, height, fogEnabled, words(explored), words(perceived), words(dirty));
+    }
+
+    /** Quiet replacement: do not create newly-dirty tiles while restoring knowledge. */
+    public void restoreState(Snapshot saved) {
+        if (saved.viewerId() != viewerId || saved.width() != width || saved.height() != height)
+            throw new IllegalArgumentException("Fog snapshot belongs to another map/viewer");
+        explored.clear();explored.or(bits(saved.explored()));
+        perceived.clear();perceived.or(bits(saved.perceived()));
+        fogEnabled = saved.enabled();dirtyTiles.clear();
+        var dirty = bits(saved.dirty());
+        for (int i = dirty.nextSetBit(0); i >= 0; i = dirty.nextSetBit(i + 1))
+            dirtyTiles.add(new Point(i % width, i / width));
+    }
 
     private final short viewerId;
     private final int width;

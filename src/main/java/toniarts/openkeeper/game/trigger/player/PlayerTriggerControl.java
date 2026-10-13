@@ -34,6 +34,7 @@ import toniarts.openkeeper.game.data.ActionPoint;
 import toniarts.openkeeper.game.data.Keeper;
 import toniarts.openkeeper.game.state.session.PlayerService;
 import toniarts.openkeeper.game.trigger.TriggerActionData;
+import toniarts.openkeeper.game.trigger.TriggerData;
 import toniarts.openkeeper.game.trigger.TriggerControl;
 import toniarts.openkeeper.game.trigger.TriggerGenericData;
 import toniarts.openkeeper.tools.convert.ConversionUtils;
@@ -89,12 +90,42 @@ public class PlayerTriggerControl extends TriggerControl {
         return playerId;
     }
 
+    /**
+     * DKII dispatches these events only to matching root conditions. The encoded
+     * player byte is unused; the affected player is selected by the event source.
+     * Evaluate descendants now, so an event cannot unlock a future condition.
+     */
+    public void fireBreachEvent(TriggerGeneric.TargetType type) {
+        if (type != TriggerGeneric.TargetType.PLAYER_DUNGEON_BREACHED
+                && type != TriggerGeneric.TargetType.PLAYER_ENEMY_BREACHED) {
+            throw new IllegalArgumentException("Not a breach event: " + type);
+        }
+        for (TriggerData child : root.getChildren().getArray()) {
+            if (child instanceof TriggerGenericData condition && condition.getType() == type) {
+                executeEventChildren(condition);
+            }
+        }
+    }
+
+    private void executeEventChildren(TriggerGenericData condition) {
+        condition.subRepeatTimes();
+        for (TriggerData child : condition.getChildren().getArray()) {
+            if (child instanceof TriggerActionData action) {
+                doAction(action);
+                if (!condition.isRepeateable()) condition.detachChild(action);
+            } else if (child instanceof TriggerGenericData nested && isActive(nested)) {
+                executeEventChildren(nested);
+            }
+        }
+        if (condition.getQuantity() == 0) condition.detachFromParent();
+    }
+
     @Override
     protected boolean isActive(TriggerGenericData trigger) {
         boolean result = false;
 
-        int target = 0;
-        int value = 0;
+        long target = 0;
+        long value = 0;
 
         TriggerGeneric.TargetType targetType = trigger.getType();
         switch (targetType) {
@@ -113,13 +144,24 @@ public class PlayerTriggerControl extends TriggerControl {
                 break;
 
             case PLAYER_HAPPY_CREATURES:
-                return false;
             case PLAYER_ANGRY_CREATURES:
-                return false;
+                creatureId = trigger.getUserData("creatureId", short.class);
+                target = creaturesController.countCreaturesByMood(playerId, creatureId,
+                        targetType == TriggerGeneric.TargetType.PLAYER_HAPPY_CREATURES ? 0 : 2);
+                // Unlike PLAYER_CREATURES, these native predicates always compare to a literal.
+                value = trigger.getUserData("value", int.class);
+                break;
             case PLAYER_CREATURES_KILLED:
-                return false;
+                short killerPlayerId = trigger.getUserData("killerPlayerId", short.class);
+                Keeper killer = killerPlayerId == 0 ? null : getPlayer(killerPlayerId);
+                target = killerPlayerId == 0 ? getPlayer().getCreaturesLost()
+                        : killer == null ? 0 : killer.getCreatureKills(playerId);
+                value = trigger.getUserData("value", int.class);
+                break;
             case PLAYER_KILLS_CREATURES:
-                return false;
+                target = getPlayer().getCreatureKills(trigger.getUserData("victimPlayerId", short.class));
+                value = trigger.getUserData("value", int.class);
+                break;
 
             case PLAYER_ROOM_SLABS:
                 short roomId = trigger.getUserData("roomId", short.class);
@@ -152,9 +194,19 @@ public class PlayerTriggerControl extends TriggerControl {
             case PLAYER_ROOM_SIZE:
                 return false;
             case PLAYER_DOORS:
-                return false;
             case PLAYER_TRAPS:
-                return false;
+                short defenseId = trigger.getUserData("targetId", short.class);
+                boolean doorCondition = trigger.getType() == TriggerGeneric.TargetType.PLAYER_DOORS;
+                if (trigger.getComparison() == TriggerGeneric.ComparisonType.NONE) {
+                    var available = doorCondition ? getPlayer().getAvailableDoors() : getPlayer().getAvailableTraps();
+                    return available.stream().anyMatch(item -> item.isDiscovered()
+                            && (defenseId == 0 || item.getId() == defenseId));
+                }
+                int defenseFlags = trigger.getUserData("flag", short.class);
+                target = doorCondition ? gameController.countDoors(playerId, defenseId, defenseFlags)
+                        : gameController.countTraps(playerId, defenseId, defenseFlags);
+                value = trigger.getUserData("value", int.class);
+                break;
             case PLAYER_KEEPER_SPELL:
                 boolean isAvailable = trigger.getUserData("flag", short.class) == 1;
                 short keeperSpellId = trigger.getUserData("targetId", short.class);
@@ -205,15 +257,19 @@ public class PlayerTriggerControl extends TriggerControl {
             case PLAYER_DESTROYS:
                 return false;
             case PLAYER_CREATURES_AT_LEVEL:
-                return false;
+                target = creaturesController.countCreaturesAtLevel(playerId, trigger.getUserData("level", short.class));
+                value = trigger.getUserData("value", int.class);
+                break;
             case PLAYER_KILLED:
 
-                // TODO: Is player killed specifically by this other player
+                // DKII 1.70 checks the recorded killer; the second data word is unused.
                 short otherPlayerId = trigger.getUserData("playerId", short.class);
-                return false;
+                Keeper killed = getPlayer();
+                return killed != null && killed.isDestroyed() && killed.getKilledByPlayerId() != 0
+                        && (otherPlayerId == 0 || otherPlayerId == killed.getKilledByPlayerId());
             case PLAYER_DUNGEON_BREACHED:
-                return false;
             case PLAYER_ENEMY_BREACHED:
+                // Dispatched synchronously by fireBreachEvent; never a polling predicate.
                 return false;
 
             case PLAYER_CREATURE_PICKED_UP:
@@ -274,7 +330,15 @@ public class PlayerTriggerControl extends TriggerControl {
 
         TriggerGeneric.ComparisonType comparisonType = trigger.getComparison();
         if (comparisonType != null && comparisonType != TriggerGeneric.ComparisonType.NONE) {
-            result = compare(target, comparisonType, value);
+            result = switch (comparisonType) {
+                case EQUAL_TO -> target == value;
+                case GREATER_OR_EQUAL_TO -> target >= value;
+                case GREATER_THAN -> target > value;
+                case LESS_OR_EQUAL_TO -> target <= value;
+                case LESS_THAN -> target < value;
+                case NOT_EQUAL_TO -> target != value;
+                case NONE -> false;
+            };
         }
 
         return result;
@@ -346,12 +410,9 @@ public class PlayerTriggerControl extends TriggerControl {
     }
 
     private void makeObjective(TriggerActionData trigger) { // Game part
-        short targetId = trigger.getUserData("targetId", short.class);
-        if (targetId == 0) { // 0 = Off
-            makeObjectiveOff();
-        } else {
-            logger.log(Level.WARNING, "Unsupported MAKE_OBJECTIVE target {0}", targetId);
-        }
+        // The player handler ignores the creature-only Off/Kill/Imprison/Convert byte.
+        // It adds this keeper as a defeat target in the shared campaign list.
+        gameController.markPlayerObjective(playerId);
     }
 
     private void flashActionPoint(TriggerActionData trigger) { // AP part
@@ -399,13 +460,10 @@ public class PlayerTriggerControl extends TriggerControl {
     }
 
     private void displayObjective(TriggerActionData trigger) { // Info part
-//        if (playerId == playerState.getPlayerId()) {
-        // TODO this
-        int objectiveId = trigger.getUserData("objectiveId", int.class); // limit 32767
+        int objectiveId = trigger.getUserData("objectiveId", int.class);
+        playerService.showObjective(objectiveId, playerId);
         short apId = trigger.getUserData("actionPointId", short.class);
-        // if != 0 => Zoom To AP = this
-        zoomToAP(apId);
-//        }
+        if (apId != 0) zoomToAP(apId);
     }
 
     private void playSpeech(TriggerActionData trigger) { // Info part
@@ -471,10 +529,6 @@ public class PlayerTriggerControl extends TriggerControl {
         } else {
             return getPlayerController(playerId).getRoomControl().getTypeCount(levelInfo.getLevelData().getRoomById(roomId));
         }
-    }
-
-    protected void makeObjectiveOff() {
-        //TODO this
     }
 
     private void zoomToAP(short actionPointId) {

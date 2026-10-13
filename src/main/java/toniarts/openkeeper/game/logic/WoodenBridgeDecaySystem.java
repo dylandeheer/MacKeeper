@@ -41,11 +41,21 @@ public final class WoodenBridgeDecaySystem implements IGameLogicUpdatable {
     public WoodenBridgeDecaySystem(EntityData entityData, IGameTimer gameTimer,
             IGameWorldController gameWorldController, IKwdFile kwdFile,
             IMapController mapController, double lifetime) {
+        this(entityData, gameTimer, gameWorldController, kwdFile, mapController, lifetime, true);
+    }
+
+    private WoodenBridgeDecaySystem(EntityData entityData, IGameTimer gameTimer, IGameWorldController gameWorldController,
+            IKwdFile kwdFile, IMapController mapController, double lifetime, boolean initialize) {
         this.entityData = entityData;
         this.gameTimer = gameTimer;
         this.gameWorldController = gameWorldController;
-        initializeExistingBridges(kwdFile, mapController, lifetime);
+        if (initialize) initializeExistingBridges(kwdFile, mapController, lifetime);
         decayingTiles = entityData.getEntities(WoodenBridgeDecay.class, MapTile.class);
+    }
+
+    /** Saved deadlines and intentional absence are authoritative; do not initialize authored bridges again. */
+    public static WoodenBridgeDecaySystem restoreBindings(EntityData data, IGameTimer timer, IGameWorldController world) {
+        return new WoodenBridgeDecaySystem(data, timer, world, null, null, 0, false);
     }
 
     private void initializeExistingBridges(IKwdFile kwdFile, IMapController mapController,
@@ -75,7 +85,7 @@ public final class WoodenBridgeDecaySystem implements IGameLogicUpdatable {
     public void processTick(float tpf) {
         decayingTiles.applyChanges();
         List<Point> expired = new ArrayList<>();
-        for (Entity entity : decayingTiles) {
+        for (Entity entity : decayingTiles.stream().sorted(java.util.Comparator.comparing(Entity::getId)).toList()) {
             if (entity.get(WoodenBridgeDecay.class).endTime <= gameTimer.getGameTime()) {
                 expired.add(entity.get(MapTile.class).p);
                 entityData.removeComponent(entity.getId(), WoodenBridgeDecay.class);

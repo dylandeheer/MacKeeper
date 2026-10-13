@@ -23,6 +23,11 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
+import java.util.List;
+import java.util.TreeSet;
+import java.util.TreeMap;
+import toniarts.openkeeper.game.save.GameEntityData;
+import toniarts.openkeeper.game.save.AnimationSnapshots;
 import toniarts.openkeeper.game.component.ObjectComponent;
 import toniarts.openkeeper.game.component.ObjectViewState;
 import toniarts.openkeeper.game.component.Owner;
@@ -37,11 +42,8 @@ import toniarts.openkeeper.utils.GameTimeCounter;
  */
 public final class DungeonHeartConstruction extends GameTimeCounter {
 
-    private static final float GRAVITY = 9.81f;
-    private final float velocity = 7f;
     private final EntityData entityData;
     private final Set<EntityId> dungeonHeartPlugs;
-    private final Map<EntityId, Set<PlugPiece>> dungeonHeartPlugPieces;
     private final Map<EntityId, Set<EntityId>> dungeonHeartStairs;
     private final Map<EntityId, Set<EntityId>> dungeonHeartArches;
     private final float delay;
@@ -52,10 +54,6 @@ public final class DungeonHeartConstruction extends GameTimeCounter {
         this.delay = delay;
 
         dungeonHeartPlugs = entityData.findEntities(new FieldFilter(ObjectComponent.class, "objectId", FiveByFiveRotatedController.OBJECT_PLUG_ID), ObjectComponent.class, Position.class, Owner.class);
-        dungeonHeartPlugPieces = new HashMap<>();
-        for (EntityId entityId : dungeonHeartPlugs) {
-            dungeonHeartPlugPieces.put(entityId, new HashSet<>());
-        }
 
         // We remove these from sight before the start
         // Stairs
@@ -63,7 +61,7 @@ public final class DungeonHeartConstruction extends GameTimeCounter {
         Set<EntityId> stairs = entityData.findEntities(
                 new FieldFilter(ObjectComponent.class, "objectId", FiveByFiveRotatedController.OBJECT_BIG_STEPS_ID),
                 ObjectComponent.class, Position.class, Owner.class);
-        for (EntityId entityId : dungeonHeartPlugs) {
+        for (EntityId entityId : new TreeSet<>(dungeonHeartPlugs)) {
             short dHeartOwner = entityData.getComponent(entityId, Owner.class).ownerId;
             Set<EntityId> dHeartStairs = new HashSet<>();
             for (EntityId stairsEntityId : stairs) {
@@ -82,7 +80,7 @@ public final class DungeonHeartConstruction extends GameTimeCounter {
         Set<EntityId> arches = entityData.findEntities(
                 new FieldFilter(ObjectComponent.class, "objectId", FiveByFiveRotatedController.OBJECT_ARCHES_ID),
                 ObjectComponent.class, Position.class, Owner.class);
-        for (EntityId entityId : dungeonHeartPlugs) {
+        for (EntityId entityId : new TreeSet<>(dungeonHeartPlugs)) {
             short dHeartOwner = entityData.getComponent(entityId, Owner.class).ownerId;
             Set<EntityId> dHeartArches = new HashSet<>();
             for (EntityId archesEntityId : arches) {
@@ -97,6 +95,44 @@ public final class DungeonHeartConstruction extends GameTimeCounter {
         }
     }
 
+    private DungeonHeartConstruction(EntityData data, AnimationSnapshots.Heart saved) {
+        entityData = data;delay = saved.delay();timeElapsed = saved.elapsed();done = saved.done();
+        dungeonHeartPlugs = new HashSet<>(saved.plugs());
+        dungeonHeartStairs = restoreGroups(saved.stairs());dungeonHeartArches = restoreGroups(saved.arches());
+    }
+
+    public AnimationSnapshots.Heart captureState() {
+        return new AnimationSnapshots.Heart(timeElapsed, delay, done, dungeonHeartPlugs.stream().sorted().toList(),
+                captureGroups(dungeonHeartStairs), captureGroups(dungeonHeartArches));
+    }
+
+    public static DungeonHeartConstruction restoreState(GameEntityData data, AnimationSnapshots.Heart saved) {
+        validateRole(data, saved.plugs(), FiveByFiveRotatedController.OBJECT_PLUG_ID);
+        saved.stairs().values().forEach(ids -> validateRole(data, ids, FiveByFiveRotatedController.OBJECT_BIG_STEPS_ID));
+        saved.arches().values().forEach(ids -> validateRole(data, ids, FiveByFiveRotatedController.OBJECT_ARCHES_ID));
+        return new DungeonHeartConstruction(data, saved);
+    }
+
+    private static void validateRole(GameEntityData data, List<EntityId> ids, short expectedType) {
+        for (var id : ids) {
+            if (!data.wasAllocated(id)) throw new IllegalArgumentException("Unallocated heart construction reference");
+            if (data.hasEntity(id)) {
+                var object = data.getComponent(id, ObjectComponent.class);
+                if (object == null || object.objectId != expectedType) throw new IllegalArgumentException("Heart construction object type differs");
+            }
+        }
+    }
+
+    private static Map<EntityId,List<EntityId>> captureGroups(Map<EntityId,Set<EntityId>> groups) {
+        var result = new TreeMap<EntityId,List<EntityId>>();
+        groups.forEach((id, values) -> result.put(id, values.stream().sorted().toList()));return result;
+    }
+
+    private static Map<EntityId,Set<EntityId>> restoreGroups(Map<EntityId,List<EntityId>> groups) {
+        var result = new HashMap<EntityId,Set<EntityId>>();
+        groups.forEach((id, values) -> result.put(id, new HashSet<>(values)));return result;
+    }
+
     @Override
     public void processTick(float tpf) {
         super.processTick(tpf);
@@ -106,7 +142,7 @@ public final class DungeonHeartConstruction extends GameTimeCounter {
         }
 
         // Process ticks
-        for (EntityId entityId : dungeonHeartPlugs) {
+        for (EntityId entityId : new TreeSet<>(dungeonHeartPlugs)) {
             if (timeElapsed > 11) {
                 //plugDecay.removeFromParent();
                 //spatial.removeControl(this);
@@ -138,7 +174,6 @@ public final class DungeonHeartConstruction extends GameTimeCounter {
         // If done, cleanup
         if (done) {
             dungeonHeartPlugs.clear();
-            dungeonHeartPlugPieces.clear();
             dungeonHeartStairs.clear();
             dungeonHeartArches.clear();
         }
@@ -155,19 +190,13 @@ public final class DungeonHeartConstruction extends GameTimeCounter {
     }
 
     private void showStepsAndArches(EntityId entityId) {
-        for (EntityId stairsEntityId : dungeonHeartStairs.get(entityId)) {
+        for (EntityId stairsEntityId : new TreeSet<>(dungeonHeartStairs.get(entityId))) {
             ObjectViewState originalState = entityData.getComponent(stairsEntityId, ObjectViewState.class);
-            entityData.setComponent(stairsEntityId, new ObjectViewState(originalState.objectId, originalState.state, originalState.animState, true));
+            if (originalState != null) entityData.setComponent(stairsEntityId, new ObjectViewState(originalState.objectId, originalState.state, originalState.animState, true));
         }
-        for (EntityId archesEntityId : dungeonHeartArches.get(entityId)) {
+        for (EntityId archesEntityId : new TreeSet<>(dungeonHeartArches.get(entityId))) {
             ObjectViewState originalState = entityData.getComponent(archesEntityId, ObjectViewState.class);
-            entityData.setComponent(archesEntityId, new ObjectViewState(originalState.objectId, originalState.state, originalState.animState, true));
-        }
-    }
-
-    private static final class PlugPiece {
-
-        public PlugPiece() {
+            if (originalState != null) entityData.setComponent(archesEntityId, new ObjectViewState(originalState.objectId, originalState.state, originalState.animState, true));
         }
     }
 

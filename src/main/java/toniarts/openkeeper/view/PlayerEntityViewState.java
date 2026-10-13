@@ -128,6 +128,7 @@ public class PlayerEntityViewState extends AbstractAppState {
     private final ILoader<DoorViewState> doorLoader;
     private final ILoader<TrapViewState> trapLoader;
 
+    private Thread renderThread;
     private final Map<EntityId, IUnitFlowerControl> flowerControls = new HashMap<>();
     private final Map<EntityId, IEntityViewControl> entityViewControls = new HashMap<>();
 
@@ -180,16 +181,49 @@ public class PlayerEntityViewState extends AbstractAppState {
     @Override
     public void initialize(final AppStateManager stateManager, final Application app) {
         super.initialize(stateManager, app);
-        this.stateManager = stateManager;
+        this.stateManager = stateManager;renderThread = Thread.currentThread();
 
-        // Attach the entities
-        rootNode.attachChild(root);
+        // A staged restore must not tick scene controls before their clocks are bound.
+        if (isEnabled()) rootNode.attachChild(root);
 
         // Start loading stuff (maybe we should do this earlier...)
         objectModelContainer.start();
         creatureModelContainer.start();
         doorModelContainer.start();
         trapModelContainer.start();
+    }
+
+    @Override
+    public void setEnabled(boolean enabled) {
+        super.setEnabled(enabled);
+        if (isInitialized()) {
+            if (enabled) rootNode.attachChild(root);else root.removeFromParent();
+        }
+    }
+
+    public Map<EntityId, WorldViewState.Flower> captureFlowers() {
+        requireFlowerOwner();
+        Map<EntityId, WorldViewState.Flower> result = new java.util.TreeMap<>();
+        flowerControls.forEach((id, control) -> result.put(id, control.captureDisplay()));
+        return Map.copyOf(result);
+    }
+
+    public void restoreFlowers(Map<EntityId, WorldViewState.Flower> saved) {
+        requireFlowerOwner();
+        saved.values().forEach(value -> value.validateDefinition(kwdFile));
+        // Models are derived from restored ECS. Removed/retyped historical models do not reappear.
+        for (var entry : saved.entrySet()) {
+            IUnitFlowerControl control = flowerControls.get(entry.getKey());
+            if (control == null) continue;
+            var current = control.captureDisplay();var value = entry.getValue();
+            if (current.kind() == value.kind() && current.definitionId() == value.definitionId()) control.restoreDisplay(value);
+        }
+    }
+
+    private void requireFlowerOwner() {
+        if (!isInitialized() || renderThread != Thread.currentThread()
+                || stateManager.getState(getId(), PlayerEntityViewState.class) != this)
+            throw new IllegalStateException("Unit indicators belong to the active render-thread view");
     }
 
     @Override

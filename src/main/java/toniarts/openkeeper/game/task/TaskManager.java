@@ -16,6 +16,8 @@
  */
 package toniarts.openkeeper.game.task;
 
+import toniarts.openkeeper.game.task.creature.CollectPayTask;
+
 import com.badlogic.gdx.ai.pfa.GraphPath;
 import com.jme3.math.Vector2f;
 import com.simsilica.es.Entity;
@@ -39,7 +41,7 @@ import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
 import java.util.TreeMap;
-import java.util.function.Consumer;
+import toniarts.openkeeper.game.controller.creature.WorkContinuation;
 import java.util.stream.Collectors;
 import toniarts.openkeeper.game.component.CreatureComponent;
 import toniarts.openkeeper.game.component.Death;
@@ -85,6 +87,7 @@ import toniarts.openkeeper.game.task.worker.CaptureEnemyCreatureTask;
 import toniarts.openkeeper.game.task.worker.CarryEnemyCreatureToPrison;
 import toniarts.openkeeper.game.task.worker.CarryGoldToTreasuryTask;
 import toniarts.openkeeper.game.task.worker.CarryObjectToStorageTask;
+import toniarts.openkeeper.game.save.*;
 import toniarts.openkeeper.game.task.worker.ClaimRoomTask;
 import toniarts.openkeeper.game.task.worker.ClaimTileTask;
 import toniarts.openkeeper.game.task.worker.ClaimWallTileTask;
@@ -119,21 +122,187 @@ public final class TaskManager implements ITaskManager, IGameLogicUpdatable {
     private final IEntityPositionLookup entityPositionLookup;
     private final Map<Variable.MiscVariable.MiscType, Variable.MiscVariable> gameSettings;
     private final EntityData entityData;
-    private final EntitySet taskEntities;
-    private final EntitySet unconsciousEntities;
-    private final EntitySet corpseEntities;
-    private final EntitySet freeObjectEntities;
+    private final TaskIdentityAllocator taskIds;
+    private boolean staged;
+    private boolean restoredBound, closed;
+    private TaskManagerSnapshots.State pendingQueries;
+    private MapListener mapListener;
+    private PlayerActionListener actionListener;
+    private final Map<Short, RoomListener> roomListeners = new java.util.TreeMap<>();
+
+    public TaskIdentityAllocator.State captureAllocationState() {return taskIds.captureState();}
+
+    /** Implemented tile nodes in manager roots, captured only under the simulation boundary.
+     * Objective subgraphs, detached retry nodes and other task kinds are not yet persisted here. */
+    public List<toniarts.openkeeper.game.save.TileTaskSnapshots.State> captureTileTaskStates() {
+        var roots = Collections.newSetFromMap(new java.util.IdentityHashMap<Task, Boolean>());
+        roots.addAll(tasksByIds.values());taskQueues.values().forEach(roots::addAll);
+        roomTasks.values().forEach(entries -> roots.addAll(entries.values()));
+        return roots.stream().filter(toniarts.openkeeper.game.save.TileTaskSnapshots::supports)
+                .sorted(Comparator.comparingLong(Task::getId))
+                .map(task -> toniarts.openkeeper.game.save.TileTaskSnapshots.capture((AbstractTileTask) task)).toList();
+    }
+    public toniarts.openkeeper.game.save.RoomTaskSnapshots.Capture captureRoomTaskStates(Collection<Task> detachedNodes) {
+        var roots = new ArrayList<Task>(detachedNodes);
+        roots.addAll(tasksByIds.values());taskQueues.values().forEach(roots::addAll);
+        roomTasks.values().forEach(entries -> roots.addAll(entries.values()));
+        return toniarts.openkeeper.game.save.RoomTaskSnapshots.captureRoots(roots);
+    }
+
+    public toniarts.openkeeper.game.save.EntityTaskSnapshots.Capture captureEntityTaskStates(Collection<Task> detachedNodes) {
+        var roots = new ArrayList<Task>(detachedNodes);
+        roots.addAll(tasksByIds.values());taskQueues.values().forEach(roots::addAll);
+        roomTasks.values().forEach(entries -> roots.addAll(entries.values()));
+        return toniarts.openkeeper.game.save.EntityTaskSnapshots.captureRoots(roots);
+    }
+
+    public toniarts.openkeeper.game.save.TaskGraphSnapshots.State captureTaskGraph(toniarts.openkeeper.game.save.TaskNodeReferences.Capture references) {
+        var roots = Collections.newSetFromMap(new java.util.IdentityHashMap<Task, Boolean>());
+        roots.addAll(tasksByIds.values());taskQueues.values().forEach(roots::addAll);
+        roomTasks.values().forEach(entries -> roots.addAll(entries.values()));
+        return toniarts.openkeeper.game.save.TaskGraphSnapshots.capture(references,
+                roots.stream().sorted(Comparator.comparingLong(Task::getId)).toList(), taskIds.captureState());
+    }
+
+    /** Capture ownership before traversing the graph, using the same fresh creature-reference index. */
+    public TaskManagerSnapshots.State captureState(TaskNodeReferences.Capture references) {
+        if (closed) throw new IllegalStateException("Task manager is stopped");
+        var registered = new TreeMap<Long, TaskNodeReferences.Reference>();
+        new TreeMap<>(tasksByIds).forEach((id, task) -> registered.put(id, references.reference(task)));
+        var queues = taskQueues.entrySet().stream().map(entry -> new TaskManagerSnapshots.Queue(entry.getKey(),
+                entry.getValue().stream().map(references::reference).toList())).toList();
+        var reservations = new ArrayList<TaskManagerSnapshots.Reservation>();
+        roomTasks.entrySet().stream().sorted(Comparator.comparing(entry -> entry.getKey().getEntityId())).forEach(entry ->
+            entry.getValue().entrySet().stream().sorted(Comparator.<Entry<Point, AbstractCapacityCriticalRoomTask>>comparingInt(e -> e.getKey().y)
+                    .thenComparingInt(e -> e.getKey().x)).forEach(e -> reservations.add(new TaskManagerSnapshots.Reservation(
+                            entry.getKey().getEntityId(), e.getKey(), references.reference(e.getValue())))));
+        var workers = unemployedCreatures.entrySet().stream().map(e -> new TaskManagerSnapshots.Worker(e.getKey().getEntityId(), e.getValue())).toList();
+        return new TaskManagerSnapshots.State(queues, registered, tasksIdsByEntities, reservations, workers,
+                captureQuery(taskEntities, pendingQueries == null ? null : pendingQueries.tasks()),
+                captureQuery(unconsciousEntities, pendingQueries == null ? null : pendingQueries.unconscious()),
+                captureQuery(corpseEntities, pendingQueries == null ? null : pendingQueries.corpses()),
+                captureQuery(freeObjectEntities, pendingQueries == null ? null : pendingQueries.freeObjects()));
+    }
+
+    private static TaskManagerSnapshots.Query captureQuery(SnapshotEntitySet query, TaskManagerSnapshots.Query saved) {
+        var observed = saved == null ? query.getEntityIds().stream().sorted().toList() : saved.observed();
+        var dirty = new java.util.TreeSet<>(query.pendingChanges(new HashSet<>(observed)));
+        if (saved != null) dirty.addAll(saved.dirty());
+        return new TaskManagerSnapshots.Query(observed, List.copyOf(dirty));
+    }
+
+    /** Bind validated ownership after graph/creature edges, without starting listeners or applying query events. */
+    public void bindRestoredState(TaskManagerSnapshots.State saved, TaskGraphSnapshots.Restored graph,
+            java.util.function.Function<EntityId, ICreatureController> creatures,
+            java.util.function.Function<EntityId, IRoomController> rooms) {
+        if (!staged || restoredBound || closed) throw new IllegalStateException("Task manager cannot be rebound");
+        if (!tasksByIds.isEmpty() || !tasksIdsByEntities.isEmpty() || !roomTasks.isEmpty() || !unemployedCreatures.isEmpty()
+                || taskQueues.values().stream().anyMatch(q -> !q.isEmpty())) throw new IllegalStateException("Staged manager was modified");
+        graph.requireBound();graph.requireOwner(this);
+        var data = (GameEntityData) entityData;
+        for (var query : List.of(saved.tasks(), saved.unconscious(), saved.corpses(), saved.freeObjects()))
+            for (var id : query.observed()) if (!data.wasAllocated(id)) throw new IllegalArgumentException("Unallocated task query entity");
+        var queues = new TreeMap<Short, Set<Task>>();
+        for (var queue : saved.queues()) {
+            Set<Task> nodes = new java.util.LinkedHashSet<>();
+            for (var ref : queue.tasks()) {
+                Task task = graph.bindings().resolve(ref), owned = task;
+                while (owned instanceof toniarts.openkeeper.game.task.objective.ObjectiveTaskDecorator wrapper) owned = wrapper.getWrappedTask();
+                if (owned instanceof AbstractTileTask tile && tile.getPlayerId() != queue.player())
+                    throw new IllegalArgumentException("Queued task belongs to a different player");
+                if (!nodes.add(task)) throw new IllegalArgumentException("Equivalent queued tasks");
+            }
+            queues.put(queue.player(), nodes);
+        }
+        if (!queues.keySet().equals(taskQueues.keySet())) throw new IllegalArgumentException("Task queue players differ");
+        var registered = new HashMap<Long, Task>();
+        saved.registered().forEach((id, ref) -> registered.put(id, graph.bindings().resolve(ref)));
+        var reservations = new HashMap<IRoomController, Map<Point, AbstractCapacityCriticalRoomTask>>();
+        for (var reservation : saved.reservations()) {
+            var task = graph.bindings().resolve(reservation.task());var room = rooms.apply(reservation.room());
+            if (!(task instanceof AbstractCapacityCriticalRoomTask capacity) || room == null
+                    || room != capacity.getRoom() || !reservation.room().equals(room.getEntityId())
+                    || !reservation.point().equals(capacity.getTaskLocation()) || capacity.getTaskManager() != this)
+                throw new IllegalArgumentException("Room reservation/task binding differs");
+            reservations.computeIfAbsent(room, ignored -> new HashMap<>()).put(reservation.point(), capacity);
+        }
+        var workers = new TreeMap<ICreatureController, WorkContinuation>(Comparator.comparing(ICreatureController::getEntityId));
+        for (var worker : saved.workers()) {
+            var creature = creatures.apply(worker.creature());
+            if (!data.wasAllocated(worker.creature()) || creature == null || !worker.creature().equals(creature.getEntityId()))
+                throw new IllegalArgumentException("Missing/mismatched unemployed creature");
+            workers.put(creature, worker.continuation());
+        }
+        taskQueues.clear();taskQueues.putAll(queues);tasksByIds.putAll(registered);tasksIdsByEntities.putAll(saved.entityTasks());
+        roomTasks.putAll(reservations);unemployedCreatures.putAll(workers);pendingQueries = saved;restoredBound = true;
+    }
+
+    /** Reconcile saved observations against current components in the ordinary phase order exactly once. */
+    private void reconcileQueries() {
+        var saved = pendingQueries;
+        var dirty = captureQuery(taskEntities, saved.tasks()).dirty();taskEntities.applyChanges();
+        processDeletedTaskIds(removed(taskEntities, saved.tasks()));
+        processAddedTasks(added(taskEntities, saved.tasks()));
+        var observed = new HashSet<>(saved.tasks().observed());var changed = new HashSet<>(dirty);
+        processChangedTasks(taskEntities.stream().filter(e -> observed.contains(e.getId()) && changed.contains(e.getId())).toList());
+        unconsciousEntities.applyChanges();
+        processDeletedUnconsciousEntities(removed(unconsciousEntities, saved.unconscious()));
+        processAddedUnconsciousEntities(added(unconsciousEntities, saved.unconscious()));
+        corpseEntities.applyChanges();
+        processDeletedCorpseEntities(removed(corpseEntities, saved.corpses()));
+        processAddedCorpseEntities(added(corpseEntities, saved.corpses()));
+        freeObjectEntities.applyChanges();
+        processDeletedFreeObjectEntities(removed(freeObjectEntities, saved.freeObjects()));
+        processAddedFreeObjectEntities(added(freeObjectEntities, saved.freeObjects()));
+        pendingQueries = null;
+    }
+    private static List<EntityId> removed(EntitySet current, TaskManagerSnapshots.Query saved) {
+        var ids = current.getEntityIds();return saved.observed().stream().filter(id -> !ids.contains(id)).sorted().toList();
+    }
+    private static List<Entity> added(EntitySet current, TaskManagerSnapshots.Query saved) {
+        var ids = new HashSet<>(saved.observed());return current.stream().filter(e -> !ids.contains(e.getId())).toList();
+    }
+
+    private final SnapshotEntitySet taskEntities;
+    private final SnapshotEntitySet unconsciousEntities;
+    private final SnapshotEntitySet corpseEntities;
+    private final SnapshotEntitySet freeObjectEntities;
     private final Map<Short, Set<Task>> taskQueues;
     private final Map<Long, Task> tasksByIds = new HashMap<>();
     private final Map<EntityId, Long> tasksIdsByEntities = new HashMap<>();
     private final Map<Short, IPlayerController> playerControllers;
     private final Map<IRoomController, Map<Point, AbstractCapacityCriticalRoomTask>> roomTasks = new HashMap<>();
-    private final Map<ICreatureController, Consumer<Boolean>> unemployedCreatures = new HashMap<>();
+    private final Map<ICreatureController, WorkContinuation> unemployedCreatures = new TreeMap<>(Comparator.comparing(ICreatureController::getEntityId));
 
     public TaskManager(EntityData entityData, IGameWorldController gameWorldController, IMapController mapController,
             IObjectsController objectsController, ICreaturesController creaturesController, INavigationService navigationService,
             Collection<IPlayerController> players, ILevelInfo levelInfo, IEntityPositionLookup entityPositionLookup,
             Map<Variable.MiscVariable.MiscType, Variable.MiscVariable> gameSettings) {
+        this(entityData, gameWorldController, mapController, objectsController, creaturesController, navigationService,
+                players, levelInfo, entityPositionLookup, gameSettings, new TaskIdentityAllocator(), false);
+    }
+
+    public TaskManager(EntityData entityData, IGameWorldController gameWorldController, IMapController mapController,
+            IObjectsController objectsController, ICreaturesController creaturesController, INavigationService navigationService,
+            Collection<IPlayerController> players, ILevelInfo levelInfo, IEntityPositionLookup entityPositionLookup,
+            Map<Variable.MiscVariable.MiscType, Variable.MiscVariable> gameSettings, TaskIdentityAllocator ids) {
+        this(entityData, gameWorldController, mapController, objectsController, creaturesController, navigationService,
+                players, levelInfo, entityPositionLookup, gameSettings, ids, false);
+    }
+
+    /** Inert owner for restored task shells. Bind ownership after the graph, then activate with start(). */
+    public static TaskManager stageRestore(EntityData data, IGameWorldController world, IMapController map,
+            IObjectsController objects, ICreaturesController creatures, INavigationService navigation,
+            Collection<IPlayerController> players, ILevelInfo level, IEntityPositionLookup positions,
+            Map<Variable.MiscVariable.MiscType, Variable.MiscVariable> settings, TaskIdentityAllocator ids) {
+        return new TaskManager(data, world, map, objects, creatures, navigation, players, level, positions, settings, ids, true);
+    }
+
+    private TaskManager(EntityData entityData, IGameWorldController gameWorldController, IMapController mapController,
+            IObjectsController objectsController, ICreaturesController creaturesController, INavigationService navigationService,
+            Collection<IPlayerController> players, ILevelInfo levelInfo, IEntityPositionLookup entityPositionLookup,
+            Map<Variable.MiscVariable.MiscType, Variable.MiscVariable> gameSettings, TaskIdentityAllocator ids, boolean staged) {
+        this.taskIds = java.util.Objects.requireNonNull(ids);this.staged = staged;
         this.entityData = entityData;
         this.mapController = mapController;
         this.gameWorldController = gameWorldController;
@@ -146,7 +315,7 @@ public final class TaskManager implements ITaskManager, IGameLogicUpdatable {
 
         // Set the players
         // Create a queue for each managed player (everybody except Good & Neutral)
-        taskQueues = HashMap.newHashMap(players.size());
+        taskQueues = new TreeMap<>();
         playerControllers = HashMap.newHashMap(players.size());
         for (IPlayerController playerController : players) {
             Keeper keeper = playerController.getKeeper();
@@ -154,40 +323,50 @@ public final class TaskManager implements ITaskManager, IGameLogicUpdatable {
             playerControllers.put(keeper.getId(), playerController);
 
             if (keeper.getId() != Player.GOOD_PLAYER_ID && keeper.getId() != Player.NEUTRAL_PLAYER_ID) {
-                taskQueues.put(keeper.getId(), new HashSet<>());
+                taskQueues.put(keeper.getId(), new java.util.LinkedHashSet<>());
             }
         }
 
         // Scan the initial tasks
-        scanInitialTasks();
+        if (!staged) scanInitialTasks();
 
         // Add task listeners
-        addListeners(players);
+        if (!staged) addListeners(players);
 
         // Listen to entities having a task, for cleanup purposes
-        taskEntities = entityData.getEntities(TaskComponent.class);
-        processAddedTasks(taskEntities);
+        taskEntities = new SnapshotEntitySet(entityData, TaskComponent.class);
+        if (!staged) processAddedTasks(taskEntities);
 
         // Listen to rescue/capture missions
-        unconsciousEntities = entityData.getEntities(CreatureComponent.class, Health.class, Owner.class, Unconscious.class);
-        processAddedUnconsciousEntities(unconsciousEntities);
+        unconsciousEntities = new SnapshotEntitySet(entityData, CreatureComponent.class, Health.class, Owner.class, Unconscious.class);
+        if (!staged) processAddedUnconsciousEntities(unconsciousEntities);
 
         // Listen to corpse robbing missions
-        corpseEntities = entityData.getEntities(CreatureComponent.class, Death.class);
-        processAddedCorpseEntities(corpseEntities);
+        corpseEntities = new SnapshotEntitySet(entityData, CreatureComponent.class, Death.class);
+        if (!staged) processAddedCorpseEntities(corpseEntities);
 
         // Listen to object picking up missions
-        freeObjectEntities = entityData.getEntities(ObjectComponent.class, Position.class, Placeable.class);
-        processAddedFreeObjectEntities(freeObjectEntities);
+        freeObjectEntities = new SnapshotEntitySet(entityData, ObjectComponent.class, Position.class, Placeable.class);
+        if (!staged) processAddedFreeObjectEntities(freeObjectEntities);
     }
 
     @Override
     public void start() {
-
+        if (closed) throw new IllegalStateException("Task manager is stopped");
+        if (staged) {
+            if (!restoredBound) throw new IllegalStateException("Task manager restoration is not complete");
+            try {addListeners(playerControllers.values());staged = false;}
+            catch (RuntimeException | Error failure) {stop();throw failure;}
+        }
     }
 
     @Override
     public void stop() {
+        if (closed) return;
+        closed = true;
+        if (mapListener != null) mapController.removeListener(mapListener);
+        roomListeners.forEach((player, listener) -> mapController.removeListener(player, listener));
+        if (actionListener != null) gameWorldController.removeListener(actionListener);
         taskEntities.release();
         unconsciousEntities.release();
         corpseEntities.release();
@@ -196,38 +375,40 @@ public final class TaskManager implements ITaskManager, IGameLogicUpdatable {
 
     @Override
     public void processTick(float tpf) {
+        if (staged || closed) throw new IllegalStateException("Task manager is not active");
+        if (pendingQueries != null) {reconcileQueries();return;}
         if (taskEntities.applyChanges()) {
-            processDeletedTasks(taskEntities.getRemovedEntities());
+            processDeletedTaskIds(taskEntities.getRemovedEntities().stream().map(Entity::getId).toList());
             processAddedTasks(taskEntities.getAddedEntities());
             processChangedTasks(taskEntities.getChangedEntities());
         }
         if (unconsciousEntities.applyChanges()) {
-            processDeletedUnconsciousEntities(unconsciousEntities.getRemovedEntities());
+            processDeletedUnconsciousEntities(unconsciousEntities.getRemovedEntities().stream().map(Entity::getId).toList());
             processAddedUnconsciousEntities(unconsciousEntities.getAddedEntities());
         }
         if (corpseEntities.applyChanges()) {
-            processDeletedCorpseEntities(corpseEntities.getRemovedEntities());
+            processDeletedCorpseEntities(corpseEntities.getRemovedEntities().stream().map(Entity::getId).toList());
             processAddedCorpseEntities(corpseEntities.getAddedEntities());
         }
         if (freeObjectEntities.applyChanges()) {
-            processDeletedFreeObjectEntities(freeObjectEntities.getRemovedEntities());
+            processDeletedFreeObjectEntities(freeObjectEntities.getRemovedEntities().stream().map(Entity::getId).toList());
             processAddedFreeObjectEntities(freeObjectEntities.getAddedEntities());
         }
     }
 
-    private void processAddedTasks(Set<Entity> entities) {
-        for (Entity entity : entities) {
+    private void processAddedTasks(Collection<Entity> entities) {
+        for (Entity entity : entities.stream().sorted(Comparator.comparing(Entity::getId)).toList()) {
             long taskId = entity.get(TaskComponent.class).taskId;
             tasksIdsByEntities.put(entity.getId(), taskId);
         }
     }
 
-    private void processDeletedTasks(Set<Entity> entities) {
-        for (Entity entity : entities) {
-            Long taskId = tasksIdsByEntities.remove(entity.getId());
+    private void processDeletedTaskIds(Collection<EntityId> entities) {
+        for (EntityId id : entities.stream().sorted().toList()) {
+            Long taskId = tasksIdsByEntities.remove(id);
             Task task = tasksByIds.get(taskId);
             if (task != null) {
-                task.unassign(creaturesController.createController(entity.getId()));
+                task.unassign(creaturesController.createController(id));
                 if (task.getAssigneeCount() == 0 && task.isRemovable()) {
                     //tasksByIds.remove(taskId);
                 }
@@ -235,8 +416,8 @@ public final class TaskManager implements ITaskManager, IGameLogicUpdatable {
         }
     }
 
-    private void processChangedTasks(Set<Entity> entities) {
-        for (Entity entity : entities) {
+    private void processChangedTasks(Collection<Entity> entities) {
+        for (Entity entity : entities.stream().sorted(Comparator.comparing(Entity::getId)).toList()) {
             long taskId = entity.get(TaskComponent.class).taskId;
             Long oldTaskId = tasksIdsByEntities.put(entity.getId(), taskId);
             if (oldTaskId == null || taskId == oldTaskId) {
@@ -253,10 +434,10 @@ public final class TaskManager implements ITaskManager, IGameLogicUpdatable {
         }
     }
 
-    private void processAddedUnconsciousEntities(Set<Entity> entities) {
+    private void processAddedUnconsciousEntities(Collection<Entity> entities) {
 
         // Add rescue mission for the own troops and capture for the enemy
-        for (Entity entity : entities) {
+        for (Entity entity : entities.stream().sorted(Comparator.comparing(Entity::getId)).toList()) {
             Owner owner = entity.get(Owner.class);
             for (Entry<Short, Set<Task>> entry : taskQueues.entrySet()) {
 
@@ -264,11 +445,11 @@ public final class TaskManager implements ITaskManager, IGameLogicUpdatable {
                 if (entry.getKey() == owner.ownerId) {
 
                     // Rescue
-                    task = new RescueCreatureTask(this, navigationService, mapController, creaturesController.createController(entity.getId()), entry.getKey());
+                    task = new RescueCreatureTask(taskIds, this, navigationService, mapController, creaturesController.createController(entity.getId()), entry.getKey());
                 } else if (playerControllers.get(entry.getKey()).getKeeper().isEnemy(owner.ownerId)) {
 
                     // Capture
-                    task = new CaptureEnemyCreatureTask(navigationService, mapController, creaturesController.createController(entity.getId()), entry.getKey(), this);
+                    task = new CaptureEnemyCreatureTask(taskIds, navigationService, mapController, creaturesController.createController(entity.getId()), entry.getKey(), this);
                 }
 
                 if (task == null) {
@@ -281,22 +462,22 @@ public final class TaskManager implements ITaskManager, IGameLogicUpdatable {
         }
     }
 
-    private void processDeletedUnconsciousEntities(Set<Entity> entities) {
+    private void processDeletedUnconsciousEntities(Collection<EntityId> entities) {
         // TODO:
     }
 
-    private void processAddedCorpseEntities(Set<Entity> entities) {
+    private void processAddedCorpseEntities(Collection<Entity> entities) {
         // TODO:
     }
 
-    private void processDeletedCorpseEntities(Set<Entity> entities) {
+    private void processDeletedCorpseEntities(Collection<EntityId> entities) {
         // TODO:
     }
 
-    private void processAddedFreeObjectEntities(Set<Entity> entities) {
+    private void processAddedFreeObjectEntities(Collection<Entity> entities) {
 
         // Add fetch object missions for changed objects
-        for (Entity entity : entities) {
+        for (Entity entity : entities.stream().sorted(Comparator.comparing(Entity::getId)).toList()) {
             Point p = WorldUtils.vectorToPoint(entity.get(Position.class).position);
             IMapTileInformation tile = mapController.getMapData().getTile(p);
             short playerId = tile.getOwnerId();
@@ -307,14 +488,14 @@ public final class TaskManager implements ITaskManager, IGameLogicUpdatable {
         }
     }
 
-    private void processDeletedFreeObjectEntities(Set<Entity> entities) {
+    private void processDeletedFreeObjectEntities(Collection<EntityId> entities) {
         // TODO:
     }
 
     private void addListeners(Collection<IPlayerController> players) {
 
         // We want to be notified on tile changes, we are event based, not constantly scanning type
-        this.mapController.addListener(new MapListener() {
+        mapListener = new MapListener() {
 
             @Override
             public void onTilesChange(List<Point> updatedTiles) {
@@ -344,12 +525,13 @@ public final class TaskManager implements ITaskManager, IGameLogicUpdatable {
                 // Not interested
             }
 
-        });
+        };
+        this.mapController.addListener(mapListener);
 
         // Bridges! They open up new opportunities in new lands
         // Here we got capturing
         for (IPlayerController player : players) {
-            this.mapController.addListener(player.getKeeper().getId(), new RoomListener() {
+            RoomListener listener = new RoomListener() {
 
                 @Override
                 public void onBuild(IRoomController room) {
@@ -391,11 +573,13 @@ public final class TaskManager implements ITaskManager, IGameLogicUpdatable {
                         }
                     }
                 }
-            });
+            };
+            roomListeners.put(player.getKeeper().getId(), listener);
+            this.mapController.addListener(player.getKeeper().getId(), listener);
         }
 
         // Bridges! They open up new opportunities in new lands
-        this.gameWorldController.addListener(new PlayerActionListener() {
+        actionListener = new PlayerActionListener() {
 
             @Override
             public void onBuild(short keeperId, List<Point> tiles) {
@@ -442,7 +626,8 @@ public final class TaskManager implements ITaskManager, IGameLogicUpdatable {
                 }
             }
 
-        });
+        };
+        this.gameWorldController.addListener(actionListener);
     }
 
     private void scanInitialTasks() {
@@ -508,19 +693,19 @@ public final class TaskManager implements ITaskManager, IGameLogicUpdatable {
 
         // Dig
         if (mapController.isSelected(mapTile, playerId)) {
-            addTask(playerId, new DigTileTask(navigationService, mapController, tile, playerId));
+            addTask(playerId, new DigTileTask(taskIds, navigationService, mapController, tile, playerId));
         } // Claim wall
         else if (mapController.isClaimableWall(mapTile, terrain, playerId)) {
-            addTask(playerId, new ClaimWallTileTask(navigationService, mapController, tile, playerId));
+            addTask(playerId, new ClaimWallTileTask(taskIds, navigationService, mapController, tile, playerId));
         } // Claim
         else if (mapController.isClaimableTile(mapTile, terrain, playerId)) {
-            addTask(playerId, new ClaimTileTask(navigationService, mapController, tile, playerId));
+            addTask(playerId, new ClaimTileTask(taskIds, navigationService, mapController, tile, playerId));
         } // Repair wall
         else if (mapController.isRepairableWall(mapTile, terrain, playerId)) {
-            addTask(playerId, new RepairWallTileTask(navigationService, mapController, tile, playerId));
+            addTask(playerId, new RepairWallTileTask(taskIds, navigationService, mapController, tile, playerId));
         } // Claim room
         else if (mapController.isClaimableRoom(mapTile, terrain, playerId)) {
-            addTask(playerId, new ClaimRoomTask(navigationService, mapController, tile, playerId));
+            addTask(playerId, new ClaimRoomTask(taskIds, navigationService, mapController, tile, playerId));
         }
     }
 
@@ -553,6 +738,29 @@ public final class TaskManager implements ITaskManager, IGameLogicUpdatable {
         } else {
             logger.log(Level.WARNING, "Already a task {0} for player {1}!", new Object[]{task, playerId});
         }
+    }
+
+    @Override
+    public boolean assignPaydayTask(ICreatureController creature) {
+        Point current = creature.getCreatureCoordinates();
+        List<IRoomController> rooms = new ArrayList<>(mapController.getRoomsByFunction(ObjectType.GOLD, creature.getOwnerId()));
+        // A sorted list retains equally distant rooms; a distance-keyed map silently discards them.
+        rooms.sort(java.util.Comparator.comparingInt(room -> getShortestDistance(current, room.getRoomInstance().getCoordinates().toArray(new Point[0]))));
+        for (IRoomController room : rooms) {
+            if (room.isRemoved() || room.isDestroyed() || room.getOwnerId() != creature.getOwnerId()
+                    || gameWorldController.getGoldAvailableForPayday(creature.getOwnerId(), room) <= 0) continue;
+            for (Point target : room.getRoomInstance().getCoordinates()) {
+                if (!room.isTileAccessible(null, target)) continue;
+                if (!current.equals(target) && navigationService.findPath(current, target, creature) == null) continue;
+                Task task = new CollectPayTask(taskIds, navigationService, mapController,
+                        target, creature.getOwnerId(), room, gameWorldController, entityData);
+                if (!task.isValid(creature)) continue;
+                task.assign(creature, true);
+                tasksByIds.put(task.getId(), task);
+                return true;
+            }
+        }
+        return false;
     }
 
     @Override
@@ -611,7 +819,7 @@ public final class TaskManager implements ITaskManager, IGameLogicUpdatable {
 
             // Assign
             if (!coordinates.isEmpty()) {
-                Point target = Utils.getRandomItem(coordinates);
+                Point target = Utils.getRandomItem(coordinates, objectsController.getRandom());
                 GraphPath<IMapTileInformation> path = navigationService.findPath(creature.getCreatureCoordinates(), target, creature);
                 if (path != null || target == creature.getCreatureCoordinates()) {
 
@@ -656,22 +864,22 @@ public final class TaskManager implements ITaskManager, IGameLogicUpdatable {
     private AbstractTask getRoomTask(ObjectType objectType, Point target, EntityId targetEntity, ICreatureController creature, IRoomController room) {
         switch (objectType) {
             case GOLD -> {
-                return new CarryGoldToTreasuryTask(navigationService, mapController, target, creature.getOwnerId(), room, gameWorldController);
+                return new CarryGoldToTreasuryTask(taskIds, navigationService, mapController, target, creature.getOwnerId(), room, gameWorldController);
             }
             case LAIR -> {
-                return new ClaimLair(navigationService, mapController, target, creature.getOwnerId(), room, this);
+                return new ClaimLair(taskIds, navigationService, mapController, target, creature.getOwnerId(), room, this);
             }
             case RESEARCHER -> {
-                return new Research(navigationService, mapController, target, creature.getOwnerId(), room, this, playerControllers.get(creature.getOwnerId()).getResearchControl(), objectsController);
+                return new Research(taskIds, navigationService, mapController, target, creature.getOwnerId(), room, this, playerControllers.get(creature.getOwnerId()).getResearchControl(), objectsController);
             }
             case PRISONER -> {
-                return new CarryEnemyCreatureToPrison(navigationService, mapController, target, creature.getOwnerId(), room, this, creaturesController.createController(targetEntity));
+                return new CarryEnemyCreatureToPrison(taskIds, navigationService, mapController, target, creature.getOwnerId(), room, this, creaturesController.createController(targetEntity));
             }
             case SPECIAL, SPELL_BOOK -> {
-                return new CarryObjectToStorageTask(navigationService, mapController, target, creature.getOwnerId(), room, this, objectsController.createController(targetEntity));
+                return new CarryObjectToStorageTask(taskIds, navigationService, mapController, target, creature.getOwnerId(), room, this, objectsController.createController(targetEntity));
             }
             case TRAINEE -> {
-                return new Train(navigationService, mapController, target, creature.getOwnerId(), room, this, gameWorldController, gameSettings, playerControllers.get(creature.getOwnerId()));
+                return new Train(taskIds, navigationService, mapController, target, creature.getOwnerId(), room, this, gameWorldController, gameSettings, playerControllers.get(creature.getOwnerId()));
             }
             default -> {
                 logger.log(Level.DEBUG, "No task defined for " + objectType);
@@ -698,11 +906,17 @@ public final class TaskManager implements ITaskManager, IGameLogicUpdatable {
         AbstractObjectiveTask task = null;
         switch (objective) {
             case SEND_TO_ACTION_POINT: {
-                task = new SendToActionPoint(navigationService, mapController, levelInfo.getActionPoint(creature.getObjectiveTargetActionPointId()), creature.getOwnerId());
+                task = new SendToActionPoint(taskIds, navigationService, mapController, levelInfo.getActionPoint(creature.getObjectiveTargetActionPointId()), creature.getOwnerId());
                 break;
             }
             case KILL_PLAYER: {
-                task = new KillPlayer(navigationService, mapController, levelInfo, creature.getObjectiveTargetPlayerId(), creature);
+                Short targetPlayerId = creature.getObjectiveTargetPlayerId();
+                if (targetPlayerId == null) return false;
+                Keeper targetPlayer = levelInfo.getPlayer(targetPlayerId);
+                if (targetPlayer == null || targetPlayer.isDestroyed() || targetPlayer.getDungeonHeartLocation() == null) {
+                    return false;
+                }
+                task = new KillPlayer(taskIds, navigationService, mapController, levelInfo, targetPlayerId, creature);
                 break;
             }
         }
@@ -717,7 +931,7 @@ public final class TaskManager implements ITaskManager, IGameLogicUpdatable {
     }
 
     private AbstractTask getObjectTask(IObjectController gameObject, short playerId) {
-        return new FetchObjectTask(this, navigationService, mapController, gameObject, playerId);
+        return new FetchObjectTask(taskIds, this, navigationService, mapController, gameObject, playerId);
     }
 
     @Override
@@ -745,7 +959,7 @@ public final class TaskManager implements ITaskManager, IGameLogicUpdatable {
 
     @Override
     public boolean assignSleepTask(ICreatureController creature) {
-        GoToSleep task = new GoToSleep(navigationService, mapController, creature);
+        GoToSleep task = new GoToSleep(taskIds, navigationService, mapController, creature);
         if (task.isReachable(creature)) {
             task.assign(creature, true);
             tasksByIds.put(task.getId(), task);
@@ -781,7 +995,7 @@ public final class TaskManager implements ITaskManager, IGameLogicUpdatable {
         for (EntityId food : foods) {
             Point target = entityPositionLookup.getEntityLocation(food).getLocation();
             if (target == creature.getCreatureCoordinates() || navigationService.findPath(creature.getCreatureCoordinates(), target, creature) != null) {
-                GoToEat task = new GoToEat(navigationService, mapController, entityPositionLookup, food, entityData, creature);
+                GoToEat task = new GoToEat(taskIds, navigationService, mapController, entityPositionLookup, food, entityData, creature);
                 task.assign(creature, true);
                 tasksByIds.put(task.getId(), task);
                 return true;
@@ -815,12 +1029,14 @@ public final class TaskManager implements ITaskManager, IGameLogicUpdatable {
     }
 
     @Override
-    public void addToUnemployedWorkerQueue(ICreatureController creature, Consumer<Boolean> workResult) {
-        unemployedCreatures.put(creature, workResult);
+    public void addToUnemployedWorkerQueue(ICreatureController creature, WorkContinuation workResult) {
+        if (staged || closed) throw new IllegalStateException("Task manager is not active");
+        unemployedCreatures.put(java.util.Objects.requireNonNull(creature), java.util.Objects.requireNonNull(workResult));
     }
 
     @Override
     public void processUnemployedWorkerQueue() {
+        if (staged || closed) throw new IllegalStateException("Task manager is not active");
         if (unemployedCreatures.isEmpty()) {
             return;
         }
@@ -828,7 +1044,7 @@ public final class TaskManager implements ITaskManager, IGameLogicUpdatable {
         unemployedCreatures
                 .entrySet()
                 .stream()
-                .collect(Collectors.groupingBy((creature) -> creature.getKey().getOwnerId()))
+                .collect(Collectors.groupingBy((creature) -> creature.getKey().getOwnerId(), TreeMap::new, Collectors.toList()))
                 .entrySet()
                 .forEach((creaturesByOwnerId) -> {
                     processUnemployedWorkers(taskQueues.getOrDefault(creaturesByOwnerId.getKey(), Collections.emptySet()), creaturesByOwnerId.getValue());
@@ -836,17 +1052,17 @@ public final class TaskManager implements ITaskManager, IGameLogicUpdatable {
         unemployedCreatures.clear();
     }
 
-    private void processUnemployedWorkers(Set<Task> tasks, List<Entry<ICreatureController, Consumer<Boolean>>> workers) {
-        Set<Task> taskQueue = new HashSet<>(tasks);
-        Map<ICreatureController, Consumer<Boolean>> unemployedWorkers = workers
+    private void processUnemployedWorkers(Set<Task> tasks, List<Entry<ICreatureController, WorkContinuation>> workers) {
+        Set<Task> taskQueue = new java.util.LinkedHashSet<>(tasks);
+        Map<ICreatureController, WorkContinuation> unemployedWorkers = workers
                 .stream()
-                .collect(Collectors.toMap((entry) -> entry.getKey(), (entry) -> entry.getValue()));
+                .collect(Collectors.toMap((entry) -> entry.getKey(), (entry) -> entry.getValue(), (a, b) -> b, java.util.LinkedHashMap::new));
 
         // Process each available task for each available worker
         List<TaskWorkerPriority> priorizedTasks = new LinkedList<>();
-        for (Entry<ICreatureController, Consumer<Boolean>> workerEntry : unemployedWorkers.entrySet()) {
+        for (Entry<ICreatureController, WorkContinuation> workerEntry : unemployedWorkers.entrySet()) {
             ICreatureController creature = workerEntry.getKey();
-            Consumer<Boolean> workResult = workerEntry.getValue();
+            WorkContinuation workResult = workerEntry.getValue();
             final Point currentLocation = creature.getCreatureCoordinates();
 
             // Give points by distance and priority, no need to know can we do the task as this point as it might be a heavy check
@@ -883,7 +1099,7 @@ public final class TaskManager implements ITaskManager, IGameLogicUpdatable {
 
                 // Assign task
                 taskWorkerPriority.task.assign(taskWorkerPriority.creature, true);
-                taskWorkerPriority.workResult.accept(Boolean.TRUE);
+                taskWorkerPriority.workResult.complete(taskWorkerPriority.creature, true);
 
                 // Prune list and re-sort tasks
                 unemployedWorkers.remove(taskWorkerPriority.creature);
@@ -894,7 +1110,7 @@ public final class TaskManager implements ITaskManager, IGameLogicUpdatable {
 
         // Finally anybody without assigment will get feedback
         unemployedWorkers.forEach((t, u) -> {
-            u.accept(Boolean.FALSE);
+            u.complete(t, false);
         });
     }
 
@@ -913,10 +1129,13 @@ public final class TaskManager implements ITaskManager, IGameLogicUpdatable {
         }
 
         // If the same, compare by date added
-        return o1.task.getTaskCreated().compareTo(o2.task.getTaskCreated());
+        result = o1.task.getTaskCreated().compareTo(o2.task.getTaskCreated());
+        if (result != 0) return result;
+        result = Long.compare(o1.task.getId(), o2.task.getId());
+        return result != 0 ? result : o1.creature.getEntityId().compareTo(o2.creature.getEntityId());
     }
 
-    private static record TaskWorkerPriority(Task task, ICreatureController creature, int points, Consumer<Boolean> workResult) {
+    private static record TaskWorkerPriority(Task task, ICreatureController creature, int points, WorkContinuation workResult) {
 
     }
 

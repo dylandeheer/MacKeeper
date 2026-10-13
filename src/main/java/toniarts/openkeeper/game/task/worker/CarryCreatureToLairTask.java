@@ -30,15 +30,26 @@ import toniarts.openkeeper.utils.WorldUtils;
  *
  * @author Toni Helenius <helenius.toni@gmail.com>
  */
-public final class CarryCreatureToLairTask extends AbstractTileTask {
+public final class CarryCreatureToLairTask extends AbstractTileTask implements toniarts.openkeeper.game.task.CreatureTargetTask {
 
-    private final ICreatureController creature;
+    private final toniarts.openkeeper.game.task.TaskTarget<ICreatureController> creature;
     private boolean executed = false;
 
-    public CarryCreatureToLairTask(final INavigationService navigationService, final IMapController mapController, ICreatureController creature, short playerId) {
-        super(navigationService, mapController, creature.getLairLocation(), playerId);
-        this.creature = creature;
+    public CarryCreatureToLairTask(toniarts.openkeeper.game.task.TaskIdentityAllocator taskIds, final INavigationService navigationService, final IMapController mapController, ICreatureController creature, short playerId) {
+        super(taskIds, navigationService, mapController, creature.getLairLocation(), playerId);
+        this.creature = toniarts.openkeeper.game.task.TaskTarget.bound(creature);
     }
+
+    public CarryCreatureToLairTask(toniarts.openkeeper.game.task.TaskIdentityAllocator ids, toniarts.openkeeper.game.data.TaskBaseState saved,
+            INavigationService navigation, IMapController map, toniarts.openkeeper.utils.Point point, short player,
+            com.simsilica.es.EntityId targetCreature, boolean executed) {
+        super(ids, saved, navigation, map, point, player);
+        creature = toniarts.openkeeper.game.task.TaskTarget.pending(targetCreature);
+        this.executed = executed;
+    }
+
+    @Override public toniarts.openkeeper.game.task.TaskTarget<ICreatureController> creatureTarget() {return creature;}
+    public boolean hasExecuted() {return executed;}
 
     @Override
     public Vector2f getTarget(ICreatureController creature) {
@@ -47,7 +58,7 @@ public final class CarryCreatureToLairTask extends AbstractTileTask {
 
     @Override
     public boolean isValid(ICreatureController creature) {
-        return !executed && this.creature.hasLair() && this.creature.isDragged() && !this.creature.isDead();
+        return !executed && this.creature.get().hasLair() && this.creature.get().isDragged() && !this.creature.get().isDead();
     }
 
     @Override
@@ -57,19 +68,21 @@ public final class CarryCreatureToLairTask extends AbstractTileTask {
 
     @Override
     public void executeTask(ICreatureController creature, float executionDuration) {
-        this.creature.sleep();
+        this.creature.get();
+        this.creature.get().sleep();
         executed = true;
 
         // Set the dragged state
-        this.creature.setHaulable(null);
+        this.creature.get().setHaulable(null);
     }
 
     @Override
     public void unassign(ICreatureController creature) {
+        this.creature.get();
         super.unassign(creature);
 
         // Set the dragged state
-        this.creature.setHaulable(null);
+        this.creature.get().setHaulable(null);
     }
 
     @Override
@@ -79,7 +92,7 @@ public final class CarryCreatureToLairTask extends AbstractTileTask {
 
     @Override
     public EntityId getTaskTarget() {
-        return creature.getEntityId();
+        return creature.id();
     }
 
 }

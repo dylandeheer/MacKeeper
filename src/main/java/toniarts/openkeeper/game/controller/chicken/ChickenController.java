@@ -59,16 +59,42 @@ public final class ChickenController extends EntityController implements IChicke
     private final StateMachine<IChickenController, ChickenState> stateMachine;
     private float motionless = 0;
 
+    public record SavedState(EntityId entityId, ChickenState current, ChickenState previous,
+            ChickenState global, float motionless) {
+        public SavedState {
+            if (entityId == null || entityId.getId() < 0 || !Float.isFinite(motionless) || motionless < 0)
+                throw new IllegalArgumentException("Invalid chicken controller state");
+        }
+    }
+
+    public SavedState captureState() {
+        return new SavedState(entityId, stateMachine.getCurrentState(), stateMachine.getPreviousState(),
+                stateMachine.getGlobalState(), motionless);
+    }
+
+    public static ChickenController restoreState(SavedState state, EntityData data, GameObject egg, GameObject chicken,
+            INavigationService navigation, IGameTimer timer, IObjectsController objects, IMapController map) {
+        return new ChickenController(state.entityId(), data, egg, chicken, navigation, timer, objects, map, state);
+    }
+
     public ChickenController(EntityId entityId, EntityData entityData, GameObject eggObject, GameObject chickenObject,
             INavigationService navigationService, IGameTimer gameTimer, IObjectsController objectsController,
             IMapController mapController) {
+        this(entityId, entityData, eggObject, chickenObject, navigationService, gameTimer, objectsController, mapController, null);
+    }
+
+    private ChickenController(EntityId entityId, EntityData entityData, GameObject eggObject, GameObject chickenObject,
+            INavigationService navigationService, IGameTimer gameTimer, IObjectsController objectsController,
+            IMapController mapController, SavedState saved) {
         super(entityId, entityData, objectsController, mapController);
 
         this.navigationService = navigationService;
         this.eggObject = eggObject;
         this.chickenObject = chickenObject;
         this.gameTimer = gameTimer;
-        this.stateMachine = new DefaultStateMachine<>(this);
+        this.stateMachine = saved == null ? new DefaultStateMachine<>(this)
+                : new toniarts.openkeeper.game.controller.state.RestoredStateMachine<>(this, saved.current(), saved.previous(), saved.global());
+        if (saved != null) motionless = saved.motionless();
     }
 
     @Override

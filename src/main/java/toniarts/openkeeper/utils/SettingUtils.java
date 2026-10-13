@@ -18,15 +18,12 @@ package toniarts.openkeeper.utils;
 
 import com.jme3.system.AppSettings;
 import java.io.BufferedInputStream;
-import java.io.BufferedOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.OutputStream;
 import java.lang.System.Logger;
 import java.lang.System.Logger.Level;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 
 
 
@@ -34,7 +31,7 @@ public final class SettingUtils {
 
     private static final Logger logger = System.getLogger(SettingUtils.class.getName());
     
-    private final static Path SETTINGS_FILE = Paths.get("openkeeper.properties");
+    private final static Path SETTINGS_FILE = AppPaths.dataDirectory().resolve("setup.properties");
     private final AppSettings settings;
     private final static SettingUtils instance;
 
@@ -45,6 +42,10 @@ public final class SettingUtils {
     private SettingUtils(AppSettings settings) {
         this.settings = settings;
         loadSettings();
+        String folder = System.getProperty("mackeeper.dk2.dir");
+        if (folder != null && !folder.isBlank()) {
+            setDungeonKeeperFolder(folder);
+        }
     }
 
     public static SettingUtils getInstance() {
@@ -53,6 +54,18 @@ public final class SettingUtils {
 
     public AppSettings getSettings() {
         return settings;
+    }
+
+    public void setDungeonKeeperFolder(String folder) {
+        updateDungeonKeeperFolder(settings, folder);
+    }
+
+    static void updateDungeonKeeperFolder(AppSettings settings, String folder) {
+        String normalized = Path.of(folder).toAbsolutePath().normalize().toString() + java.io.File.separator;
+        if (!normalized.equals(settings.getString("DungeonKeeperIIFolder"))) {
+            settings.clear(); // Converted data from another installation cannot be reused.
+            settings.putString("DungeonKeeperIIFolder", normalized);
+        }
     }
 
     private void loadSettings() {
@@ -69,9 +82,8 @@ public final class SettingUtils {
     }
 
     public void saveSettings() {
-        try (OutputStream out = Files.newOutputStream(SETTINGS_FILE);
-                BufferedOutputStream bout = new BufferedOutputStream(out)) {
-            settings.save(bout);
+        try {
+            AppPaths.writeAtomically(SETTINGS_FILE, settings::save);
         } catch (IOException ex) {
             logger.log(Level.WARNING, "Settings file failed to save!", ex);
         }

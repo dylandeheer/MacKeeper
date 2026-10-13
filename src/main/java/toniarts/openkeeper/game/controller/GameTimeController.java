@@ -25,11 +25,30 @@ import toniarts.openkeeper.utils.GameTimeCounter;
 public final class GameTimeController extends GameTimeCounter implements IGameTimer {
 
     private long ticks;
+    private final State initialState;
+
+    public record State(long ticks, double elapsedSeconds) {
+        public State {
+            if (ticks < 0 || !Double.isFinite(elapsedSeconds) || elapsedSeconds < 0) {
+                throw new IllegalArgumentException("Invalid game clock state");
+            }
+        }
+    }
+
+    public GameTimeController() { this(new State(0, 0)); }
+
+    /** A restored clock starts at its saved value rather than resetting to zero. */
+    public GameTimeController(State initialState) {
+        this.initialState = java.util.Objects.requireNonNull(initialState);
+        ticks = initialState.ticks();timeElapsed = initialState.elapsedSeconds();
+    }
+
+    public State captureState() { return new State(ticks, timeElapsed); }
 
     @Override
     public void start() {
-        ticks = 0;
-        timeElapsed = 0.0;
+        ticks = initialState.ticks();
+        timeElapsed = initialState.elapsedSeconds();
     }
 
     @Override

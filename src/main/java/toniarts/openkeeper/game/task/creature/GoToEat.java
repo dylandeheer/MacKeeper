@@ -35,7 +35,7 @@ import toniarts.openkeeper.game.task.TaskType;
  *
  * @author Toni Helenius <helenius.toni@gmail.com>
  */
-public final class GoToEat extends AbstractTask {
+public final class GoToEat extends AbstractTask implements toniarts.openkeeper.game.task.CreatureTargetTask {
 
     private boolean executed = false;
     private final IEntityPositionLookup entityPositionLookup;
@@ -44,22 +44,34 @@ public final class GoToEat extends AbstractTask {
      */
     private final EntityId target;
     private final EntityData entityData;
-    private final ICreatureController creature;
+    private final toniarts.openkeeper.game.task.TaskTarget<ICreatureController> creature;
 
 
-    public GoToEat(final INavigationService navigationService, final IMapController mapController, final IEntityPositionLookup entityPositionLookup,
+    public GoToEat(toniarts.openkeeper.game.task.TaskIdentityAllocator taskIds, final INavigationService navigationService, final IMapController mapController, final IEntityPositionLookup entityPositionLookup,
             EntityId target, EntityData entityData, ICreatureController creature) {
-        super(navigationService, mapController);
+        super(taskIds, navigationService, mapController);
 
         this.entityPositionLookup = entityPositionLookup;
         this.target = target;
         this.entityData = entityData;
-        this.creature = creature;
+        this.creature = toniarts.openkeeper.game.task.TaskTarget.bound(creature);
     }
+
+    public GoToEat(toniarts.openkeeper.game.task.TaskIdentityAllocator ids, toniarts.openkeeper.game.data.TaskBaseState saved,
+            INavigationService navigation, IMapController map, toniarts.openkeeper.utils.Point point, short player,
+            com.simsilica.es.EntityId targetCreature, IEntityPositionLookup positions, EntityId food, EntityData data, boolean executed) {
+        super(ids, saved, navigation, map);
+        creature = toniarts.openkeeper.game.task.TaskTarget.pending(targetCreature);
+        entityPositionLookup = positions;this.target = food;entityData = data;this.executed = executed;
+    }
+
+    @Override public toniarts.openkeeper.game.task.TaskTarget<ICreatureController> creatureTarget() {return creature;}
+    public boolean hasExecuted() {return executed;}
+    public EntityId getFoodTarget() {return target;}
 
     @Override
     public boolean isValid(ICreatureController creature) {
-        return !executed && getTaskLocation() != null && entityData.getComponent(target, Food.class) != null && this.creature.isHungry();
+        return !executed && getTaskLocation() != null && entityData.getComponent(target, Food.class) != null && this.creature.get().isHungry();
     }
 
     @Override
@@ -73,6 +85,7 @@ public final class GoToEat extends AbstractTask {
 
     @Override
     public void executeTask(ICreatureController creature, float executionDuration) {
+        this.creature.get();
         creature.eat(entityPositionLookup.getEntityController(target));
 
         // This is a one timer

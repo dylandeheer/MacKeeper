@@ -35,7 +35,11 @@ public final class TortureChamberController extends NormalRoomController {
     private final IGameTimer gameTimer;
 
     public TortureChamberController(EntityId entityId, EntityData entityData, IKwdFile kwdFile, RoomInstance roomInstance, IObjectsController objectsController,             IGameTimer gameTimer) {
-        super(entityId, entityData, kwdFile, roomInstance, objectsController, ObjectType.TORTUREE);
+        this(entityId, entityData, kwdFile, roomInstance, objectsController, gameTimer, true);
+    }
+
+    public TortureChamberController(EntityId entityId, EntityData entityData, IKwdFile kwdFile, RoomInstance roomInstance, IObjectsController objectsController,             IGameTimer gameTimer, boolean initialize) {
+        super(entityId, entityData, kwdFile, roomInstance, objectsController, ObjectType.TORTUREE, initialize);
 
         this.gameTimer = gameTimer;
     }

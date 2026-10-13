@@ -53,5 +53,9 @@ public interface IUnitFlowerControl<T> extends Control {
      */
     void show(float period);
 
+    toniarts.openkeeper.view.WorldViewState.Flower captureDisplay();
+
+    void restoreDisplay(toniarts.openkeeper.view.WorldViewState.Flower saved);
+
     void cleanup();
 }

@@ -85,8 +85,15 @@ public abstract class RoomSpellBookControl extends AbstractRoomObjectControl<Ent
     }
 
     @Override
+    public void removeItem(EntityId object) {
+        var stored = entityData.getComponent(object, toniarts.openkeeper.game.component.Stored.class);
+        if (stored == null || !parent.getEntityId().equals(stored.room) || stored.objectType != ObjectType.SPELL_BOOK) return;
+        super.removeItem(object);
+        addCurrentCapacity(-1);
+    }
+
+    @Override
     public void destroy() {
-        super.destroy();
 
         // The keeper has no more access to the spells
         List<Collection<EntityId>> objectList = new ArrayList<>(objectsByCoordinate.values());
@@ -95,6 +102,7 @@ public abstract class RoomSpellBookControl extends AbstractRoomObjectControl<Ent
                 removeItem(obj);
             }
         }
+        super.destroy();
     }
 
     @Override

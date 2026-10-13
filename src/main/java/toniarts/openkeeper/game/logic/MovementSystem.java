@@ -22,12 +22,18 @@ import com.jme3.util.SafeArrayList;
 import com.simsilica.es.Entity;
 import com.simsilica.es.EntityData;
 import com.simsilica.es.EntityId;
-import com.simsilica.es.EntitySet;
+import toniarts.openkeeper.game.save.GameEntityData;
+import toniarts.openkeeper.game.save.MovementSnapshots;
+import toniarts.openkeeper.game.save.SnapshotEntitySet;
 import toniarts.openkeeper.utils.Point;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.Set;
+import java.util.Collection;
+import java.util.Comparator;
+import java.util.List;
+import java.util.HashSet;
+import java.util.TreeSet;
 import toniarts.openkeeper.game.component.Mobile;
 import toniarts.openkeeper.game.component.Navigation;
 import toniarts.openkeeper.game.component.Position;
@@ -59,23 +65,63 @@ public final class MovementSystem implements IGameLogicUpdatable {
      * This is for saving in object creation
      */
     private final Map<EntitySteeringBehavior, SteeringAcceleration<Vector2>> steeringOutputsBySteeringBehaviors = new HashMap<>();
-    private final EntitySet movableEntities;
+    private final SnapshotEntitySet movableEntities;
+    private final Map<EntityId, EntitySteeringFactory.Plan> plans = new HashMap<>();
+    private MovementSnapshots.State pendingRestore;
     private final EntityData entityData;
 
     public MovementSystem(EntityData entityData) {
-        this.entityData = entityData;
-        movableEntities = entityData.getEntities(Position.class, Mobile.class, Navigation.class);
+        this(entityData, null);
+    }
 
-        processAddedEntities(movableEntities);
+    private MovementSystem(EntityData entityData, MovementSnapshots.State saved) {
+        this.entityData = entityData;
+        movableEntities = new SnapshotEntitySet(entityData, Position.class, Mobile.class, Navigation.class);
+        if (saved == null) processAddedEntities(movableEntities);
+        else {
+            pendingRestore = saved;
+            for (var body : saved.bodies()) {
+                var steerable = body.restore();
+                register(steerable, EntitySteeringFactory.navigate(body.plan(), steerable),
+                        body.plan(), new Point(body.targetX(), body.targetY()));
+            }
+        }
+    }
+
+    public static MovementSystem restoreState(GameEntityData data, MovementSnapshots.State saved) {
+        for (var id : saved.observed()) if (!data.wasAllocated(id)) throw new IllegalArgumentException("Unallocated movement observation");
+        return new MovementSystem(data, saved);
+    }
+
+    public MovementSnapshots.State captureState() {
+        var observed = pendingRestore == null ? movableEntities.stream().map(Entity::getId).sorted().toList() : pendingRestore.observed();
+        var bodies = steerableEntitiesByEntityId.entrySet().stream().sorted(Map.Entry.comparingByKey()).map(entry -> {
+            var id = entry.getKey();var target = targetPointsByEntityId.get(id);
+            return MovementSnapshots.Body.capture(entry.getValue(), target.x, target.y, plans.get(id));
+        }).toList();
+        return new MovementSnapshots.State(observed, dirty(observed), bodies);
+    }
+
+    private List<EntityId> dirty(List<EntityId> observed) {
+        var result = new TreeSet<EntityId>();
+        if (pendingRestore != null) result.addAll(pendingRestore.dirty());
+        result.addAll(movableEntities.pendingChanges(new HashSet<>(observed)));
+        return List.copyOf(result);
     }
 
     @Override
     public void processTick(float tpf) {
-        if (movableEntities.applyChanges()) {
+        var changed = pendingRestore == null ? List.<EntityId>of() : dirty(pendingRestore.observed());
+        boolean updated = movableEntities.applyChanges();
+        if (pendingRestore != null) {
+            var old = new HashSet<>(pendingRestore.observed());
+            pendingRestore.observed().stream().filter(id -> !movableEntities.containsId(id)).forEach(this::deleteEntity);
+            processAddedEntities(movableEntities.stream().filter(e -> !old.contains(e.getId())).toList());
+            processChangedEntities(changed.stream().filter(movableEntities::containsId).map(movableEntities::getEntity).toList());
+            pendingRestore = null;
+        } else if (updated) {
             processDeletedEntities(movableEntities.getRemovedEntities());
-
             processAddedEntities(movableEntities.getAddedEntities());
-
             processChangedEntities(movableEntities.getChangedEntities());
         }
 
@@ -98,8 +144,8 @@ public final class MovementSystem implements IGameLogicUpdatable {
         }
     }
 
-    private void processAddedEntities(Set<Entity> addedEntities) {
-        for (Entity entity : addedEntities) {
+    private void processAddedEntities(Collection<Entity> addedEntities) {
+        for (Entity entity : addedEntities.stream().sorted(Comparator.comparing(Entity::getId)).toList()) {
             addEntity(entity);
         }
     }
@@ -109,31 +155,40 @@ public final class MovementSystem implements IGameLogicUpdatable {
         Navigation navigation = entity.get(Navigation.class);
         Position position = entity.get(Position.class);
         ISteerableEntity steerableEntity = new SteerableEntity(entity.getId(), mobile.maxSpeed, 0.25f, position.position.x, position.position.z, position.rotation);
-        EntitySteeringBehavior steeringBehavior = EntitySteeringFactory.navigateToPoint(navigation.navigationPath, navigation.faceTarget, steerableEntity, navigation.target);
+        var plan = EntitySteeringFactory.plan(navigation.navigationPath, navigation.faceTarget, navigation.target);
+        EntitySteeringBehavior steeringBehavior = EntitySteeringFactory.navigate(plan, steerableEntity);
         if (steeringBehavior == null) {
 
             // The fug, can't navigate, are we there already??
             entityData.removeComponent(entity.getId(), Navigation.class);
             return;
         }
-        steerableEntitiesByEntityId.put(entity.getId(), steerableEntity);
+        register(steerableEntity, steeringBehavior, plan, navigation.target);
+    }
+
+    private void register(ISteerableEntity steerableEntity, EntitySteeringBehavior steeringBehavior,
+            EntitySteeringFactory.Plan plan, Point target) {
+        var id = steerableEntity.getEntityId();
+        plans.put(id, plan);
+        steerableEntitiesByEntityId.put(id, steerableEntity);
         steeringBehaviorsBySteerableEntity.put(steerableEntity, steeringBehavior);
         steerableEntitiesBySteeringBehavior.put(steeringBehavior, steerableEntity);
         int index = Collections.binarySearch(steeringBehaviors, steeringBehavior);
         steeringBehaviors.add(~index, steeringBehavior);
         steeringOutputsBySteeringBehaviors.put(steeringBehavior, new SteeringAcceleration<>(new Vector2()));
-        entityIdsBySteeringBehavior.put(steeringBehavior, entity.getId());
-        targetPointsByEntityId.put(entity.getId(), navigation.target);
+        entityIdsBySteeringBehavior.put(steeringBehavior, id);
+        targetPointsByEntityId.put(id, new Point(target.x, target.y));
     }
 
-    private void processDeletedEntities(Set<Entity> removedEntities) {
-        for (Entity entity : removedEntities) {
-            deleteEntity(entity);
+    private void processDeletedEntities(Collection<Entity> removedEntities) {
+        for (Entity entity : removedEntities.stream().sorted(Comparator.comparing(Entity::getId)).toList()) {
+            deleteEntity(entity.getId());
         }
     }
 
-    private void deleteEntity(Entity entity) {
-        ISteerableEntity steerableEntity = steerableEntitiesByEntityId.remove(entity.getId());
+    private void deleteEntity(EntityId id) {
+        plans.remove(id);
+        ISteerableEntity steerableEntity = steerableEntitiesByEntityId.remove(id);
         EntitySteeringBehavior steeringBehavior = steeringBehaviorsBySteerableEntity.remove(steerableEntity);
         steerableEntitiesBySteeringBehavior.remove(steeringBehavior);
         if (steeringBehavior != null) {
@@ -142,16 +197,16 @@ public final class MovementSystem implements IGameLogicUpdatable {
         }
         steeringOutputsBySteeringBehaviors.remove(steeringBehavior);
         entityIdsBySteeringBehavior.remove(steeringBehavior);
-        targetPointsByEntityId.remove(entity.getId());
+        targetPointsByEntityId.remove(id);
     }
 
-    private void processChangedEntities(Set<Entity> changedEntities) {
-        for (Entity entity : changedEntities) {
+    private void processChangedEntities(Collection<Entity> changedEntities) {
+        for (Entity entity : changedEntities.stream().sorted(Comparator.comparing(Entity::getId)).toList()) {
 
             // Dirty trick to try to see if the navigation has changed
             Navigation navigation = entity.get(Navigation.class);
             if (!navigation.target.equals(targetPointsByEntityId.get(entity.getId()))) {
-                deleteEntity(entity);
+                deleteEntity(entity.getId());
                 addEntity(entity);
                 continue;
             }
@@ -208,10 +263,10 @@ public final class MovementSystem implements IGameLogicUpdatable {
         Position oldPosition = entityData.getComponent(entityId, Position.class);
         if (oldPosition != null) {
 
-            // Re-use the vector, the position might be already removed from another thread
-            oldPosition.position.x = steerableEntity.getPosition().x;
-            oldPosition.position.z = steerableEntity.getPosition().y;
-            entityData.setComponent(entityId, new Position(-steerableEntity.getOrientation(), oldPosition.position));
+            var position = oldPosition.position.clone();
+            position.x = steerableEntity.getPosition().x;
+            position.z = steerableEntity.getPosition().y;
+            entityData.setComponent(entityId, new Position(-steerableEntity.getOrientation(), position));
         }
     }
 
@@ -223,7 +278,7 @@ public final class MovementSystem implements IGameLogicUpdatable {
      * @return
      */
     public float limitAngular(float angular, float limit) {
-        return (Math.abs(angular) > limit) ? limit : angular;
+        return (Math.abs(angular) > limit) ? Math.copySign(limit, angular) : angular;
     }
 
     public boolean isZeroAngular(float angular, float threshold) {
@@ -245,6 +300,7 @@ public final class MovementSystem implements IGameLogicUpdatable {
         steeringOutputsBySteeringBehaviors.clear();
         entityIdsBySteeringBehavior.clear();
         targetPointsByEntityId.clear();
+        plans.clear();
     }
 
 }

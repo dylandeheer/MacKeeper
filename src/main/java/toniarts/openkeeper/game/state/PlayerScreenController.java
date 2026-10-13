@@ -25,7 +25,6 @@ import com.jme3.texture.Texture;
 import com.jme3.texture.Texture2D;
 import com.jme3.texture.plugins.AWTLoader;
 import com.simsilica.es.*;
-import com.simsilica.es.filter.FieldFilter;
 import de.lessvoid.nifty.Nifty;
 import de.lessvoid.nifty.NiftyEventSubscriber;
 import de.lessvoid.nifty.NiftyIdCreator;
@@ -52,7 +51,6 @@ import de.lessvoid.nifty.tools.SizeValue;
 import de.lessvoid.nifty.tools.SizeValueType;
 import toniarts.openkeeper.Main;
 import toniarts.openkeeper.game.component.*;
-import toniarts.openkeeper.game.controller.creature.CreatureState;
 import toniarts.openkeeper.game.data.ResearchableEntity;
 import toniarts.openkeeper.game.sound.GlobalCategory;
 import toniarts.openkeeper.game.sound.GlobalType;
@@ -67,6 +65,9 @@ import toniarts.openkeeper.tools.convert.map.*;
 import toniarts.openkeeper.tools.convert.map.CreatureSpell;
 import toniarts.openkeeper.utils.AssetUtils;
 import toniarts.openkeeper.utils.Utils;
+import toniarts.openkeeper.view.HudPanelState;
+import toniarts.openkeeper.view.creature.CreatureCardRoster;
+import toniarts.openkeeper.view.creature.CreatureCardsState;
 import toniarts.openkeeper.view.PlayerInteractionState;
 import toniarts.openkeeper.view.PlayerInteractionState.InteractionState.Type;
 import toniarts.openkeeper.view.PossessionInteractionState;
@@ -110,7 +111,16 @@ public final class PlayerScreenController implements IPlayerScreenController {
     private Label tooltip;
     private boolean initHud = false;
     private String cinematicText;
+    private toniarts.openkeeper.game.state.session.PlayerScreenState.Route requestedRoute =
+            toniarts.openkeeper.game.state.session.PlayerScreenState.Route.EMPTY;
+    private String routeInFlight;
+    private Thread hudThread;
+    private HudPanelState.Menu menuState = HudPanelState.Menu.main(false);
+    private GameLevel objectiveLevel;
+    private Integer displayedObjectiveId;
+    private final Deque<Integer> pendingObjectives = new ArrayDeque<>();
     private EntityData entityData;
+    private toniarts.openkeeper.view.ObjectiveTargetsView objectiveTargets;
     private CreatureCardManager creatureCardManager;
     private PossessionInteractionState.Action possessionAction = PossessionInteractionState.Action.MELEE;
 
@@ -129,15 +139,19 @@ public final class PlayerScreenController implements IPlayerScreenController {
         lastUpdate += tpf;
 
         if (lastUpdate >= SCREEN_UPDATE_INTERVAL) {
+            if (objectiveTargets != null) objectiveTargets.update();
             if (creatureCardManager != null) {
                 creatureCardManager.update(tpf);
             }
+            var hud = nifty == null ? null : nifty.getScreen(SCREEN_HUD_ID);
+            if (hud != null && entityData != null && hud.findElementById("objective").isVisible()) refreshObjectiveTargets();
             lastUpdate = 0;
         }
     }
 
     @Override
     public void cleanup() {
+        if (objectiveTargets != null) {objectiveTargets.close(); objectiveTargets = null;}
         if (creatureCardManager != null) {
             creatureCardManager.cleanup();
             creatureCardManager = null;
@@ -149,6 +163,9 @@ public final class PlayerScreenController implements IPlayerScreenController {
         // The screen controller might sometimes stay in memory
         // So make sure we clean these up or we end up cumulating a lot of uncollectable garbage (memory-leak)
         state = null;
+        objectiveLevel = null;
+        hudThread = null;
+        initHud = false;
         entityData = null;
         screen = null;
     }
@@ -173,10 +190,8 @@ public final class PlayerScreenController implements IPlayerScreenController {
     }
 
     public void toggleGui() {
-        if (!nifty.getCurrentScreen().getScreenId().equals(SCREEN_EMPTY_ID))
-            nifty.gotoScreen(SCREEN_EMPTY_ID);
-        else
-            nifty.gotoScreen(SCREEN_HUD_ID);
+        goToScreen(requestedRoute == toniarts.openkeeper.game.state.session.PlayerScreenState.Route.EMPTY
+                ? SCREEN_HUD_ID : SCREEN_EMPTY_ID);
     }
 
     @Override
@@ -203,23 +218,126 @@ public final class PlayerScreenController implements IPlayerScreenController {
         Element element = nifty.getScreen(SCREEN_HUD_ID).findElementById("objective");
         if (element.isVisible()) {
             element.hide();
+            if (state != null && state.isPaused()) nifty.getScreen(SCREEN_HUD_ID).findElementById("optionsMenu").show();
         } else {
-            GameLevel gameLevel = state.stateManager.getState(GameClientState.class).getLevelData().getGameLevel();
-
-            Label mainObjective = element.findNiftyControl("mainObjective", Label.class);
-            mainObjective.setText(gameLevel.getMainObjective());
-
-            Label subObjective1 = element.findNiftyControl("subObjective1", Label.class);
-            subObjective1.setText(gameLevel.getSubObjective1());
-            Label subObjective2 = element.findNiftyControl("subObjective2", Label.class);
-            subObjective2.setText(gameLevel.getSubObjective2());
-            Label subObjective3 = element.findNiftyControl("subObjective3", Label.class);
-            subObjective3.setText(gameLevel.getSubObjective3());
-
-            element.layoutElements();
-            element.show();
+            showObjectivePanel();
         }
     }
+
+    public void showObjectivesFromPauseMenu() {showObjectivePanel();}
+
+    /** Called on the render thread; the latest instruction remains available on reopening. */
+    public void showObjective(int objectiveId) {
+        if (objectiveId < 0 || objectiveId > 32767) {
+            logger.log(Level.WARNING, "Invalid objective text ID {0}", objectiveId);
+            return;
+        }
+        if (objectiveLevel == null) {
+            // Preserve the last validated instruction until the dictionary is restored.
+            pendingObjectives.addLast(objectiveId);
+            return;
+        }
+        if (getObjectiveText(objectiveId) == null) {
+            logger.log(Level.WARNING, "Missing objective text ID {0} in the level dictionary", objectiveId);
+            return;
+        }
+        displayedObjectiveId = objectiveId;
+        showObjectivePanel();
+    }
+
+    private void restoreObjectives() {
+        if (objectiveLevel == null) return;
+        while (!pendingObjectives.isEmpty()) showObjective(pendingObjectives.removeFirst());
+        if (displayedObjectiveId != null) showObjectivePanel();
+    }
+
+    private String getObjectiveText(Integer objectiveId) {
+        var dictionary = nifty.getResourceBundles().get("level");
+        if (objectiveId == null || dictionary == null) return null;
+        try {
+            return dictionary.getString(objectiveId.toString(), nifty.getLocale());
+        } catch (MissingResourceException ex) {
+            return null;
+        }
+    }
+
+    private void showObjectivePanel() {
+        if (objectiveLevel == null) return;
+        Element element = nifty.getScreen(SCREEN_HUD_ID).findElementById("objective");
+        Element options = nifty.getScreen(SCREEN_HUD_ID).findElementById("optionsMenu");
+        if (options != null) options.hide();
+        element.findNiftyControl("mainObjective", Label.class).setText(objectiveLevel.getMainObjective());
+        element.findNiftyControl("subObjective1", Label.class).setText(objectiveLevel.getSubObjective1());
+        element.findNiftyControl("subObjective2", Label.class).setText(objectiveLevel.getSubObjective2());
+        element.findNiftyControl("subObjective3", Label.class).setText(objectiveLevel.getSubObjective3());
+        Element instruction = element.findElementById("scriptedObjectivePanel");
+        String text = getObjectiveText(displayedObjectiveId);
+        instruction.setVisible(text != null);
+        element.findNiftyControl("scriptedObjective", Label.class).setText(text == null ? "" : text);
+        refreshObjectiveTargets();
+        element.layoutElements();
+        element.show();
+    }
+
+    private void refreshObjectiveTargets() {
+        if (entityData == null) return;
+        var panel = nifty.getScreen(SCREEN_HUD_ID).findElementById("objectiveTargets");
+        if (panel == null) return;
+        var targets = objectiveTargets == null ? java.util.List.<toniarts.openkeeper.view.ObjectiveTargetsView.Observation>of() : objectiveTargets.observations();
+        for (int slot = 0; slot < 6; slot++) panel.findNiftyControl("objectiveTarget" + slot, Label.class).setText("");
+        for (var observation : targets) {
+            var target = observation.target();
+            if (target.slot() < 0 || target.slot() >= 6) continue;
+            String text;
+            if (target.creatureId() == null) {
+                var player = state.getKwdFile().getPlayer(target.playerId());
+                text = "Defeat " + (player == null ? "Keeper " + target.playerId() : player.getName());
+            } else {
+                if (observation.creatureType() == null) continue;
+                var definition = state.getKwdFile().getCreature(observation.creatureType());
+                String creatureName = Utils.getMainTextResourceBundle().getString(Integer.toString(definition.getNameStringId()));
+                text = switch (target.objective()) {
+                    case KILL -> "Kill ";
+                    case IMPRISON -> "Imprison ";
+                    case CONVERT -> "Convert ";
+                } + creatureName;
+            }
+            text += objectivePosition(observation) == null ? " (location unknown)" : " - click to locate";
+            panel.findNiftyControl("objectiveTarget" + target.slot(), Label.class).setText(text);
+        }
+        panel.setVisible(!targets.isEmpty());
+    }
+
+    private com.jme3.math.Vector3f objectivePosition(toniarts.openkeeper.view.ObjectiveTargetsView.Observation observation) {
+        var target = observation.target();
+        var client = state.app.getStateManager().getState(GameClientState.class);
+        if (client == null || client.getFogOfWarInformation() == null) return null;
+        com.jme3.math.Vector3f position;
+        if (target.creatureId() != null) {
+            position = observation.position();
+            if (position == null) return null;
+        } else {
+            var keeper = client.getPlayer(target.playerId());
+            if (keeper == null || keeper.getDungeonHeartLocation() == null) return null;
+            position = toniarts.openkeeper.utils.WorldUtils.pointToVector3f(keeper.getDungeonHeartLocation());
+        }
+        return client.getFogOfWarInformation().isVisible(toniarts.openkeeper.utils.WorldUtils.vectorToPoint(position)) ? position : null;
+    }
+
+    public void zoomToObjective(String slot) {
+        var client = state.app.getStateManager().getState(GameClientState.class);
+        if (client == null || !client.isAcceptingInput() || objectiveTargets == null) return;
+        int selected;
+        try {selected = Integer.parseInt(slot);} catch (NumberFormatException invalid) {return;}
+        for (var observation : objectiveTargets.observations()) if (observation.target().slot() == selected) {
+            var position = objectivePosition(observation);
+            if (position != null) state.zoomToPosition(position, false);
+            return;
+        }
+    }
+
+    public void saveGame() {SavedGamesState.open(state.app, true);}
+    public void loadGame() {SavedGamesState.open(state.app, false);}
 
     @Override
     public void pauseMenu() {
@@ -241,6 +359,7 @@ public final class PlayerScreenController implements IPlayerScreenController {
 
         nifty.getScreen(SCREEN_HUD_ID).findElementById("optionsMenu").setVisible(paused);
         if (paused) {
+            nifty.getScreen(SCREEN_HUD_ID).findElementById("objective").hide();
             this.playButtonSound("GUI_BUTTON_OPTIONS");
             pauseMenuNavigate(PauseMenuState.MAIN.name(), null, null, null);
         }
@@ -248,6 +367,10 @@ public final class PlayerScreenController implements IPlayerScreenController {
 
     @Override
     public void pauseMenuNavigate(String menu, String backMenu, String confirmationTitle, String confirmMethod) {
+        var page = HudPanelState.Page.valueOf(menu);
+        var requested = page == HudPanelState.Page.CONFIRMATION
+                ? new HudPanelState.Menu(false, page, HudPanelState.Page.valueOf(backMenu), confirmationTitle, HudPanelState.Destination.fromAction(confirmMethod))
+                : new HudPanelState.Menu(false, page, null, null, null);
         Element optionsMenu = nifty.getScreen(SCREEN_HUD_ID).findElementById("optionsMenu");
         Label optionsMenuTitle = optionsMenu.findNiftyControl("#title", Label.class);
         Element optionsColumnOne = optionsMenu.findElementById("#columnOne");
@@ -267,16 +390,20 @@ public final class PlayerScreenController implements IPlayerScreenController {
             element.markForRemoval();
         }
 
+        menuState = requested.visible(optionsMenu.isVisible());
         // TODO: @ArchDemon: I think we need to do modern (not original) game menu
         List<GameMenu> items = new ArrayList<>();
         switch (PauseMenuState.valueOf(menu)) {
             case MAIN:
                 optionsMenuTitle.setText("${menu.94}");
 
-                     items.add(new GameMenu("i-objective", "${menu.537}", "pauseMenu()", optionsColumnOne));
+                     items.add(new GameMenu("i-objective", "${menu.537}", "showObjectivesFromPauseMenu()", optionsColumnOne));
                 items.add(new GameMenu("i-game", "${menu.97}", "pauseMenu()", optionsColumnOne));
-                items.add(new GameMenu("i-load", "${menu.143}", "pauseMenu()", optionsColumnOne));
-                items.add(new GameMenu("i-save", "${menu.201}", "pauseMenu()", optionsColumnOne));
+                var localClient = state.app.getStateManager().getState(GameClientState.class);
+                if (localClient != null && localClient.getGameClientService() instanceof toniarts.openkeeper.game.state.session.LocalGameSession) {
+                    items.add(new GameMenu("i-load", "${menu.143}", "loadGame()", optionsColumnOne));
+                    items.add(new GameMenu("i-save", "${menu.201}", "saveGame()", optionsColumnOne));
+                }
                 items.add(new GameMenu("i-quit", "${menu.1266}", String.format("pauseMenuNavigate(%s,%s,null,null)",
                         PauseMenuState.QUIT.name(), PauseMenuState.MAIN.name()), optionsColumnTwo));
                 items.add(new GameMenu("i-restart", "${menu.1269}", "pauseMenu()", optionsColumnTwo));
@@ -287,7 +414,7 @@ public final class PlayerScreenController implements IPlayerScreenController {
             case QUIT:
                 optionsMenuTitle.setText("${menu.1266}");
 
-                if (state.stateManager.getState(EndGameState.class) != null) {
+                if (state.hasGameResult()) {
                     items.add(new GameMenu("i-quit", "${menu.2913}", String.format("pauseMenuNavigate(%s,%s,${menu.2913},quitToDebriefing())",
                             PauseMenuState.CONFIRMATION.name(), PauseMenuState.QUIT.name()), optionsColumnOne));
                 } else {
@@ -376,10 +503,7 @@ public final class PlayerScreenController implements IPlayerScreenController {
             WorkerEqualControl cEqual = s.findNiftyControl("tab-workers-equal", WorkerEqualControl.class);
             cEqual.setState(controlState);
 
-            Element e = s.findElementById("tab-creature-content");
-            for (Element element : e.getChildren()) {
-                element.getControl(CreatureCardControl.class).setState(controlState);
-            }
+            if (creatureCardManager != null) creatureCardManager.setMode(controlState);
         }
     }
 
@@ -513,7 +637,10 @@ public final class PlayerScreenController implements IPlayerScreenController {
         }
     }
 
-    protected void initHud(String resource, EntityData entityData) {
+    protected void initHud(GameLevel gameLevel, EntityData entityData) {
+        hudThread = Thread.currentThread();
+        objectiveLevel = gameLevel;
+        String resource = gameLevel.getTextTableId() == null ? null : gameLevel.getTextTableId().getLevelDictFile();
         Screen hud = nifty.getScreen(SCREEN_HUD_ID);
 
         // Load the level dictionary
@@ -529,10 +656,71 @@ public final class PlayerScreenController implements IPlayerScreenController {
         // Load the HUD
         initHud = true;
         this.entityData = entityData;
+        if (objectiveTargets != null) {objectiveTargets.close(); objectiveTargets = null;}
+        objectiveTargets = new toniarts.openkeeper.view.ObjectiveTargetsView(entityData);
+        objectiveTargets.update();
 
-        nifty.gotoScreen(PlayerScreenController.SCREEN_HUD_ID);
+        goToScreen(PlayerScreenController.SCREEN_HUD_ID);
 
+        restoreObjectives();
         hud.layoutLayers();
+    }
+
+    /** Capture panel state after HUD construction, on its owning render thread. */
+    public HudPanelState captureHudState() {
+        requireHudOwner();
+        var hud = nifty.getScreen(SCREEN_HUD_ID);
+        var bottom = hud.findElementById("bottomPanel");
+        boolean collapsed = bottom.getUserDataKeys().contains("toggle") && Boolean.TRUE.equals(bottom.getUserData("toggle"));
+        return new HudPanelState(lastUpdate, cinematicText, displayedObjectiveId, List.copyOf(pendingObjectives),
+                hud.findElementById("objective").isVisible(), collapsed,
+                hud.findControl("tabs-hud", CustomTabGroupControl.class).getSelectedTabIndex(),
+                menuState.visible(hud.findElementById("optionsMenu").isVisible()));
+    }
+
+    /** Restore panel values quietly; the session owns screen routing, pause and interaction state. */
+    public void restoreHudState(HudPanelState saved) {
+        requireHudOwner();Objects.requireNonNull(saved);
+        var hud = nifty.getScreen(SCREEN_HUD_ID);
+        var tabs = hud.findControl("tabs-hud", CustomTabGroupControl.class);
+        if (saved.selectedTab() >= tabs.getTabCount()) throw new IllegalArgumentException("Saved HUD tab is not installed");
+        if (saved.objectiveId() != null && getObjectiveText(saved.objectiveId()) == null)
+            throw new IllegalArgumentException("Saved objective text is not installed");
+        var menu = saved.menu();
+        if (menu.destination() == HudPanelState.Destination.DEBRIEFING
+                && (state == null || !state.hasGameResult()))
+            throw new IllegalArgumentException("Debriefing confirmation requires a completed game");
+        lastUpdate = saved.updateRemainder();cinematicText = saved.cinematicText();
+        nifty.getScreen(SCREEN_CINEMATIC_ID).findNiftyControl("speechText", Label.class).setText(cinematicText == null ? "" : cinematicText);
+        displayedObjectiveId = saved.objectiveId();pendingObjectives.clear();pendingObjectives.addAll(saved.pendingObjectives());
+        showObjectivePanel();hud.findElementById("objective").setVisible(saved.objectiveVisible());
+        var bottom = hud.findElementById("bottomPanel");bottom.setUserData("toggle", saved.bottomCollapsed());
+        bottom.setMarginTop(new SizeValue(saved.bottomCollapsed() ? 156 : 0, SizeValueType.Pixel));bottom.getParent().layoutElements();
+        tabs.restoreSelectedTabIndex(saved.selectedTab());
+        if (state != null && state.interactionState != null) updateSelectedItem(state.getInteractionState());
+        pauseMenuNavigate(menu.page().name(), menu.back() == null ? null : menu.back().name(), menu.title(),
+                menu.destination() == null ? null : menu.destination().action());
+        hud.findElementById("optionsMenu").setVisible(menu.visible());menuState = menu;
+        // Hover text belongs to the current pointer, not the saved world.
+        if (tooltip != null) tooltip.setText("");
+    }
+
+    public CreatureCardsState captureCreatureCards() {
+        requireHudOwner();
+        if (creatureCardManager == null) throw new IllegalStateException("Creature cards are not initialized");
+        return creatureCardManager.capture();
+    }
+
+    public void restoreCreatureCards(CreatureCardsState saved) {
+        requireHudOwner();
+        if (creatureCardManager == null) throw new IllegalStateException("Creature cards are not initialized");
+        creatureCardManager.restore(saved);
+        workersAmount(saved.mode().name());
+    }
+
+    private void requireHudOwner() {
+        if (hudThread != Thread.currentThread() || objectiveLevel == null || initHud)
+            throw new IllegalStateException("HUD panels require the initialized render-thread owner");
     }
 
     public void setPause(boolean paused) {
@@ -591,7 +779,66 @@ public final class PlayerScreenController implements IPlayerScreenController {
     }
 
     public void goToScreen(String screen) {
-        nifty.gotoScreen(screen);
+        var route = toniarts.openkeeper.game.state.session.PlayerScreenState.Route.fromScreenId(screen);
+        if (nifty.getScreen(screen) == null) throw new IllegalArgumentException("Player screen is not installed");
+        requestedRoute = route;
+        applyRequestedRoute();
+    }
+
+    /** Pump once per render frame, after Nifty has processed the preceding frame's transitions. */
+    void updateScreenRouting() {
+        Screen current = nifty.getCurrentScreen();
+        if (current != null && current.isRunning() && !current.isEffectActive(EffectEventId.onEndScreen)) {
+            // A previous gotoScreen can have been silently rejected by another owner's transition.
+            // Once Nifty is settled again, retry the desired route even if that attempt never arrived.
+            routeInFlight = null;
+        }
+        applyRequestedRoute();
+    }
+
+    private void applyRequestedRoute() {
+        if (routeInFlight != null) return;
+        Screen current = nifty.getCurrentScreen();
+        if (current != null && (!current.isRunning() || current.isEffectActive(EffectEventId.onEndScreen))) return;
+        String destination = requestedRoute.screenId();
+        if (current != null && destination.equals(current.getScreenId())) {
+            if (initHud && destination.equals(SCREEN_HUD_ID)) onStartScreen();
+            return;
+        }
+        routeInFlight = destination;
+        nifty.gotoScreen(destination);
+    }
+
+    boolean isRouteReady() {
+        Screen current = nifty.getCurrentScreen();
+        return routeInFlight == null && current != null && current.isRunning()
+                && !current.isEffectActive(EffectEventId.onEndScreen)
+                && requestedRoute.screenId().equals(current.getScreenId()) && !initHud;
+    }
+
+    toniarts.openkeeper.game.state.session.PlayerScreenState.Route getRequestedRoute() { return requestedRoute; }
+    String getCinematicText() { return cinematicText; }
+
+    void validateScreenRestore(toniarts.openkeeper.game.state.session.PlayerScreenState saved) {
+        if (nifty.getScreen(saved.route().screenId()) == null
+                || nifty.getScreen(SCREEN_CINEMATIC_ID) == null)
+            throw new IllegalArgumentException("Saved player screen is not installed");
+        if (saved.playerEnabled()) requireHudOwner();
+        if (saved.route() == toniarts.openkeeper.game.state.session.PlayerScreenState.Route.POSSESSION
+                && (state == null || state.getPossessionCreature() == null))
+            throw new IllegalArgumentException("Possession target is not prepared");
+    }
+
+    void restoreScreenRouting(toniarts.openkeeper.game.state.session.PlayerScreenState saved) {
+        cinematicText = saved.cinematicText();
+        nifty.getScreen(SCREEN_CINEMATIC_ID).findNiftyControl("speechText", Label.class)
+                .setText(cinematicText == null ? "" : cinematicText);
+        if (saved.playerEnabled()) {
+            Element button = nifty.getScreen(SCREEN_HUD_ID).findElementById("menuButton");
+            if (saved.paused()) button.startEffect(EffectEventId.onCustom, null, "select");
+            else button.stopEffect(EffectEventId.onCustom);
+        }
+        requestedRoute = saved.route();applyRequestedRoute();
     }
 
     /**
@@ -657,7 +904,7 @@ public final class PlayerScreenController implements IPlayerScreenController {
         if (state.getGoldControl() != null) {
             // state.getGoldControl().addListener(hud.findNiftyControl("gold", Label.class));
         }
-        hud.findNiftyControl("gold", Label.class).setText(Integer.toString(state.getPlayer().getGold()));
+        hud.findNiftyControl("gold", Label.class).setText(Long.toString(state.getPlayer().getGold()));
 
         // Player creatures
         Element creatureTab = hud.findElementById("tab-creature");
@@ -722,9 +969,9 @@ public final class PlayerScreenController implements IPlayerScreenController {
 //        }
     }
 
-    public void setGold(int gold) {
+    public void setGold(long gold) {
         Screen hud = nifty.getScreen(SCREEN_HUD_ID);
-        hud.findNiftyControl("gold", Label.class).setText(Integer.toString(gold));
+        hud.findNiftyControl("gold", Label.class).setText(Long.toString(gold));
     }
 
     public void setMana(int mana, int manaLoose, int manaGain) {
@@ -1127,189 +1374,107 @@ public final class PlayerScreenController implements IPlayerScreenController {
      * creature cards and worker amounts
      */
     private static final class CreatureCardManager {
-
         private final IPlayerScreenController playerScreenController;
         private final IKwdFile kwdFile;
-        private final EntityData entityData;
-        private final EntitySet playerCreatureEntities;
         private final Element creaturePanel;
         private final CreaturePortraitScrollControl portraitScroll;
         private final WorkerAmountControl workerAmountControl;
         private final Screen hud;
-        private final short impId;
-
-        private final Map<EntityId, WatchedEntity> creatureEntities = new LinkedHashMap<>();
-        private final Map<EntityId, Short> creatureIdsByEntityIds = new HashMap<>();
-        private final Map<Short, Set<EntityId>> creaturesByTypes = new LinkedHashMap<>();
+        private final CreatureCardRoster roster;
         private final Map<Short, CreatureCardControl> creatureCardControls = new LinkedHashMap<>();
-        private final CreatureCardEventListener creatureCardEventListener = new EventListener();
+        private final CreatureCardEventListener creatureCardEventListener = new CreatureCardEventListener() {
+            @Override public void zoomTo(short creatureId, CreatureUIState filter) {
+                var value = roster.selectNext(creatureId, filter);
+                if (value != null) playerScreenController.zoomToPosition(value.position().vector());
+            }
+            @Override public void pickUp(short creatureId, CreatureUIState filter) {
+                var value = roster.selectNext(creatureId, filter);
+                if (value != null) playerScreenController.pickUpEntity(value.id());
+            }
+        };
 
-        public CreatureCardManager(IPlayerScreenController playerScreenController, IKwdFile kwdFile, EntityData entityData, Element creaturePanel, CreaturePortraitScrollControl portraitScroll, WorkerAmountControl workerAmountControl, Screen hud, short playerId) {
-            this.playerScreenController = playerScreenController;
-            this.kwdFile = kwdFile;
-            this.entityData = entityData;
-            this.creaturePanel = creaturePanel;
-            this.portraitScroll = portraitScroll;
-            this.workerAmountControl = workerAmountControl;
-            this.hud = hud;
-
-            impId = kwdFile.getImp().getCreatureId();
-
-            this.workerAmountControl.addListener(creatureCardEventListener);
-
-            playerCreatureEntities = entityData.getEntities(new FieldFilter(Owner.class, "ownerId", playerId), CreatureComponent.class, Health.class, Owner.class);
-            processAddedPlayerCreatureEntities(playerCreatureEntities);
+        public CreatureCardManager(IPlayerScreenController controller, IKwdFile definition, EntityData data,
+                Element panel, CreaturePortraitScrollControl scroll, WorkerAmountControl workers, Screen hud, short playerId) {
+            playerScreenController = controller;kwdFile = definition;creaturePanel = panel;portraitScroll = scroll;
+            workerAmountControl = workers;this.hud = hud;
+            roster = new CreatureCardRoster(data, playerId, definition.getImp().getCreatureId());
+            workerAmountControl.addListener(creatureCardEventListener);
+            portraitScroll.setPortraits(List.of());refreshCounts();
         }
 
         public void update(float tpf) {
-
-            // Get our creatures for monitoring
-            if (playerCreatureEntities.applyChanges()) {
-                processAddedPlayerCreatureEntities(playerCreatureEntities.getAddedEntities());
-                processDeletedPlayerCreatureEntities(playerCreatureEntities.getRemovedEntities());
-            }
-
-            // Update the creatures individually
-            Set<Entity> modifiedCreatures = new LinkedHashSet<>();
-            for (WatchedEntity watchedEntity : creatureEntities.values()) {
-                if (watchedEntity.applyChanges()) {
-                    modifiedCreatures.add(watchedEntity);
-                }
-            }
-            if (!modifiedCreatures.isEmpty()) {
-                processChangedPlayerCreatureEntities(modifiedCreatures);
-            }
+            roster.update();var order = roster.cards();
+            if (!order.equals(new ArrayList<>(creatureCardControls.keySet()))) publishCards(prepareCards(order));
+            refreshCounts();
         }
 
         public void cleanup() {
-            playerCreatureEntities.release();
-
-            for (WatchedEntity watchedEntity : creatureEntities.values()) {
-                watchedEntity.release();
-            }
-            creatureEntities.clear();
-            workerAmountControl.removeListener(creatureCardEventListener);
+            roster.close();workerAmountControl.removeListener(creatureCardEventListener);
+            for (var card : creatureCardControls.values()) card.removeListener(creatureCardEventListener);
         }
 
-        private void processAddedPlayerCreatureEntities(Set<Entity> entities) {
-            for (Entity entity : entities) {
-                creatureEntities.put(entity.getId(), entityData.watchEntity(entity.getId(), new Class[]{CreatureAi.class, CreatureComponent.class,
-                    AttackTarget.class, TaskComponent.class, Position.class, CreatureImprisoned.class, CreatureImprisoned.class}));
-            }
+        CreatureCardsState capture() {
+            return roster.capture(workerAmountControl.getState(), portraitScroll.getFirstVisible());
         }
 
-        private void processDeletedPlayerCreatureEntities(Set<Entity> entities) {
-            Set<Short> deletedCreatures = new LinkedHashSet<>();
-            for (Entity entity : entities) {
-
-                // Remove from the list
-                Short creatureId = creatureIdsByEntityIds.remove(entity.getId());
-                if (creatureId != null) {
-                    Set<EntityId> creatureSet = creaturesByTypes.get(creatureId);
-                    if (creatureSet != null) {
-                        creatureSet.remove(entity.getId());
-                        deletedCreatures.add(creatureId);
-                    }
-                }
-                creatureEntities.remove(entity.getId()).release();
+        void restore(CreatureCardsState saved) {
+            roster.validate(saved, kwdFile);
+            // Construct missing controls before replacing behavioral state or removing live cards.
+            var prepared = prepareCards(saved.cards());
+            try {roster.restore(saved, kwdFile);}
+            catch (RuntimeException failure) {
+                for (var entry : prepared.entrySet()) if (!creatureCardControls.containsKey(entry.getKey())) removeCard(entry.getValue());
+                throw failure;
             }
-
-            updateCreatureCards(deletedCreatures);
+            publishCards(prepared);refreshCounts();
+            portraitScroll.restoreFirstVisible(saved.firstVisible());
         }
 
-        private void updateCreatureCards(Set<Short> creatureTypes) {
+        void setMode(WorkerAmountControl.State mode) {
+            for (var card : creatureCardControls.values()) card.setState(mode);
+        }
 
-            // Update the creature cards
-            for (Short creatureId : creatureTypes) {
-
-                // Imps
-                if (creatureId == impId) {
-                    updateWorkerStatistics();
-                    continue;
-                }
-
-                int realTotal = creaturesByTypes.get(creatureId).size();
-                CreatureCardControl card = creatureCardControls.get(creatureId);
-
-                // Remove the card if no longer any creatures of the type
-                if (realTotal == 0 && card != null) {
-                    card.removeListener(creatureCardEventListener);
-                    card.getElement().markForRemoval(); // Remove
-                    creatureCardControls.remove(creatureId);
-                } else if (realTotal > 0) {
-
-                    // Create the card if it doesn't exist
+        private Map<Short, CreatureCardControl> prepareCards(List<Short> order) {
+            var prepared = new LinkedHashMap<Short, CreatureCardControl>();
+            var created = new ArrayList<CreatureCardControl>();
+            try {
+                for (short type : order) {
+                    var card = creatureCardControls.get(type);
                     if (card == null) {
-                        card = createPlayerCreatureIcon(kwdFile.getCreature(creatureId), hud, creaturePanel);
-                        creatureCardControls.put(creatureId, card);
+                        card = createPlayerCreatureIcon(kwdFile.getCreature(type), hud, creaturePanel);
+                        created.add(card);card.getElement().hide();card.setState(workerAmountControl.getState());
                     }
-
-                    card.setTotal(calculateTotal(creatureId));
+                    prepared.put(type, card);
                 }
-            }
-            if (!creatureTypes.isEmpty()) {
-                List<Element> portraits = new ArrayList<>(creatureCardControls.size());
-                for (CreatureCardControl card : creatureCardControls.values()) {
-                    portraits.add(card.getElement());
-                }
-                portraitScroll.setPortraits(portraits);
+                return prepared;
+            } catch (RuntimeException failure) {
+                for (var card : created) removeCard(card);
+                throw failure;
             }
         }
 
-        private void processChangedPlayerCreatureEntities(Set<Entity> entities) {
-            Set<Short> modifiedCreatures = new LinkedHashSet<>();
-            for (Entity entity : entities) {
-                short creatureId = entity.get(CreatureComponent.class).creatureId;
-                Short oldCreatureId = creatureIdsByEntityIds.put(entity.getId(), creatureId);
-                if (oldCreatureId != null) {
-
-                    // We have the creature already on our list, update it
-                    modifiedCreatures.add(creatureId);
-                    modifiedCreatures.add(oldCreatureId);
-
-                    // See if it still qualifies
-                    if (isValidEntity(entity)) {
-
-                        // The creature has changed its type
-                        if (creatureId != oldCreatureId) {
-                            creaturesByTypes.get(oldCreatureId).remove(entity.getId());
-                            Set<EntityId> creatureSet = creaturesByTypes.get(creatureId);
-                            if (creatureSet == null) {
-                                creatureSet = new LinkedHashSet<>();
-                                creaturesByTypes.put(creatureId, creatureSet);
-                            }
-                            creatureSet.add(entity.getId());
-                        }
-                    } else {
-                        creatureIdsByEntityIds.remove(entity.getId());
-                        creaturesByTypes.get(oldCreatureId).remove(entity.getId());
-                    }
-                } else if (isValidEntity(entity)) {
-
-                    // New
-                    creatureIdsByEntityIds.put(entity.getId(), creatureId);
-                    Set<EntityId> creatureSet = creaturesByTypes.get(creatureId);
-                    if (creatureSet == null) {
-                        creatureSet = new LinkedHashSet<>();
-                        creaturesByTypes.put(creatureId, creatureSet);
-                    }
-                    creatureSet.add(entity.getId());
-                    modifiedCreatures.add(creatureId);
-                }
-            }
-
-            updateCreatureCards(modifiedCreatures);
+        private void publishCards(Map<Short, CreatureCardControl> prepared) {
+            for (var entry : creatureCardControls.entrySet()) if (!prepared.containsKey(entry.getKey())) removeCard(entry.getValue());
+            creatureCardControls.clear();creatureCardControls.putAll(prepared);int index = 0;
+            for (var card : creatureCardControls.values()) {card.getElement().setIndex(index++);card.getElement().show();}
+            portraitScroll.setPortraits(creatureCardControls.values().stream().map(CreatureCardControl::getElement).toList());
         }
 
-        /**
-         * Checks if the entity qualifies to be added to a card. Even if it may
-         * qualify, it might not be qualified to be added to the count
-         *
-         * @param entity entity to check
-         * @return {@code true} if entity should be added on a card
-         */
-        private boolean isValidEntity(Entity entity) {
-            return true;
+        private void removeCard(CreatureCardControl card) {
+            card.removeListener(creatureCardEventListener);card.getElement().hide();card.getElement().markForRemoval();
+        }
+
+        private void refreshCounts() {
+            short worker = roster.workerId();
+            workerAmountControl.setTotal(roster.count(worker, null));
+            workerAmountControl.setIdle(roster.count(worker, CreatureUIState.IDLE));
+            workerAmountControl.setBusy(roster.count(worker, CreatureUIState.BUSY));
+            workerAmountControl.setFight(roster.count(worker, CreatureUIState.FIGHT));
+            for (var entry : creatureCardControls.entrySet()) {
+                short type = entry.getKey();var card = entry.getValue();
+                card.setTotal(roster.count(type, null));card.setIdle(roster.count(type, CreatureUIState.IDLE));
+                card.setBusy(roster.count(type, CreatureUIState.BUSY));card.setFight(roster.count(type, CreatureUIState.FIGHT));
+            }
         }
 
         private CreatureCardControl createPlayerCreatureIcon(Creature creature, Screen hud, Element parent) {
@@ -1320,7 +1485,7 @@ public final class PlayerScreenController implements IPlayerScreenController {
                     parameter("creatureId", Integer.toString(creature.getCreatureId()));
                     parameter("creatureName", Utils.getMainTextResourceBundle().getString(
                             Integer.toString(creature.getNameStringId())));
-                    id("creature_" + creature.getCreatureId());
+                    id("creature_" + creature.getCreatureId() + "_" + NiftyIdCreator.generate());
                 }
             };
             Element element = cb.build(parent);
@@ -1330,137 +1495,6 @@ public final class PlayerScreenController implements IPlayerScreenController {
             creatureCardControl.addListener(creatureCardEventListener);
 
             return creatureCardControl;
-        }
-
-        private int calculateTotal(short creatureId) {
-            int total = 0;
-            Set<EntityId> creatureSet = creaturesByTypes.get(creatureId);
-            if (creatureSet != null) {
-                for (EntityId entityId : creatureSet) {
-                    if (isIncludeEntityInCount(creatureEntities.get(entityId))) {
-                        total++;
-                    }
-                }
-            }
-            return total;
-        }
-
-        /**
-         * Checks if the entity adds to the count
-         *
-         * @param entity entity to check
-         * @return {@code true} if entity should be added on a count
-         */
-        private boolean isIncludeEntityInCount(Entity entity) {
-            return (entity.get(Position.class) != null);
-        }
-
-        private void updateWorkerStatistics() {
-
-            // Calculate
-            int impTotal = 0;
-            int impIdle = 0;
-            int impFighting = 0;
-            int impBusy = 0;
-
-            Set<EntityId> imps = creaturesByTypes.get(impId);
-            for (EntityId entityId : imps) {
-                Entity entity = creatureEntities.get(entityId);
-                if (entity.get(Position.class) == null
-                        || entity.get(Death.class) != null) {
-                    continue;
-                }
-
-                AttackTarget attackTarget = entity.get(AttackTarget.class);
-                CreatureAi creatureAi = entity.get(CreatureAi.class);
-                if (creatureAi != null && creatureAi.getCreatureState() == CreatureState.IDLE) {
-                    impIdle++;
-                } else if (attackTarget != null) {
-                    impFighting++;
-                } else {
-                    impBusy++;
-                }
-                impTotal++;
-            }
-
-            // Set the amounts
-            workerAmountControl.setBusy(impBusy);
-            workerAmountControl.setFight(impFighting);
-            workerAmountControl.setIdle(impIdle);
-            workerAmountControl.setTotal(impTotal);
-        }
-
-        private final class EventListener implements CreatureCardEventListener {
-
-            private final Map<Short, Integer> selectionIndices = new HashMap<>();
-
-            @Override
-            public void zoomTo(short creatureId, CreatureUIState uiState) {
-                Entity entity = getNextCreature(creatureId, uiState);
-                if (entity != null) {
-                    playerScreenController.zoomToPosition(entity.get(Position.class).position);
-                }
-            }
-
-            @Override
-            public void pickUp(short creatureId, CreatureUIState uiState) {
-                Entity entity = getNextCreature(creatureId, uiState);
-                if (entity != null) {
-                    playerScreenController.pickUpEntity(entity.getId());
-                }
-            }
-
-            /**
-             * Get the next creature of the selected type. And advances the
-             * current selection
-             *
-             * @param creatureId the type of creature
-             * @param state the state filter
-             * @return the next creature of the type
-             */
-            private Entity getNextCreature(short creatureId, CreatureUIState state) {
-                List<EntityId> creatureList = new ArrayList<>(creaturesByTypes.get(creatureId));
-                Integer index = selectionIndices.get(creatureId);
-                if (index == null || index >= creatureList.size()) {
-                    index = 0;
-                }
-
-                // Loop until filter hits or we looped it around
-                int startIndex = index;
-                Entity selectedCreature = null;
-                do {
-                    EntityId creature = creatureList.get(index);
-                    Entity entity = creatureEntities.get(creature);
-                    index++;
-                    if (isCreatureState(entity, state) && entity.get(Position.class) != null) {
-                        selectionIndices.put(creatureId, index);
-                        selectedCreature = entity;
-                        break;
-                    }
-
-                    if (index == creatureList.size()) {
-                        index = 0;
-                    }
-                } while (index != startIndex);
-                return selectedCreature;
-            }
-
-            private boolean isCreatureState(Entity entity, CreatureUIState state) {
-                if (state == null) {
-                    return true;
-                }
-
-                AttackTarget attackTarget = entity.get(AttackTarget.class);
-                CreatureAi creatureAi = entity.get(CreatureAi.class);
-                if (creatureAi != null && creatureAi.getCreatureState() == CreatureState.IDLE) {
-                    return state == CreatureUIState.IDLE;
-                } else if (attackTarget != null) {
-                    return state == CreatureUIState.FIGHT;
-                } else {
-                    return state == CreatureUIState.BUSY;
-                }
-            }
-
         }
 
     }

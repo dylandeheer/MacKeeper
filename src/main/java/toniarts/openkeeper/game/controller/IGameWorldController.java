@@ -16,9 +16,12 @@
  */
 package toniarts.openkeeper.game.controller;
 
+import toniarts.openkeeper.game.controller.room.IRoomController;
+
 import com.jme3.math.Vector2f;
 import com.simsilica.es.EntityId;
 import java.util.Collection;
+import java.util.Set;
 import toniarts.openkeeper.game.listener.PlayerActionListener;
 import toniarts.openkeeper.utils.Point;
 
@@ -87,6 +90,9 @@ public interface IGameWorldController {
      */
     public IMapController getMapController();
 
+    /** Snapshot of object, door and trap positions that block room construction. */
+    Set<Point> getConstructionBlockingTiles();
+
     /**
      * Build a building to the wanted area
      *
@@ -112,6 +118,9 @@ public interface IGameWorldController {
      * @param points room tiles destroyed by game logic
      */
     void destroyRoomTiles(Collection<Point> points);
+
+    /** Resolve depletion of the live heart object; returns false for unrelated or stale entities. */
+    boolean destroyDungeonHeart(EntityId heart, short attackerId);
 
     /**
      * Interact with given entity
@@ -197,4 +206,9 @@ public interface IGameWorldController {
      * @param playerId the player placing the trap
      */
     public void placeTrap(short trapId, Point tile, short playerId);
+
+    /** Collect outstanding wages from the room at the creature's actual location. */
+    int collectWages(EntityId creature, IRoomController room);
+
+    int getGoldAvailableForPayday(short playerId, IRoomController room);
 }

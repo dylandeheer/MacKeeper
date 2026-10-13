@@ -30,8 +30,14 @@ import toniarts.openkeeper.game.task.TaskType;
  */
 public final class ClaimWallTileTask extends DigTileTask {
 
-    public ClaimWallTileTask(final INavigationService navigationService, final IMapController mapController, Point p, short playerId) {
-        super(navigationService, mapController, p, playerId);
+    public ClaimWallTileTask(toniarts.openkeeper.game.task.TaskIdentityAllocator taskIds, final INavigationService navigationService, final IMapController mapController, Point p, short playerId) {
+        super(taskIds, navigationService, mapController, p, playerId);
+    }
+
+    /** Restoration shell; bind saved assignees before execution. */
+    public ClaimWallTileTask(toniarts.openkeeper.game.task.TaskIdentityAllocator taskIds,
+            toniarts.openkeeper.game.data.TaskBaseState saved, INavigationService navigation, IMapController map, Point point, short player) {
+        super(taskIds, saved, navigation, map, point, player);
     }
 
     @Override

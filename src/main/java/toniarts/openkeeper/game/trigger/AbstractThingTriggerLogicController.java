@@ -16,11 +16,9 @@
  */
 package toniarts.openkeeper.game.trigger;
 
-import com.jme3.util.SafeArrayList;
 import com.simsilica.es.Entity;
 import com.simsilica.es.EntitySet;
 import java.util.Map;
-import java.util.Set;
 import toniarts.openkeeper.game.component.Trigger;
 import toniarts.openkeeper.game.controller.IEntityWrapper;
 import toniarts.openkeeper.game.controller.entity.IEntityController;
@@ -32,77 +30,80 @@ import toniarts.openkeeper.game.logic.IGameLogicUpdatable;
  * @param <T> the entity controller wrapper
  * @author Toni Helenius <helenius.toni@gmail.com>
  */
-public abstract class AbstractThingTriggerLogicController<T extends IEntityController> implements IGameLogicUpdatable {
-
+public abstract class AbstractThingTriggerLogicController<T extends IEntityController> implements IGameLogicUpdatable, TriggerStateSource {
     private final Map<Integer, AbstractThingTriggerControl<T>> thingTriggers;
-    private final SafeArrayList<AbstractThingTriggerControl> triggerControls;
+    private final java.util.List<AbstractThingTriggerControl<T>> triggerControls;
     private final EntitySet entities;
     private final IEntityWrapper<T> entityWrapper;
+    private final toniarts.openkeeper.game.save.TriggerRegistrySnapshots.Kind kind;
+    private java.util.List<com.simsilica.es.EntityId> pendingObserved;
 
-    /**
-     * Constructs a new trigger logic controller that handles triggers based on
-     * Thing records. Essentially the common nominator is that the thing
-     * instances are entities in our system.
-     *
-     * @param triggers the trigger control instances by trigger ID
-     * @param entities this is the entity set that is used to track the actual
-     *                 entity instances, they must have a Trigger component set
-     * @param entityWrapper the entity wrapper that is going to wrap the entity
-     *                      instances to a controller
-     */
-    public AbstractThingTriggerLogicController(final Map<Integer, AbstractThingTriggerControl<T>> triggers,
-            final EntitySet entities, final IEntityWrapper<T> entityWrapper) {
-        this.entities = entities;
-        this.entityWrapper = entityWrapper;
-
-        // Get all the map thing triggers
-        thingTriggers = triggers;
-        triggerControls = new SafeArrayList<>(AbstractThingTriggerControl.class, thingTriggers.values());
-
-        // Add existing entities
-        processAddedEntities(entities);
-    }
-
-    @Override
-    public void processTick(float tpf) {
-
-        // Process added entities
-        // It is intentional that the old references stay and get replaced possibly by new ones
-        if (entities.applyChanges()) {
-            processAddedEntities(entities.getAddedEntities());
+    protected AbstractThingTriggerLogicController(Map<Integer, AbstractThingTriggerControl<T>> triggers,
+            com.simsilica.es.EntityData data, Class<? extends com.simsilica.es.EntityComponent> type, IEntityWrapper<T> wrapper,
+            toniarts.openkeeper.game.save.TriggerRegistrySnapshots.Kind kind,
+            toniarts.openkeeper.game.save.TriggerRegistrySnapshots.State saved,
+            java.util.function.Function<toniarts.openkeeper.game.save.TriggerRegistrySnapshots.Entry,T> bind) {
+        this.kind = kind;thingTriggers = triggers;entityWrapper = wrapper;
+        if (saved == null) triggerControls = java.util.List.copyOf(new java.util.TreeMap<>(triggers).values());
+        else {
+            if (saved.kind() != kind || !(data instanceof toniarts.openkeeper.game.save.GameEntityData tracked))
+                throw new IllegalArgumentException("Wrong thing-trigger registry");
+            for (var id : saved.observed()) if (!tracked.wasAllocated(id)) throw new IllegalArgumentException("Unallocated trigger observation");
+            var keys = saved.entries().stream().map(e -> e.tree().triggerId()).collect(java.util.stream.Collectors.toSet());
+            if (!keys.equals(triggers.keySet())) throw new IllegalArgumentException("Thing trigger definitions differ");
+            for (var entry : saved.entries()) {
+                var control = triggers.get(entry.tree().triggerId());
+                if (control.getPlayerId() != entry.playerId() || entry.entity() != null && !tracked.wasAllocated(entry.entity()))
+                    throw new IllegalArgumentException("Thing trigger owner differs");
+                control.validateState(entry.tree());
+            }
+            var ordered = new java.util.ArrayList<AbstractThingTriggerControl<T>>();
+            var instances = new java.util.ArrayList<T>();
+            for (var entry : saved.entries()) instances.add(entry.entity() == null ? null : bind.apply(entry));
+            for (int i=0;i<saved.entries().size();i++) {
+                var entry = saved.entries().get(i);var instance = instances.get(i);
+                if (entry.entity() != null && (instance == null || !entry.entity().equals(instance.getEntityId())))
+                    throw new IllegalArgumentException("Wrong trigger entity binding");
+            }
+            for (int i=0;i<saved.entries().size();i++) {
+                var entry = saved.entries().get(i);var control = triggers.get(entry.tree().triggerId());
+                control.restoreState(entry.tree());control.setThing(instances.get(i));ordered.add(control);
+            }
+            triggerControls = java.util.List.copyOf(ordered);pendingObserved = saved.observed();
         }
-
-        // Process triggers
-        for (AbstractThingTriggerControl triggerControl : triggerControls.getArray()) {
-            triggerControl.update(tpf);
-        }
+        entities = data.getEntities(type, Trigger.class);
+        if (saved == null) processAddedEntities(entities);
     }
 
-    private void processAddedEntities(Set<Entity> entities) {
-
-        // Each entity we are going to wrap in its controller wrapper
-        for (Entity entity : entities) {
-            setThing(entity.get(Trigger.class).triggerId, entityWrapper.createController(entity.getId()));
-        }
+    @Override public java.util.List<toniarts.openkeeper.game.save.TriggerSnapshots.State> captureTrees() {
+        return triggerControls.stream().map(control -> control.captureState()).toList();
     }
-
-    @Override
-    public void start() {
-
+    @Override public toniarts.openkeeper.game.save.TriggerRegistrySnapshots.State captureRegistry() {
+        var entries = triggerControls.stream().map(control -> {
+            var instance = control.instanceControl;short definition = -1;
+            if (instance instanceof toniarts.openkeeper.game.controller.creature.ICreatureController creature) definition = creature.getCreature().getCreatureId();
+            else if (instance instanceof toniarts.openkeeper.game.controller.object.ObjectController object) definition = object.captureState().definition();
+            else if (instance instanceof toniarts.openkeeper.game.controller.door.DoorController door) definition = door.getDefinitionId();
+            else if (instance != null) throw new IllegalStateException("Unsupported trigger controller");
+            return toniarts.openkeeper.game.save.TriggerRegistrySnapshots.Entry.thing(control.captureState(), control.getPlayerId(),
+                    instance == null ? null : instance.getEntityId(), definition);
+        }).toList();
+        var observed = pendingObserved == null ? entities.stream().map(Entity::getId).sorted().toList() : pendingObserved;
+        return new toniarts.openkeeper.game.save.TriggerRegistrySnapshots.State(kind, entries, observed);
     }
-
-    @Override
-    public void stop() {
-
+    @Override public void processTick(float tpf) {
+        boolean changed = entities.applyChanges();
+        if (pendingObserved != null) {
+            var old = new java.util.HashSet<>(pendingObserved);
+            processAddedEntities(entities.stream().filter(e -> !old.contains(e.getId())).toList());pendingObserved = null;
+        } else if (changed) processAddedEntities(entities.getAddedEntities());
+        // Removed/changed members intentionally retain their previous wrapper binding.
+        for (var control : triggerControls) control.update(tpf);
     }
-
-    /**
-     * Set a thing instance controller to a thing trigger
-     *
-     * @param triggerId the trigger ID
-     * @param instanceControl the thing instance
-     */
-    private void setThing(int triggerId, T instanceControl) {
-        thingTriggers.get(triggerId).setThing(instanceControl);
+    private void processAddedEntities(java.util.Collection<Entity> added) {
+        for (Entity entity : added.stream().sorted(java.util.Comparator.comparing(Entity::getId)).toList())
+            thingTriggers.get(entity.get(Trigger.class).triggerId).setThing(entityWrapper.createController(entity.getId()));
     }
+    @Override public void start() { }
+    @Override public void stop() { entities.release(); }
 }

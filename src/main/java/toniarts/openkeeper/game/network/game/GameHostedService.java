@@ -56,7 +56,7 @@ import toniarts.openkeeper.utils.GameLoop;
  *
  * @author Toni Helenius <helenius.toni@gmail.com>
  */
-public final class GameHostedService extends AbstractHostedConnectionService implements GameSessionServerService {
+public final class GameHostedService extends AbstractHostedConnectionService implements GameSessionServerService, toniarts.openkeeper.game.state.session.SimulationSession {
 
     /**
      * Someone is listening on the other end, for that we need a message type
@@ -73,7 +73,7 @@ public final class GameHostedService extends AbstractHostedConnectionService imp
     private static final String ATTRIBUTE_SESSION = "game.session";
     private final Map<ClientInfo, GameSessionImpl> players = new ConcurrentHashMap<>(4, 0.75f, 5);
     private final Map<HostedConnection, ClientInfo> playersByConnection = new ConcurrentHashMap<>(4, 0.75f, 5);
-    private final Map<ClientInfo, Boolean> playersInTransition = new ConcurrentHashMap<>(4, 0.75f, 5);
+    private final toniarts.openkeeper.game.state.session.SessionTransitions transitions = new toniarts.openkeeper.game.state.session.SessionTransitions();
     private final SafeArrayList<GameSessionServiceListener> serverListeners = new SafeArrayList<>(GameSessionServiceListener.class);
     private RmiHostedService rmiService;
     private ScheduledExecutorService entityUpdater;
@@ -84,6 +84,17 @@ public final class GameHostedService extends AbstractHostedConnectionService imp
      */
     public GameHostedService() {
         super(false);
+    }
+
+    @Override public toniarts.openkeeper.game.state.session.SessionTransitions getTransitions() {return transitions;}
+    @Override public void restoreTransitions(toniarts.openkeeper.game.state.session.SessionTransitions.State state) {
+        transitions.restore(state, () -> players.keySet().stream().map(client -> client.getKeeper().getId()).collect(java.util.stream.Collectors.toSet()));
+    }
+
+    // Gate first, then the registry monitor: connection replacement and late acknowledgements
+    // must not clear a new receiving session's pending transition for the same keeper ID.
+    private void transitionCommand(Runnable action) {
+        transitions.gate().mutate(() -> {synchronized (players) {action.run();}});
     }
 
     private GameSessionImpl getGameSession(HostedConnection conn) {
@@ -123,14 +134,23 @@ public final class GameHostedService extends AbstractHostedConnectionService imp
     public void startHostingOnConnection(HostedConnection conn, ClientInfo clientInfo) {
         logger.log(Level.DEBUG, "startHostingOnConnection({0})", conn);
 
-        GameSessionImpl session = new GameSessionImpl(conn, clientInfo);
-        players.put(clientInfo, session);
-        playersByConnection.put(conn, clientInfo);
-        playersInTransition.put(clientInfo, false);
-
-        // Expose the session as an RMI resource to the client
-        RmiRegistry rmi = rmiService.getRmiRegistry(conn);
-        rmi.share(NetworkConstants.GAME_CHANNEL, session, GameSession.class);
+        transitionCommand(() -> {
+            if (getGameSession(conn) != null) return;
+            short playerId = clientInfo.getKeeper().getId();
+            if (players.keySet().stream().anyMatch(client -> client.getKeeper().getId() == playerId))
+                throw new IllegalArgumentException("A receiving session already exists for player " + playerId);
+            RmiRegistry rmi = rmiService.getRmiRegistry(conn);
+            GameSessionImpl session = new GameSessionImpl(conn, clientInfo);
+            players.put(clientInfo, session);
+            playersByConnection.put(conn, clientInfo);
+            conn.setAttribute(ATTRIBUTE_SESSION, session);
+            try {
+                rmi.share(NetworkConstants.GAME_CHANNEL, session, GameSession.class);
+            } catch (RuntimeException | Error failure) {
+                players.remove(clientInfo, session);playersByConnection.remove(conn, clientInfo);
+                conn.setAttribute(ATTRIBUTE_SESSION, null);throw failure;
+            }
+        });
     }
 
     @Override
@@ -141,20 +161,22 @@ public final class GameHostedService extends AbstractHostedConnectionService imp
     @Override
     public void stopHostingOnConnection(HostedConnection conn) {
         logger.log(Level.DEBUG, "stopHostingOnConnection({0})", conn);
-        GameSessionImpl player = getGameSession(conn);
-        if (player != null) {
+        transitionCommand(() -> {
+            GameSessionImpl player = getGameSession(conn);
+            if (player != null) {
 
-            // Then we are still hosting on the connection... it's
-            // possible that stopHostingOnConnection() is called more than
-            // once for a particular connection since some other game code
-            // may call it and it will also be called during connection shutdown.
-            conn.setAttribute(ATTRIBUTE_SESSION, null);
+                // Then we are still hosting on the connection... it's
+                // possible that stopHostingOnConnection() is called more than
+                // once for a particular connection since some other game code
+                // may call it and it will also be called during connection shutdown.
+                conn.setAttribute(ATTRIBUTE_SESSION, null);
 
-            // Remove player session from the active sessions list
-            players.remove(player.clientInfo);
-            playersByConnection.remove(conn);
-            playersInTransition.remove(player.clientInfo);
-        }
+                // Remove player session from the active sessions list
+                players.remove(player.clientInfo);
+                playersByConnection.remove(conn);
+                transitions.disconnect(player.clientInfo.getKeeper().getId());
+            }
+        });
     }
 
     @Override
@@ -266,6 +288,16 @@ public final class GameHostedService extends AbstractHostedConnectionService imp
     }
 
     @Override
+    public void showObjective(int objectiveId, short playerId) {
+        for (Map.Entry<ClientInfo, GameSessionImpl> gameSession : players.entrySet()) {
+            if (gameSession.getKey().getKeeper().getId() == playerId) {
+                gameSession.getValue().onShowObjective(objectiveId);
+                break;
+            }
+        }
+    }
+
+    @Override
     public void zoomViewToPoint(Vector3f point, short playerId) {
         for (Map.Entry<ClientInfo, GameSessionImpl> gameSession : players.entrySet()) {
             if (gameSession.getKey().getKeeper().getId() == playerId) {
@@ -349,18 +381,13 @@ public final class GameHostedService extends AbstractHostedConnectionService imp
 
     @Override
     public boolean isInTransition() {
-        for (boolean inTransition : playersInTransition.values()) {
-            if (inTransition) {
-                return true;
-            }
-        }
-        return false;
+        return transitions.isInTransition();
     }
 
     @Override
-    public void onGoldChange(short keeperId, int gold) {
+    public void onGoldChange(short keeperId, long gold, int goldReserve) {
         for (GameSessionImpl gameSession : players.values()) {
-            gameSession.onGoldChange(keeperId, gold);
+            gameSession.onGoldChange(keeperId, gold, goldReserve);
         }
     }
 
@@ -417,10 +444,10 @@ public final class GameHostedService extends AbstractHostedConnectionService imp
     }
 
     @Override
-    public void endGame(boolean win, short playerId) {
+    public void endGame(boolean win, short playerId, double elapsedSeconds) {
         for (Map.Entry<ClientInfo, GameSessionImpl> gameSession : players.entrySet()) {
             if (gameSession.getKey().getKeeper().getId() == playerId) {
-                gameSession.getValue().onGameEnded(win);
+                gameSession.getValue().onGameEnded(win, elapsedSeconds);
                 break;
             }
         }
@@ -592,10 +619,12 @@ public final class GameHostedService extends AbstractHostedConnectionService imp
 
         @Override
         public void transitionEnd() {
-            playersInTransition.put(clientInfo, false);
-            for (GameSessionServiceListener listener : serverListeners.getArray()) {
-                listener.onTransitionEnd(clientInfo.getKeeper().getId());
-            }
+            transitionCommand(() -> {
+                if (players.get(clientInfo) != this) return;
+                transitions.complete(clientInfo.getKeeper().getId(), () -> {
+                    for (GameSessionServiceListener listener : serverListeners.getArray()) listener.onTransitionEnd(clientInfo.getKeeper().getId());
+                });
+            });
         }
 
         @Override
@@ -653,8 +682,8 @@ public final class GameHostedService extends AbstractHostedConnectionService imp
         }
 
         @Override
-        public void onGoldChange(short keeperId, int gold) {
-            getCallback().onGoldChange(keeperId, gold);
+        public void onGoldChange(short keeperId, long gold, int goldReserve) {
+            getCallback().onGoldChange(keeperId, gold, goldReserve);
         }
 
         @Override
@@ -694,8 +723,10 @@ public final class GameHostedService extends AbstractHostedConnectionService imp
 
         @Override
         public void onDoTransition(short pathId, Vector3f start) {
-            playersInTransition.put(clientInfo, true);
-            getCallback().onDoTransition(pathId, start);
+            transitionCommand(() -> {
+                if (players.get(clientInfo) == this)
+                    transitions.begin(clientInfo.getKeeper().getId(), () -> getCallback().onDoTransition(pathId, start));
+            });
         }
 
         @Override
@@ -711,6 +742,11 @@ public final class GameHostedService extends AbstractHostedConnectionService imp
         @Override
         public void onShowMessage(int textId) {
             getCallback().onShowMessage(textId);
+        }
+
+        @Override
+        public void onShowObjective(int objectiveId) {
+            getCallback().onShowObjective(objectiveId);
         }
 
         @Override
@@ -769,8 +805,8 @@ public final class GameHostedService extends AbstractHostedConnectionService imp
         }
 
         @Override
-        public void onGameEnded(boolean win) {
-            getCallback().onGameEnded(win);
+        public void onGameEnded(boolean win, double elapsedSeconds) {
+            getCallback().onGameEnded(win, elapsedSeconds);
         }
 
     }

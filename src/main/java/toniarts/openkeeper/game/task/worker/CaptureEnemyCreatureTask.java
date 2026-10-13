@@ -34,16 +34,26 @@ import toniarts.openkeeper.utils.WorldUtils;
  *
  * @author Toni Helenius <helenius.toni@gmail.com>
  */
-public final class CaptureEnemyCreatureTask extends AbstractTileTask {
+public final class CaptureEnemyCreatureTask extends AbstractTileTask implements toniarts.openkeeper.game.task.CreatureTargetTask {
 
-    private final ICreatureController creature;
+    private final toniarts.openkeeper.game.task.TaskTarget<ICreatureController> creature;
     private final ITaskManager taskManager;
 
-    public CaptureEnemyCreatureTask(final INavigationService navigationService, final IMapController mapController, ICreatureController creature, short playerId, ITaskManager taskManager) {
-        super(navigationService, mapController, WorldUtils.vectorToPoint(creature.getPosition()), playerId);
-        this.creature = creature;
+    public CaptureEnemyCreatureTask(toniarts.openkeeper.game.task.TaskIdentityAllocator taskIds, final INavigationService navigationService, final IMapController mapController, ICreatureController creature, short playerId, ITaskManager taskManager) {
+        super(taskIds, navigationService, mapController, WorldUtils.vectorToPoint(creature.getPosition()), playerId);
+        this.creature = toniarts.openkeeper.game.task.TaskTarget.bound(creature);
         this.taskManager = taskManager;
     }
+
+    public CaptureEnemyCreatureTask(toniarts.openkeeper.game.task.TaskIdentityAllocator ids, toniarts.openkeeper.game.data.TaskBaseState saved,
+            INavigationService navigation, IMapController map, toniarts.openkeeper.utils.Point point, short player,
+            com.simsilica.es.EntityId targetCreature, ITaskManager manager) {
+        super(ids, saved, navigation, map, point, player);
+        creature = toniarts.openkeeper.game.task.TaskTarget.pending(targetCreature);
+        taskManager = manager;
+    }
+
+    @Override public toniarts.openkeeper.game.task.TaskTarget<ICreatureController> creatureTarget() {return creature;}
 
     @Override
     public Vector2f getTarget(ICreatureController creature) {
@@ -52,12 +62,12 @@ public final class CaptureEnemyCreatureTask extends AbstractTileTask {
 
     @Override
     public boolean isValid(ICreatureController creature) {
-        return this.creature.isUnconscious() && !isPrisonCapacityFull() && !this.creature.isDragged();
+        return this.creature.get().isUnconscious() && !isPrisonCapacityFull() && !this.creature.get().isDragged();
     }
 
     @Override
     public boolean isRemovable() {
-        return !this.creature.isUnconscious();
+        return !this.creature.get().isUnconscious();
     }
 
     @Override
@@ -67,10 +77,11 @@ public final class CaptureEnemyCreatureTask extends AbstractTileTask {
 
     @Override
     public void executeTask(ICreatureController creature, float executionDuration) {
+        this.creature.get();
 
         // Assign carry to prison
-        if (taskManager.assignClosestRoomTask(creature, ObjectType.PRISONER, this.creature.getEntityId())) {
-            this.creature.setHaulable(creature);
+        if (taskManager.assignClosestRoomTask(creature, ObjectType.PRISONER, this.creature.get().getEntityId())) {
+            this.creature.get().setHaulable(creature);
         }
     }
 
@@ -90,13 +101,13 @@ public final class CaptureEnemyCreatureTask extends AbstractTileTask {
 
     @Override
     public EntityId getTaskTarget() {
-        return creature.getEntityId();
+        return creature.id();
     }
 
     @Override
     public int hashCode() {
         int hash = 5;
-        hash = 83 * hash + Objects.hashCode(this.creature);
+        hash = 83 * hash + Objects.hashCode(this.creature.get());
         return hash;
     }
 
@@ -112,7 +123,7 @@ public final class CaptureEnemyCreatureTask extends AbstractTileTask {
             return false;
         }
         final CaptureEnemyCreatureTask other = (CaptureEnemyCreatureTask) obj;
-        if (!Objects.equals(this.creature, other.creature)) {
+        if (!Objects.equals(this.creature.get(), other.creature.get())) {
             return false;
         }
         return true;

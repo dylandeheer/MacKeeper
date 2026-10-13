@@ -31,11 +31,21 @@ public abstract class AbstractTileTask extends AbstractTask {
     private final Point location;
     protected final short playerId;
 
-    public AbstractTileTask(final INavigationService navigationService, final IMapController mapController, final Point p, final short playerId) {
-        super(navigationService, mapController);
+    public AbstractTileTask(toniarts.openkeeper.game.task.TaskIdentityAllocator taskIds, final INavigationService navigationService, final IMapController mapController, final Point p, final short playerId) {
+        super(taskIds, navigationService, mapController);
         location = p;
         this.playerId = playerId;
     }
+
+    protected AbstractTileTask(TaskIdentityAllocator taskIds, toniarts.openkeeper.game.data.TaskBaseState saved,
+            INavigationService navigation, IMapController map, Point location, short playerId) {
+        super(taskIds, saved, navigation, map);this.location = location;this.playerId = playerId;
+    }
+
+    /** Cached tile target, even when a subclass reports a moving entity location. */
+    public final Point captureTileLocation() {return location;}
+
+    public short getPlayerId() {return playerId;}
 
     @Override
     public Point getTaskLocation() {

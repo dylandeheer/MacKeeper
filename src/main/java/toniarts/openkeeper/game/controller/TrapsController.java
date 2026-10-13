@@ -54,6 +54,8 @@ public final class TrapsController implements ITrapsController {
     private Map<Variable.MiscVariable.MiscType, Variable.MiscVariable> gameSettings;
     private IGameController gameController;
     private ILevelInfo levelInfo;
+    private IObjectsController restoredObjects;
+    private IMapController restoredMap;
 
     public TrapsController() {
         // For serialization
@@ -78,6 +80,16 @@ public final class TrapsController implements ITrapsController {
 
         // Load traps
         loadTraps();
+    }
+
+    /** Bind existing traps without loading authored entities or consulting another world. */
+    public static TrapsController restoreBindings(IKwdFile definition, EntityData data,
+            Map<Variable.MiscVariable.MiscType, Variable.MiscVariable> settings, IGameController game,
+            ILevelInfo level, IObjectsController objects, IMapController map) {
+        var result = new TrapsController();result.kwdFile = definition;result.entityData = data;
+        result.gameSettings = settings;result.gameController = game;result.levelInfo = level;
+        result.restoredObjects = java.util.Objects.requireNonNull(objects);
+        result.restoredMap = java.util.Objects.requireNonNull(map);return result;
     }
 
     private void loadTraps() {
@@ -135,7 +147,7 @@ public final class TrapsController implements ITrapsController {
         if (trapComponent == null) {
             throw new RuntimeException("Entity " + entityId + " doesn't represent a trap!");
         }
-        return new TrapController(entityId, entityData, kwdFile.getTrapById(trapComponent.trapId), gameController.getGameWorldController().getObjectsController(), gameController.getGameWorldController().getMapController());
+        return new TrapController(entityId, entityData, kwdFile.getTrapById(trapComponent.trapId), restoredObjects != null ? restoredObjects : gameController.getGameWorldController().getObjectsController(), restoredMap != null ? restoredMap : gameController.getGameWorldController().getMapController());
     }
 
     @Override

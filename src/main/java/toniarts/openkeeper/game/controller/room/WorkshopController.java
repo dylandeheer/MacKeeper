@@ -37,7 +37,11 @@ import toniarts.openkeeper.view.map.WallSection;
 public final class WorkshopController extends NormalRoomController {
 
     public WorkshopController(EntityId entityId, EntityData entityData, IKwdFile kwdFile, RoomInstance roomInstance, IObjectsController objectsController) {
-        super(entityId, entityData, kwdFile, roomInstance, objectsController);
+        this(entityId, entityData, kwdFile, roomInstance, objectsController, true);
+    }
+
+    public WorkshopController(EntityId entityId, EntityData entityData, IKwdFile kwdFile, RoomInstance roomInstance, IObjectsController objectsController, boolean initialize) {
+        super(entityId, entityData, kwdFile, roomInstance, objectsController, initialize);
     }
 
     @Override

@@ -68,6 +68,9 @@ import toniarts.openkeeper.utils.WorldUtils;
  */
 public final class ObjectsController implements IObjectsController {
 
+    private final java.util.random.RandomGenerator random;
+    @Override public java.util.random.RandomGenerator getRandom() { return random; }
+
     private static final Logger logger = System.getLogger(ObjectsController.class.getName());
     
     public final static short OBJECT_GOLD_ID = 1;
@@ -114,6 +117,7 @@ public final class ObjectsController implements IObjectsController {
     private final Map<EntityId, WeakReference<IChickenController>> chickenControllersByEntityId = new WeakHashMap<>();
 
     public ObjectsController() {
+        random = new toniarts.openkeeper.game.random.SimulationRandom();
         // For serialization
     }
 
@@ -129,6 +133,26 @@ public final class ObjectsController implements IObjectsController {
      */
     public ObjectsController(IKwdFile kwdFile, EntityData entityData, Map<Variable.MiscVariable.MiscType, Variable.MiscVariable> gameSettings,
             IGameTimer gameTimer, IGameController gameController, ILevelInfo levelInfo) {
+        this(kwdFile, entityData, gameSettings, gameTimer, gameController, levelInfo, new toniarts.openkeeper.game.random.SimulationRandom());
+    }
+
+    public ObjectsController(IKwdFile kwdFile, EntityData entityData, Map<Variable.MiscVariable.MiscType, Variable.MiscVariable> gameSettings,
+            IGameTimer gameTimer, IGameController gameController, ILevelInfo levelInfo, java.util.random.RandomGenerator random) {
+        this(kwdFile, entityData, gameSettings, gameTimer, gameController, levelInfo, true, random);
+    }
+
+    /** Bind an already restored entity store without loading the map's original objects.
+     * Active chicken state machines are restored separately by their owning system. */
+    public static ObjectsController restoreBindings(IKwdFile kwdFile, EntityData entityData,
+            Map<Variable.MiscVariable.MiscType, Variable.MiscVariable> gameSettings,
+            IGameTimer gameTimer, IGameController gameController, ILevelInfo levelInfo, java.util.random.RandomGenerator random) {
+        return new ObjectsController(kwdFile, entityData, gameSettings, gameTimer, gameController, levelInfo, false, random);
+    }
+
+    private ObjectsController(IKwdFile kwdFile, EntityData entityData,
+            Map<Variable.MiscVariable.MiscType, Variable.MiscVariable> gameSettings,
+            IGameTimer gameTimer, IGameController gameController, ILevelInfo levelInfo, boolean initialize, java.util.random.RandomGenerator random) {
+        this.random = java.util.Objects.requireNonNull(random);
         this.kwdFile = kwdFile;
         this.entityData = entityData;
         this.gameSettings = gameSettings;
@@ -136,8 +160,7 @@ public final class ObjectsController implements IObjectsController {
         this.gameController = gameController;
         this.levelInfo = levelInfo;
 
-        // Load objects
-        loadObjects();
+        if (initialize) loadObjects();
     }
 
     private void loadObjects() {
@@ -267,8 +290,8 @@ public final class ObjectsController implements IObjectsController {
         Vector3f pos = WorldUtils.pointToVector3f(x, y);
 
         // Add a slight offset to make things look nicer, stuff not clumping together
-        pos.x = pos.x + Utils.getRandom().nextFloat(WorldUtils.TILE_WIDTH) - (WorldUtils.TILE_WIDTH / 2f);
-        pos.z = pos.z + Utils.getRandom().nextFloat(WorldUtils.TILE_WIDTH) - (WorldUtils.TILE_WIDTH / 2f);
+        pos.x = pos.x + random.nextFloat(WorldUtils.TILE_WIDTH) - (WorldUtils.TILE_WIDTH / 2f);
+        pos.z = pos.z + random.nextFloat(WorldUtils.TILE_WIDTH) - (WorldUtils.TILE_WIDTH / 2f);
         return loadObject(OBJECT_GOLD_ID, ownerId, pos, 0, money, null, null, null, maxMoney);
     }
 
@@ -337,6 +360,22 @@ public final class ObjectsController implements IObjectsController {
         }
 
         return chickenController;
+    }
+
+    /** Restore the active system-owned controllers, including pending removed entities. */
+    public java.util.List<IChickenController> restoreChickenControllers(java.util.List<ChickenController.SavedState> states) {
+        if (!chickenControllersByEntityId.isEmpty()) throw new IllegalStateException("Chicken controllers already bound");
+        if (!(entityData instanceof toniarts.openkeeper.game.save.GameEntityData data))
+            throw new IllegalArgumentException("Restoration requires a tracked entity store");
+        var ids = new java.util.HashSet<EntityId>();
+        for (var state : states) if (!data.wasAllocated(state.entityId()) || !ids.add(state.entityId()))
+            throw new IllegalArgumentException("Invalid or duplicate chicken controller identity");
+        var result = new java.util.ArrayList<IChickenController>();
+        for (var state : states) result.add(ChickenController.restoreState(state, entityData,
+                kwdFile.getObject(OBJECT_EGG_ID), kwdFile.getObject(OBJECT_CHICKEN_ID), gameController.getNavigationService(),
+                gameTimer, this, gameController.getGameWorldController().getMapController()));
+        for (var controller : result) chickenControllersByEntityId.put(controller.getEntityId(), new WeakReference<>(controller));
+        return java.util.List.copyOf(result);
     }
 
     private IChickenController createChickenControllerInternal(EntityId id) {

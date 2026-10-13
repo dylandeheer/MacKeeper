@@ -28,6 +28,11 @@ import java.util.Set;
  */
 public interface IMapController extends IMapInformation<IMapTileController>, IGameLogicUpdatable {
 
+    /** Register a server-side terrain breach listener. */
+    void addBreachListener(toniarts.openkeeper.game.listener.DungeonBreachListener listener);
+
+    void removeBreachListener(toniarts.openkeeper.game.listener.DungeonBreachListener listener);
+
     /**
      * Set some tiles selected/undelected
      *
@@ -138,6 +143,9 @@ public interface IMapController extends IMapInformation<IMapTileController>, IGa
      */
     void applyClaimTile(Point point, short playerId);
 
+    /** Transfer a whole room to an active player; return false for a missing room/player or unchanged owner. */
+    boolean changeRoomOwner(Point point, short playerId);
+
     /**
      * Heal a tile
      *
@@ -154,6 +162,12 @@ public interface IMapController extends IMapInformation<IMapTileController>, IGa
      * @param playerId the new tile owner
      */
     void alterTerrain(Point pos, short terrainId, short playerId);
+
+    /** Collapse the complete hero gate at this tile, preserving its footprint and ruins. */
+    boolean collapseHeroGate(Point point);
+
+    /** Retain heart ruins, release contents and remove the live room from player controls. */
+    boolean destroyDungeonHeart(Point point);
 
     /**
      * Set specified tiles flashing for certain period of time

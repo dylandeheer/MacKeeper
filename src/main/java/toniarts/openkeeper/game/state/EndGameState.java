@@ -39,15 +39,47 @@ public final class EndGameState extends AbstractAppState implements RawInputList
     private Main app;
     private AppStateManager stateManager;
     private final PlayerState playerState;
+    private boolean dismissed;
+    private final boolean restoring;
+    private Thread renderThread;
+    private boolean freshInputRequired;
+    private final java.util.Set<Integer> pressedKeys = new java.util.HashSet<>();
 
     public EndGameState(PlayerState playerState) {
-        this.playerState = playerState;
+        this(playerState, false);
+    }
+
+    private EndGameState(PlayerState playerState, boolean restoring) {
+        this.playerState = java.util.Objects.requireNonNull(playerState);
+        this.restoring = restoring;
+        freshInputRequired = restoring;
+    }
+
+    /** Prepare the listener without replaying result text, widescreen changes or profile updates. */
+    public static EndGameState restored(PlayerState playerState) {
+        if (!playerState.hasGameResult() || playerState.isEnabled())
+            throw new IllegalArgumentException("Restored result input requires a completed disabled player");
+        return new EndGameState(playerState, true);
+    }
+
+    boolean belongsTo(PlayerState owner) {return owner == playerState;}
+
+    boolean isAwaitingInputFor(PlayerState owner) {
+        return owner == playerState && isInitialized() && !dismissed;
+    }
+
+    void restoreAwaitingInput() {
+        if (Thread.currentThread() != renderThread || !isInitialized() || dismissed
+                || stateManager.getState(EndGameState.class) != this)
+            throw new IllegalStateException("Result input belongs to the active render-thread owner");
+        freshInputRequired = true;pressedKeys.clear();
     }
 
     @Override
     public void initialize(AppStateManager stateManager, Application app) {
         super.initialize(stateManager, app);
 
+        renderThread = Thread.currentThread();
         this.app = (Main) app;
         this.stateManager = stateManager;
 
@@ -55,8 +87,10 @@ public final class EndGameState extends AbstractAppState implements RawInputList
         app.getInputManager().addRawInputListener(this);
 
         // Add the texts
-        playerState.setWideScreen(true);
-        playerState.setGeneralText(2901);
+        if (!restoring) {
+            playerState.setWideScreen(true);
+            playerState.setGeneralText(2901);
+        }
     }
 
     @Override
@@ -97,15 +131,33 @@ public final class EndGameState extends AbstractAppState implements RawInputList
 
     @Override
     public void onKeyEvent(KeyInputEvent evt) {
-        if (evt.isPressed()) {
+        if (dismissed || !isInitialized() || stateManager.getState(EndGameState.class) != this) return;
+        int key = evt.getKeyCode();
+        if (key != KeyInput.KEY_SPACE && key != KeyInput.KEY_ESCAPE && key != KeyInput.KEY_LCONTROL) return;
+        // Even rejected stale releases must not reach the global Escape pause binding.
+        evt.setConsumed();
+        GameClientState client = stateManager.getState(GameClientState.class);
+        if (client != null && !client.isAcceptingInput()) return;
+        if (freshInputRequired) {
+            if (evt.isPressed()) {
+                if (!evt.isRepeating()) pressedKeys.add(key);
+                return;
+            }
+            if (!pressedKeys.remove(key)) return;
+        }
+        // Consume the release before restoring controls, including the global Escape pause binding.
+        if (!evt.isPressed()) {
             if (evt.getKeyCode() == KeyInput.KEY_SPACE) {
+                dismissed = true;
+                evt.setConsumed();
                 stateManager.detach(this);
                 playerState.quitToDebriefing();
             } else if (evt.getKeyCode() == KeyInput.KEY_ESCAPE || evt.getKeyCode() == KeyInput.KEY_LCONTROL) {
-                playerState.setWideScreen(false);
-                playerState.setGeneralText(2901);
-                cleanup();
+                dismissed = true;
+                evt.setConsumed();
+                stateManager.detach(this);
                 playerState.setEnabled(true);
+                playerState.setWideScreen(false);
             }
         }
     }

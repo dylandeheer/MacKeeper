@@ -43,10 +43,26 @@ public final class CreatureTriggerLogicController extends AbstractThingTriggerLo
 
     public CreatureTriggerLogicController(final IGameController gameController, final ILevelInfo levelInfo, final IGameTimer gameTimer, final IMapController mapController,
             final ICreaturesController creaturesController, final PlayerService playerService, final EntityData entityData) {
+        this(gameController, levelInfo, gameTimer, mapController, creaturesController, playerService, entityData, null);
+    }
+
+    public static CreatureTriggerLogicController restoreState(IGameController gameController, ILevelInfo levelInfo, IGameTimer gameTimer,
+            IMapController mapController, ICreaturesController creaturesController, PlayerService playerService,
+            toniarts.openkeeper.game.save.GameEntityData entityData, toniarts.openkeeper.game.save.TriggerRegistrySnapshots.State saved) {
+        java.util.Objects.requireNonNull(saved);
+        return new CreatureTriggerLogicController(gameController, levelInfo, gameTimer, mapController, creaturesController, playerService, entityData, saved);
+    }
+
+    private CreatureTriggerLogicController(final IGameController gameController, final ILevelInfo levelInfo, final IGameTimer gameTimer, final IMapController mapController,
+            final ICreaturesController creaturesController, final PlayerService playerService, final EntityData entityData, toniarts.openkeeper.game.save.TriggerRegistrySnapshots.State saved) {
         super(initTriggers(levelInfo.getLevelData(), gameController, levelInfo, gameTimer, mapController,
                 creaturesController, playerService),
-                entityData.getEntities(CreatureComponent.class, Trigger.class),
-                creaturesController);
+                entityData, CreatureComponent.class, creaturesController, toniarts.openkeeper.game.save.TriggerRegistrySnapshots.Kind.CREATURE, saved,
+                entry -> {
+                    var creature = ((toniarts.openkeeper.game.controller.CreaturesController) creaturesController).getBoundController(entry.entity());
+                    if (creature.getCreature().getCreatureId() != entry.definition()) throw new IllegalArgumentException("Creature trigger definition differs");
+                    return creature;
+                });
     }
 
     private static Map<Integer, AbstractThingTriggerControl<ICreatureController>> initTriggers(IKwdFile kwdFile, final IGameController gameController, final ILevelInfo levelInfo, final IGameTimer gameTimer, final IMapController mapController,

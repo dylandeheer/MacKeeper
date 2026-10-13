@@ -31,8 +31,14 @@ import toniarts.openkeeper.tools.convert.map.Terrain;
  */
 public final class ObjectiveDigTileTask extends DigTileTask {
 
-    public ObjectiveDigTileTask(final INavigationService navigationService, final IMapController mapController, Point p, short playerId) {
-        super(navigationService, mapController, p, playerId);
+    public ObjectiveDigTileTask(toniarts.openkeeper.game.task.TaskIdentityAllocator taskIds, final INavigationService navigationService, final IMapController mapController, Point p, short playerId) {
+        super(taskIds, navigationService, mapController, p, playerId);
+    }
+
+    /** Restoration shell; bind saved assignees before execution. */
+    public ObjectiveDigTileTask(toniarts.openkeeper.game.task.TaskIdentityAllocator taskIds,
+            toniarts.openkeeper.game.data.TaskBaseState saved, INavigationService navigation, IMapController map, Point point, short player) {
+        super(taskIds, saved, navigation, map, point, player);
     }
 
     @Override

@@ -19,15 +19,12 @@ package toniarts.openkeeper.game.data;
 import com.jme3.input.KeyInput;
 import com.jme3.system.AppSettings;
 import java.io.BufferedInputStream;
-import java.io.BufferedOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.OutputStream;
 import java.lang.System.Logger;
 import java.lang.reflect.Field;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -58,7 +55,7 @@ public final class Settings {
 
     public enum SecretLevelStatus {
 
-        NOT_DISCOVED, DISCOVERED, IN_PROGRESS
+        NOT_DISCOVED, DISCOVERED, IN_PROGRESS, COMPLETED
     }
 
     /**
@@ -167,7 +164,7 @@ public final class Settings {
         USE_CURSORS(Boolean.class, true, SettingCategory.MISCELLANEOUS),
         // Multiplayer settings
         PLAYER_NAME(String.class, System.getProperty("user.name"), SettingCategory.MISCELLANEOUS),
-        GAME_NAME(String.class, "My OpenKeeper game", SettingCategory.MISCELLANEOUS),
+        GAME_NAME(String.class, "My MacKeeper game", SettingCategory.MISCELLANEOUS),
         MULTIPLAYER_LAST_IP(String.class, "127.0.0.1", SettingCategory.MISCELLANEOUS),
         MULTIPLAYER_LAST_PORT(Integer.class, 7575, SettingCategory.MISCELLANEOUS),
         // Sound settings
@@ -251,36 +248,49 @@ public final class Settings {
     
     private static final Settings INSTANCE;
     private static final int MAX_FPS = 200;
-    private static final Path USER_HOME_FOLDER = Paths.get(System.getProperty("user.home"), ".".concat(Main.TITLE));
-    private static final Path USER_SETTINGS_FILE = USER_HOME_FOLDER.resolve("openkeeper.properties");
+    private static final Path USER_HOME_FOLDER = toniarts.openkeeper.utils.AppPaths.dataDirectory();
+    private static final Path USER_SETTINGS_FILE = USER_HOME_FOLDER.resolve("settings.properties");
     public static final List<String> OPENGL = Settings.getRenderers();
     public static final List<Integer> SAMPLES = new ArrayList<>(Arrays.asList(new Integer[]{0, 2, 4, 6, 8, 16}));
     public static final List<Integer> ANISOTROPHIES = new ArrayList<>(Arrays.asList(new Integer[]{0, 2, 4, 8, 16}));
     
     private final AppSettings settings;
+    private final Path settingsFile;
 
     static {
         INSTANCE = new Settings(new AppSettings(true));
     }
 
     private Settings(final AppSettings settings) {
+        this(settings, USER_SETTINGS_FILE);
+    }
+
+    Settings(final AppSettings settings, Path settingsFile) {
+        this.settingsFile = settingsFile;
 
         // Init the settings
         this.settings = settings;
+        settings.setResolution(1280, 800);
+        settings.setResizable(true);
+        settings.setVSync(true);
 
-        if (Files.exists(USER_SETTINGS_FILE)) {
-            try (InputStream in = Files.newInputStream(USER_SETTINGS_FILE);
+        if (Files.exists(settingsFile)) {
+            try (InputStream in = Files.newInputStream(settingsFile);
                     BufferedInputStream bin = new BufferedInputStream(in)) {
                 settings.load(bin);
             } catch (IOException ex) {
-                logger.log(Logger.Level.WARNING, "Settings file failed to load from " + USER_SETTINGS_FILE + "!", ex);
+                logger.log(Logger.Level.WARNING, "Settings file failed to load from " + settingsFile + "!", ex);
             }
         }
         this.settings.setFrameRate(Math.max(MAX_FPS, settings.getFrequency()));
 
         // Assing some app level settings
         settings.setTitle(TITLE);
-        settings.setIcons(getApplicationIcons());
+        // GLFW reports a platform error if asked to set a regular Cocoa window icon.
+        // The macOS application icon belongs to the app bundle instead.
+        if (!System.getProperty("os.name").toLowerCase(java.util.Locale.ROOT).contains("mac")) {
+            settings.setIcons(getApplicationIcons());
+        }
 
         // We don't allow this to be changed, assets were not meant to use this
         settings.setGammaCorrection(false);
@@ -329,13 +339,8 @@ public final class Settings {
      *
      * @throws java.io.IOException may fail to save
      */
-    public void save() throws IOException {
-        try (OutputStream out = Files.newOutputStream(USER_SETTINGS_FILE);
-                BufferedOutputStream bout = new BufferedOutputStream(out)) {
-            settings.save(bout);
-        } catch (IOException ex) {
-            logger.log(Logger.Level.WARNING, "Settings file failed to save!", ex);
-        }
+    public synchronized void save() throws IOException {
+        toniarts.openkeeper.utils.AppPaths.writeAtomically(settingsFile, settings::save);
     }
 
     /**
@@ -417,7 +422,11 @@ public final class Settings {
      * @return number of attempts to a level
      */
     public int getLevelAttempts(CampaignLevel level) {
-        return (int) getSetting(Setting.LEVEL_ATTEMPTS.toString() + level.getLevel(), Setting.LEVEL_ATTEMPTS.getDefaultValue());
+        // Old versions used untyped keys. Only regular campaign levels can safely
+        // inherit those counts; MPD/secret counters otherwise collide with them.
+        int legacy = level.getType() == Level ? ((Number)getSetting(
+                Setting.LEVEL_ATTEMPTS.toString() + level.getLevel() + level.getVariation(), 0)).intValue() : 0;
+        return ((Number)getSetting(attemptsKey(level), legacy)).intValue();
     }
 
     /**
@@ -429,9 +438,9 @@ public final class Settings {
     public LevelStatus getLevelStatus(CampaignLevel level) {
         switch (level.getType()) {
             case Level:
-                return LevelStatus.valueOf((String) getSetting(Setting.LEVEL_STATUS.toString() + level.getLevel() + level.getVariation(), Setting.LEVEL_STATUS.getDefaultValue()));
+                return LevelStatus.valueOf(String.valueOf(getSetting(Setting.LEVEL_STATUS.toString() + level.getLevel() + level.getVariation(), Setting.LEVEL_STATUS.getDefaultValue())));
             case MPD:
-                return LevelStatus.valueOf((String) getSetting(Setting.MPD_LEVEL_STATUS.toString() + level.getLevel() + level.getVariation(), Setting.MPD_LEVEL_STATUS.getDefaultValue()));
+                return LevelStatus.valueOf(String.valueOf(getSetting(Setting.MPD_LEVEL_STATUS.toString() + level.getLevel() + level.getVariation(), Setting.MPD_LEVEL_STATUS.getDefaultValue())));
         }
         return null;
     }
@@ -445,7 +454,7 @@ public final class Settings {
     public SecretLevelStatus getSecredLevelStatus(CampaignLevel level) {
         switch (level.getType()) {
             case Secret:
-                return SecretLevelStatus.valueOf((String) getSetting(Setting.SECRET_LEVEL_STATUS.toString() + level.getLevel(), Setting.SECRET_LEVEL_STATUS.getDefaultValue()));
+                return SecretLevelStatus.valueOf(String.valueOf(getSetting(Setting.SECRET_LEVEL_STATUS.toString() + level.getLevel(), Setting.SECRET_LEVEL_STATUS.getDefaultValue())));
         }
         return null;
     }
@@ -456,7 +465,7 @@ public final class Settings {
      * @param level the level
      */
     public void increaseLevelAttempts(CampaignLevel level) {
-        setSetting(Setting.LEVEL_ATTEMPTS.toString() + level.getLevel() + level.getVariation(), getLevelAttempts(level) + 1);
+        setSetting(attemptsKey(level), (int)Math.min(Integer.MAX_VALUE, (long)getLevelAttempts(level) + 1));
     }
 
     /**
@@ -471,7 +480,7 @@ public final class Settings {
                 setSetting(Setting.LEVEL_STATUS.toString() + level.getLevel() + level.getVariation(), status);
                 break;
             case MPD:
-                setSetting(Setting.MPD_LEVEL_STATUS.toString() + level.getLevel(), status);
+                setSetting(Setting.MPD_LEVEL_STATUS.toString() + level.getLevel() + level.getVariation(), status);
                 break;
         }
     }
@@ -536,7 +545,12 @@ public final class Settings {
      * Resets all campaign progress: level statuses, level number, attempts,
      * and secret/MPD level statuses.
      */
-    public void resetCampaignProgress() {
+    public synchronized void resetCampaignProgress() {
+        // Reset receipts only for modes whose progress is reset. Loading an old campaign save
+        // after an explicit reset may earn progress again; MPD progress and receipts survive.
+        settings.entrySet().removeIf(entry -> entry.getKey().startsWith(RECEIPT_PREFIX)
+                && entry.getValue() instanceof String receipt
+                && (receipt.startsWith("1|Level|") || receipt.startsWith("1|Secret|")));
         // Reset the current level number back to the start
         setSetting(Setting.LEVEL_NUMBER, Setting.LEVEL_NUMBER.getDefaultValue());
 
@@ -565,12 +579,57 @@ public final class Settings {
         // Reset secret levels
         for (int i = 1; i < 6; i++) {
             CampaignLevel secretLevel = new CampaignLevel(Secret, i);
-            setSetting(Setting.SECRET_LEVEL_STATUS.toString() + secretLevel, SecretLevelStatus.NOT_DISCOVED);
+            setSecredLevelStatus(secretLevel, SecretLevelStatus.NOT_DISCOVED);
+            setSetting(attemptsKey(secretLevel), 0);
+        }
+    }
+
+    private static String attemptsKey(CampaignLevel level) {
+        return "CampaignAttempts." + level.getType() + "." + level.getLevel() + level.getVariation();
+    }
+
+    private static final String RECEIPT_PREFIX = "CampaignReceipt.";
+
+    /** Record a new playthrough. Saved games must use the overload with a stable attempt ID. */
+    public void recordCampaignResult(CampaignLevel level, boolean won) {
+        recordCampaignResult(level, java.util.UUID.randomUUID(), won);
+    }
+
+    /**
+     * Count each saved playthrough once. A later winning continuation upgrades a loss without
+     * counting another attempt; a later loss never erases a win. Save receipts and progress
+     * together with save(), including after a failed write that is retried by the caller.
+     * Returns whether this call changed the in-memory profile.
+     */
+    public synchronized boolean recordCampaignResult(CampaignLevel level, java.util.UUID attemptId, boolean won) {
+        var campaign = java.util.Objects.requireNonNull(
+                toniarts.openkeeper.game.state.session.PlayerProgressState.Campaign.of(level));
+        String key = RECEIPT_PREFIX + java.util.Objects.requireNonNull(attemptId);
+        String binding = "1|" + campaign.type() + "|" + campaign.level() + "|" + campaign.variation() + "|";
+        Object receipt = settings.get(key);
+        if (receipt != null && !receipt.equals(binding + "W") && !receipt.equals(binding + "L"))
+            throw new IllegalArgumentException("Campaign attempt receipt does not match this level");
+        if (receipt != null && (!won || receipt.equals(binding + "W"))) return false;
+        if (receipt == null) increaseLevelAttempts(level);
+        if (won) applyCampaignWin(level);
+        settings.put(key, binding + (won ? "W" : "L"));
+        return true;
+    }
+
+    private void applyCampaignWin(CampaignLevel level) {
+        if (level.getType() == Secret) {
+            setSecredLevelStatus(level, SecretLevelStatus.COMPLETED);
+        } else {
+            setLevelStatus(level, LevelStatus.COMPLETED);
+        }
+        if (level.getType() == Level) {
+            // Replaying an earlier level must not move campaign progress backwards.
+            setSetting(Setting.LEVEL_NUMBER, Math.max(getInteger(Setting.LEVEL_NUMBER), getNextPlayableLevel()));
         }
     }
 
     private void resetCampaignLevel(CampaignLevel level) {
         setLevelStatus(level, LevelStatus.NOT_COMPLETED);
-        setSetting(Setting.LEVEL_ATTEMPTS.toString() + level, Setting.LEVEL_ATTEMPTS.getDefaultValue());
+        setSetting(attemptsKey(level), 0);
     }
 }

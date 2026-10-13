@@ -37,6 +37,8 @@ public final class MessageBoxControl extends AbstractController {
     private Element element;
     private Element buttonPanel;
     private SystemMessageControl systemMessage;
+    private toniarts.openkeeper.view.MessageState.BoxMode mode = toniarts.openkeeper.view.MessageState.BoxMode.CLOSED;
+    private String messageText;
 
     private enum ButtonType {
         EXIT,
@@ -82,6 +84,7 @@ public final class MessageBoxControl extends AbstractController {
 
     public void hide() {
         this.systemMessage = null;
+        mode = toniarts.openkeeper.view.MessageState.BoxMode.CLOSED;messageText = null;
         this.element.hide();
     }
 
@@ -99,6 +102,7 @@ public final class MessageBoxControl extends AbstractController {
      * @param text
      */
     public void showMessage(final String text) {
+        systemMessage = null;mode = toniarts.openkeeper.view.MessageState.BoxMode.TEXT;
         this.showMessageBox(text);
         this.addButton(ButtonType.TICK, "closeMessage()");
     }
@@ -111,6 +115,7 @@ public final class MessageBoxControl extends AbstractController {
      */
     public void showSystemMessage(final SystemMessageControl systemMessage, final String text) {
         this.systemMessage = systemMessage;
+        mode = toniarts.openkeeper.view.MessageState.BoxMode.SYSTEM;
 
         this.showMessageBox(text);
         this.addButton(ButtonType.EXIT, "dismissMessage()");
@@ -124,6 +129,7 @@ public final class MessageBoxControl extends AbstractController {
      */
     public void showFocusMessage(final SystemMessageControl systemMessage, final String text) {
         this.showSystemMessage(systemMessage, text);
+        mode = toniarts.openkeeper.view.MessageState.BoxMode.FOCUS;
 
         this.addButton(ButtonType.GOTO, "focusElement()");
     }
@@ -133,9 +139,25 @@ public final class MessageBoxControl extends AbstractController {
      * @param text
      */
     public void setText(final String text) {
+        messageText = text;
         this.element.findNiftyControl("#messageText", Label.class).setText(text);
         // update layout otherwise the scrollbar isn't correct
         this.element.layoutElements();
+    }
+
+    public toniarts.openkeeper.view.MessageState.Box captureState(java.util.List<SystemMessageControl> messages) {
+        if (!element.isVisible()) return toniarts.openkeeper.view.MessageState.Box.closed();
+        int index = systemMessage == null ? -1 : messages.indexOf(systemMessage);
+        return new toniarts.openkeeper.view.MessageState.Box(mode, messageText, index,
+                systemMessage != null && index < 0 ? systemMessage.captureState() : null);
+    }
+
+    public void restoreState(toniarts.openkeeper.view.MessageState.Box state, java.util.List<SystemMessageControl> messages) {
+        if (state.mode() == toniarts.openkeeper.view.MessageState.BoxMode.CLOSED) {hide();return;}
+        if (state.mode() == toniarts.openkeeper.view.MessageState.BoxMode.TEXT) {showMessage(state.text());return;}
+        var control = state.messageIndex() >= 0 ? messages.get(state.messageIndex()) : SystemMessageControl.detached(state.detachedMessage());
+        if (state.mode() == toniarts.openkeeper.view.MessageState.BoxMode.FOCUS) showFocusMessage(control, state.text());
+        else showSystemMessage(control, state.text());
     }
 
     private void addButton(final ButtonType button, final String onClick) {

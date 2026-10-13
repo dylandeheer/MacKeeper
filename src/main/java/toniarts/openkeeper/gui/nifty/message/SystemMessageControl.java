@@ -35,7 +35,9 @@ public final class SystemMessageControl extends AbstractController {
     private Element element;
     private boolean unread = true;
     private String text = "";
-    private final Long createdAt = System.currentTimeMillis();
+    private toniarts.openkeeper.view.SystemMessageState.MessageType type;
+    private double ageSeconds;
+    private boolean removed;
     private Screen hud;
 
     @Override
@@ -44,8 +46,8 @@ public final class SystemMessageControl extends AbstractController {
         this.element = element;
         this.nifty = nifty;
         this.hud = this.nifty.getScreen(SCREEN_HUD_ID);
-        // sync effects on adding messages
-        syncActiveEffects();
+        this.type = toniarts.openkeeper.view.SystemMessageState.MessageType.valueOf(parameter.get("messageType"));
+        // The owner starts the notification effect after successful construction.
     }
 
     @Override
@@ -63,6 +65,7 @@ public final class SystemMessageControl extends AbstractController {
      */
     public void setRead(boolean read) {
         this.unread = !read;
+        if (element == null || removed) return;
         if (read) {
             this.element.stopEffect(EffectEventId.onActive);
         } else {
@@ -82,7 +85,8 @@ public final class SystemMessageControl extends AbstractController {
      * Remove a message from the message queue
      */
     public void dismissMessage() {
-        this.element.markForRemoval();
+        removed = true;
+        if (element != null) this.element.markForRemoval();
     }
 
     /**
@@ -90,19 +94,36 @@ public final class SystemMessageControl extends AbstractController {
      * Otherwise all messages pulsate differently, which looks odd.
      */
     public void syncActiveEffects() {
+        if (element == null || removed) return;
         for(Element child : element.getParent().getChildren()) {
             SystemMessageControl control = child.getControl(SystemMessageControl.class);
-            if (control != null && control.unread) {
+            if (control != null && !control.removed && control.unread) {
                 child.startEffect(EffectEventId.onActive);
             }
         }
     }
 
-    /**
-     * @return the time this message was created
-     */
-    public long getCreatedAt() {
-        return this.createdAt;
+    public toniarts.openkeeper.view.MessageState.Message captureState() {
+        return new toniarts.openkeeper.view.MessageState.Message(type, text, unread, ageSeconds);
+    }
+
+    public void restoreState(toniarts.openkeeper.view.MessageState.Message state) {
+        type = state.type();text = state.text();ageSeconds = state.ageSeconds();
+        setRead(!state.unread());
+    }
+
+    public static SystemMessageControl detached(toniarts.openkeeper.view.MessageState.Message state) {
+        var control = new SystemMessageControl();control.removed = true;control.restoreState(state);return control;
+    }
+
+    public boolean isRemoved() {return removed;}
+
+    /** Age only while the message owner updates; pause and offline loading consume no lifetime. */
+    public void advanceTime(float seconds) {
+        if (!Float.isFinite(seconds) || seconds < 0) throw new IllegalArgumentException("Invalid message time step");
+        if (removed) return;
+        ageSeconds = Math.min(toniarts.openkeeper.view.MessageState.LIFETIME_SECONDS, ageSeconds + seconds);
+        if (ageSeconds >= toniarts.openkeeper.view.MessageState.LIFETIME_SECONDS) dismissMessage();
     }
 
     /**

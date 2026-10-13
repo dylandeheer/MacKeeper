@@ -98,7 +98,7 @@ public abstract class RoomGoldControl extends AbstractRoomObjectControl<Integer>
             } else {
 
                 // Adjust the gold sum
-                goldPile.gold = pointStoredGold;
+                entityData.setComponent(goldPiles.iterator().next(), new Gold(pointStoredGold, goldPile.maxGold));
             }
 
             // Player gold is updated by GameWorldController, not here.
@@ -157,7 +157,8 @@ public abstract class RoomGoldControl extends AbstractRoomObjectControl<Integer>
                 Gold goldPile = entityData.getComponent(goldPiles.iterator().next(), Gold.class);
                 int goldToRemove = Math.min(goldPile.gold, amount);
                 amount -= goldToRemove;
-                goldPile.gold = goldPile.gold - goldToRemove;
+                goldPile = new Gold(goldPile.gold - goldToRemove, goldPile.maxGold);
+                entityData.setComponent(goldEntity, goldPile);
 
                 // Player gold is updated by GameWorldController, not here.
                 addCurrentCapacity(-goldToRemove);

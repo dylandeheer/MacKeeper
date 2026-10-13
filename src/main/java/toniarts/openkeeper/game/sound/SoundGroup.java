@@ -82,6 +82,8 @@ public final class SoundGroup {
                         .relativize(sdt.getFile()).toString();
 
                 try {
+                    // SDT archives intentionally contain empty slots; conversion skips them too.
+                    if (sdt.getEntries()[soundId] == null) continue;
                     String soundFilename = relative.substring(0, relative.length() - 4) + File.separator
                             + SdtFile.fixFileExtension(sdt.getEntries()[soundId]);
 

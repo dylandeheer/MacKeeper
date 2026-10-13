@@ -207,6 +207,39 @@ public abstract class UnitFlowerControl<T> extends BillboardControl implements I
 
     }
 
+    protected toniarts.openkeeper.view.WorldViewState.Cycle captureCycle() {return null;}
+    protected void restoreCycle(toniarts.openkeeper.view.WorldViewState.Cycle cycle) { }
+
+    @Override
+    public final toniarts.openkeeper.view.WorldViewState.Flower captureDisplay() {
+        var kind = switch (data) {
+            case toniarts.openkeeper.tools.convert.map.Creature creature -> toniarts.openkeeper.view.WorldViewState.Kind.CREATURE;
+            case toniarts.openkeeper.tools.convert.map.Door door -> toniarts.openkeeper.view.WorldViewState.Kind.DOOR;
+            case toniarts.openkeeper.tools.convert.map.Trap trap -> toniarts.openkeeper.view.WorldViewState.Kind.TRAP;
+            default -> throw new IllegalStateException("Unsupported unit indicator");
+        };
+        short definition = switch (data) {
+            case toniarts.openkeeper.tools.convert.map.Creature creature -> creature.getCreatureId();
+            case toniarts.openkeeper.tools.convert.map.Door door -> door.getDoorId();
+            case toniarts.openkeeper.tools.convert.map.Trap trap -> trap.getTrapId();
+            default -> throw new IllegalStateException("Unsupported unit indicator");
+        };
+        return new toniarts.openkeeper.view.WorldViewState.Flower(kind, definition, isEnabled(), timeVisible, targetTimeVisible, captureCycle());
+    }
+
+    /** Preserve clocks without show/hide callbacks. Icon textures are derived from the current entity. */
+    @Override
+    public final void restoreDisplay(toniarts.openkeeper.view.WorldViewState.Flower saved) {
+        var current = captureDisplay();
+        if (saved.kind() != current.kind() || saved.definitionId() != current.definitionId() || unitSpatial == null)
+            throw new IllegalArgumentException("Unit indicator belongs to another model");
+        timeVisible = saved.elapsed();targetTimeVisible = saved.deadline();restoreCycle(saved.cycle());
+        updateHealth();updateRequired = true;
+        if (saved.visible()) {unitSpatial.attachChild(getFlower());generateTexture();}
+        else if (spatial != null) unitSpatial.detachChild(spatial);
+        setEnabled(saved.visible());
+    }
+
     @Override
     public EntityId getEntityId() {
         return entityId;

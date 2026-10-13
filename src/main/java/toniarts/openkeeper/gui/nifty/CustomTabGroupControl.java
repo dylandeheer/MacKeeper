@@ -541,8 +541,7 @@ public final class CustomTabGroupControl extends AbstractController implements T
             throw new IndexOutOfBoundsException("Index out of bounds: " + index);
         }
 
-        selectedIndex = index;
-        checkVisibility();
+        restoreSelectedTabIndex(index);
         if (nifty != null) {
             String id = getId();
             if (id != null) {
@@ -554,6 +553,13 @@ public final class CustomTabGroupControl extends AbstractController implements T
                 }
             }
         }
+    }
+
+    /** Restore the selected tab without publishing a user selection or its sound. */
+    public void restoreSelectedTabIndex(final int index) {
+        if (index < 0 || index >= getTabCount()) throw new IndexOutOfBoundsException("Index out of bounds: " + index);
+        selectedIndex = index;
+        checkVisibility();
     }
 
     @Override

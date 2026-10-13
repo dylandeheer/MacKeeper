@@ -286,9 +286,9 @@ public final class GameClientService extends AbstractClientService
         }
 
         @Override
-        public void onGoldChange(short keeperId, int gold) {
+        public void onGoldChange(short keeperId, long gold, int goldReserve) {
             for (GameSessionListener l : listeners.getArray()) {
-                l.onGoldChange(keeperId, gold);
+                l.onGoldChange(keeperId, gold, goldReserve);
             }
         }
 
@@ -335,9 +335,9 @@ public final class GameClientService extends AbstractClientService
         }
 
         @Override
-        public void onGameEnded(boolean win) {
+        public void onGameEnded(boolean win, double elapsedSeconds) {
             for (GameSessionListener l : listeners.getArray()) {
-                l.onGameEnded(win);
+                l.onGameEnded(win, elapsedSeconds);
             }
         }
 
@@ -373,6 +373,13 @@ public final class GameClientService extends AbstractClientService
         public void onShowMessage(int textId) {
             for (GameSessionListener l : listeners.getArray()) {
                 l.onShowMessage(textId);
+            }
+        }
+
+        @Override
+        public void onShowObjective(int objectiveId) {
+            for (GameSessionListener l : listeners.getArray()) {
+                l.onShowObjective(objectiveId);
             }
         }
 

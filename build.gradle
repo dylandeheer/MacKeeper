@@ -8,6 +8,12 @@ plugins {
     id 'idea'
 }
 
+version = "0.1.0-dev"
+
+dependencyLocking {
+    lockAllConfigurations()
+}
+
 ext {
     jmonkeyengine_version = '3.9.0-stable'
     license = file("$rootDir/license.txt")
@@ -24,14 +30,9 @@ allprojects {
 }
 
 application {
-    applicationName = 'OpenKeeper'
-    mainClass = 'toniarts.openkeeper.Main'
-    if (System.getProperty("os.name").toLowerCase().contains("mac")) {
-        applicationDefaultJvmArgs = ["-Dvisualvm.display.name=OpenKeeper", "-XstartOnFirstThread"]
-    }
-    else {
-        applicationDefaultJvmArgs = ["-Dvisualvm.display.name=OpenKeeper"]
-    }
+    applicationName = 'MacKeeper'
+    mainClass = 'toniarts.openkeeper.Launcher'
+    applicationDefaultJvmArgs = ["-Dvisualvm.display.name=MacKeeper"]
 }
 
 tasks.register("modelViewer", JavaExec) {
@@ -42,9 +43,9 @@ tasks.register("modelViewer", JavaExec) {
 
 configurations.configureEach {
     resolutionStrategy.dependencySubstitution {
-        substitute module('com.github.nifty-gui:nifty') using module('com.github.tonihele.nifty-gui:nifty:1.4-SNAPSHOT')
-        substitute module('com.github.nifty-gui:nifty-default-controls') using module('com.github.tonihele.nifty-gui:nifty-default-controls:1.4-SNAPSHOT')
-        substitute module('com.github.nifty-gui:nifty-style-black') using module('com.github.tonihele.nifty-gui:nifty-style-black:1.4-SNAPSHOT')
+        substitute module('com.github.nifty-gui:nifty') using module('com.github.tonihele.nifty-gui:nifty:5f1662da097596b48c254a22f5adf26c76818a29')
+        substitute module('com.github.nifty-gui:nifty-default-controls') using module('com.github.tonihele.nifty-gui:nifty-default-controls:5f1662da097596b48c254a22f5adf26c76818a29')
+        substitute module('com.github.nifty-gui:nifty-style-black') using module('com.github.tonihele.nifty-gui:nifty-style-black:5f1662da097596b48c254a22f5adf26c76818a29')
     }
 }
 
@@ -84,6 +85,11 @@ dependencies {
     implementation "com.simsilica:zay-es-net:1.6.0"
     implementation "com.simsilica:sio2:1.8.0"
     implementation "com.simsilica:sim-ethereal:1.8.0"
+
+    constraints {
+        runtimeOnly('org.apache.logging.log4j:log4j-api:2.26.1')
+        runtimeOnly('org.apache.logging.log4j:log4j-core:2.26.1')
+    }
 
     testImplementation "org.junit.jupiter:junit-jupiter:5.14.4"
     testRuntimeOnly "org.junit.platform:junit-platform-launcher:1.14.4"
