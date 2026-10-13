@@ -64,6 +64,19 @@ public final class RoomControllerFactory {
     public static IRoomController restoreRoom(EntityData data, IKwdFile definition,
             toniarts.openkeeper.game.data.RoomState state, IObjectsController objects,
             Map<MiscType, MiscVariable> settings, IGameTimer timer) {
+        return restoreRoom(data, definition, state, objects, settings, timer, false);
+    }
+
+    /** A removed controller can remain strongly referenced by a task awaiting cleanup. */
+    public static IRoomController restoreRemovedRoom(EntityData data, IKwdFile definition,
+            toniarts.openkeeper.game.data.RoomState state, IObjectsController objects,
+            Map<MiscType, MiscVariable> settings, IGameTimer timer) {
+        return restoreRoom(data, definition, state, objects, settings, timer, true);
+    }
+
+    private static IRoomController restoreRoom(EntityData data, IKwdFile definition,
+            toniarts.openkeeper.game.data.RoomState state, IObjectsController objects,
+            Map<MiscType, MiscVariable> settings, IGameTimer timer, boolean removed) {
         if (!(data instanceof toniarts.openkeeper.game.save.GameEntityData saved)) throw new IllegalArgumentException("Room restoration requires a tracked entity store");
         var references = new java.util.ArrayList<EntityId>();references.add(state.entityId());
         references.addAll(state.floorFurniture());references.addAll(state.wallFurniture());references.addAll(state.pillars());
@@ -73,7 +86,9 @@ public final class RoomControllerFactory {
         var component = data.getComponent(state.entityId(), toniarts.openkeeper.game.component.RoomComponent.class);
         var owner = data.getComponent(state.entityId(), toniarts.openkeeper.game.component.Owner.class);
         var health = data.getComponent(state.entityId(), toniarts.openkeeper.game.component.Health.class);
-        if (type == null || component == null || component.roomId != state.roomType() || owner == null || health == null) {
+        if (type == null || (removed
+                ? component != null || owner != null || health != null
+                : component == null || component.roomId != state.roomType() || owner == null || health == null)) {
             throw new IllegalArgumentException("Saved room definition/components missing");
         }
         var instance = RoomInstance.restoreDefinition(type, state.direction());
@@ -82,7 +97,8 @@ public final class RoomControllerFactory {
         if (state.walls() != null) instance.setWallSections(state.walls().stream()
                 .map(w -> new toniarts.openkeeper.view.map.WallSection(w.direction(), new java.util.ArrayList<>(w.coordinates()))).collect(java.util.stream.Collectors.toCollection(java.util.ArrayList::new)));
         var result = (toniarts.openkeeper.game.controller.room.AbstractRoomController) construct(state.entityId(), data, definition, instance, objects, settings, timer, false);
-        result.bindRestoredState(state);
+        if (removed) result.bindRestoredRemovedState(state);
+        else result.bindRestoredState(state);
         return result;
     }
 

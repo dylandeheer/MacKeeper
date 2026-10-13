@@ -27,6 +27,14 @@ public final class CollectPayTask extends AbstractRoomTask {
         this.data = data;
     }
 
+    public CollectPayTask(toniarts.openkeeper.game.task.TaskIdentityAllocator ids, toniarts.openkeeper.game.data.TaskBaseState saved,
+            INavigationService navigation, IMapController map, Point point, short player, IRoomController room, IGameWorldController world, EntityData data, boolean executed) {
+        super(ids, saved, navigation, map, point, player, room);
+        this.world = world;this.data = data;this.executed = executed;
+    }
+
+    public boolean hasExecuted() { return executed; }
+
     @Override public boolean isValid(ICreatureController creature) {
         // AbstractTask probes with null when deciding whether an unassigned task can be removed.
         if (creature == null) return false;

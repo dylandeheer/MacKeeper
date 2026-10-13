@@ -121,7 +121,8 @@ public final class TaskManager implements ITaskManager, IGameLogicUpdatable {
     private final IEntityPositionLookup entityPositionLookup;
     private final Map<Variable.MiscVariable.MiscType, Variable.MiscVariable> gameSettings;
     private final EntityData entityData;
-    private final TaskIdentityAllocator taskIds = new TaskIdentityAllocator();
+    private final TaskIdentityAllocator taskIds;
+    private final boolean staged;
 
     public TaskIdentityAllocator.State captureAllocationState() {return taskIds.captureState();}
 
@@ -135,6 +136,13 @@ public final class TaskManager implements ITaskManager, IGameLogicUpdatable {
                 .sorted(Comparator.comparingLong(Task::getId))
                 .map(task -> toniarts.openkeeper.game.save.TileTaskSnapshots.capture((AbstractTileTask) task)).toList();
     }
+    public toniarts.openkeeper.game.save.RoomTaskSnapshots.Capture captureRoomTaskStates(Collection<Task> detachedNodes) {
+        var roots = new ArrayList<Task>(detachedNodes);
+        roots.addAll(tasksByIds.values());taskQueues.values().forEach(roots::addAll);
+        roomTasks.values().forEach(entries -> roots.addAll(entries.values()));
+        return toniarts.openkeeper.game.save.RoomTaskSnapshots.captureRoots(roots);
+    }
+
     private final EntitySet taskEntities;
     private final EntitySet unconsciousEntities;
     private final EntitySet corpseEntities;
@@ -150,6 +158,23 @@ public final class TaskManager implements ITaskManager, IGameLogicUpdatable {
             IObjectsController objectsController, ICreaturesController creaturesController, INavigationService navigationService,
             Collection<IPlayerController> players, ILevelInfo levelInfo, IEntityPositionLookup entityPositionLookup,
             Map<Variable.MiscVariable.MiscType, Variable.MiscVariable> gameSettings) {
+        this(entityData, gameWorldController, mapController, objectsController, creaturesController, navigationService,
+                players, levelInfo, entityPositionLookup, gameSettings, new TaskIdentityAllocator(), false);
+    }
+
+    /** Inert owner for restored task shells. Root/query restoration and activation are separate work. */
+    public static TaskManager stageRestore(EntityData data, IGameWorldController world, IMapController map,
+            IObjectsController objects, ICreaturesController creatures, INavigationService navigation,
+            Collection<IPlayerController> players, ILevelInfo level, IEntityPositionLookup positions,
+            Map<Variable.MiscVariable.MiscType, Variable.MiscVariable> settings, TaskIdentityAllocator ids) {
+        return new TaskManager(data, world, map, objects, creatures, navigation, players, level, positions, settings, ids, true);
+    }
+
+    private TaskManager(EntityData entityData, IGameWorldController gameWorldController, IMapController mapController,
+            IObjectsController objectsController, ICreaturesController creaturesController, INavigationService navigationService,
+            Collection<IPlayerController> players, ILevelInfo levelInfo, IEntityPositionLookup entityPositionLookup,
+            Map<Variable.MiscVariable.MiscType, Variable.MiscVariable> gameSettings, TaskIdentityAllocator ids, boolean staged) {
+        this.taskIds = java.util.Objects.requireNonNull(ids);this.staged = staged;
         this.entityData = entityData;
         this.mapController = mapController;
         this.gameWorldController = gameWorldController;
@@ -175,30 +200,31 @@ public final class TaskManager implements ITaskManager, IGameLogicUpdatable {
         }
 
         // Scan the initial tasks
-        scanInitialTasks();
+        if (!staged) scanInitialTasks();
 
         // Add task listeners
-        addListeners(players);
+        if (!staged) addListeners(players);
 
         // Listen to entities having a task, for cleanup purposes
         taskEntities = entityData.getEntities(TaskComponent.class);
-        processAddedTasks(taskEntities);
+        if (!staged) processAddedTasks(taskEntities);
 
         // Listen to rescue/capture missions
         unconsciousEntities = entityData.getEntities(CreatureComponent.class, Health.class, Owner.class, Unconscious.class);
-        processAddedUnconsciousEntities(unconsciousEntities);
+        if (!staged) processAddedUnconsciousEntities(unconsciousEntities);
 
         // Listen to corpse robbing missions
         corpseEntities = entityData.getEntities(CreatureComponent.class, Death.class);
-        processAddedCorpseEntities(corpseEntities);
+        if (!staged) processAddedCorpseEntities(corpseEntities);
 
         // Listen to object picking up missions
         freeObjectEntities = entityData.getEntities(ObjectComponent.class, Position.class, Placeable.class);
-        processAddedFreeObjectEntities(freeObjectEntities);
+        if (!staged) processAddedFreeObjectEntities(freeObjectEntities);
     }
 
     @Override
     public void start() {
+        if (staged) throw new IllegalStateException("Task manager restoration is not complete");
 
     }
 
@@ -212,6 +238,7 @@ public final class TaskManager implements ITaskManager, IGameLogicUpdatable {
 
     @Override
     public void processTick(float tpf) {
+        if (staged) throw new IllegalStateException("Task manager restoration is not complete");
         if (taskEntities.applyChanges()) {
             processDeletedTasks(taskEntities.getRemovedEntities());
             processAddedTasks(taskEntities.getAddedEntities());

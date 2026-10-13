@@ -43,6 +43,45 @@ class RoomContentContinuationTest {
         }
     }
 
+    @Test void removedRoomsRemainSharedTaskDependenciesWithoutResurrectingStorageOrEntities() throws Exception {
+        try (var f = new Fixture("Library", ObjectType.SPELL_BOOK)) {
+            var ids = new toniarts.openkeeper.game.task.TaskIdentityAllocator();
+            var first = new toniarts.openkeeper.game.task.worker.CarryGoldToTreasuryTask(ids, null, null, f.point, (short)3, f.room, null);
+            var second = new toniarts.openkeeper.game.task.worker.CarryGoldToTreasuryTask(ids, null, null, f.point, (short)3, f.room, null);
+            f.room.remove();assertTrue(f.room.isRemoved());assertFalse(first.isValid(null));
+            var captured = RoomTaskSnapshots.captureRoots(List.of(first, second, first));
+            assertEquals(2, captured.tasks().size());assertEquals(1, captured.removedRooms().size());
+            var saved = RoomSnapshots.decode(RoomSnapshots.encode(captured.removedRooms())).getFirst();
+            assertTrue(saved.destroyed());assertTrue(saved.storage().isEmpty());assertTrue(saved.floorFurniture().isEmpty());
+            byte[] before = EntitySnapshots.encode(f.data.capture());
+            var data = GameEntityData.restore(EntitySnapshots.decode(before));
+            try {
+                assertThrows(IllegalArgumentException.class, () -> RoomControllerFactory.restoreRoom(data, f.definition, saved, null, Map.of(), new GameTimeController()));
+                var removed = (AbstractRoomController) RoomControllerFactory.restoreRemovedRoom(data, f.definition, saved, null, Map.of(), new GameTimeController());
+                assertTrue(removed.isRemoved());assertEquals(saved, removed.captureState());
+                for (var state : captured.tasks()) {
+                    var restored = RoomTaskSnapshots.restore(state, ids, null, null, id -> removed, null, null, data, null, null);
+                    restored.bindRestoredAssignees(id -> {throw new AssertionError("Unexpected assignee");});
+                    assertSame(removed, restored.getRoom());assertFalse(restored.isValid(null));
+                    assertEquals(state, RoomTaskSnapshots.capture(restored));
+                }
+                assertArrayEquals(before, EntitySnapshots.encode(data.capture()));
+                assertThrows(IllegalStateException.class, () -> removed.bindRestoredRemovedState(saved));
+            } finally {data.close();}
+        }
+    }
+
+    @Test void removedRoomRestorationRejectsLiveRoomsAndUnreleasedContentsWithoutMutatingState() throws Exception {
+        try (var f = new Fixture("Library", ObjectType.SPELL_BOOK)) {
+            var live = f.room.captureState();byte[] before = EntitySnapshots.encode(f.data.capture());
+            assertThrows(IllegalArgumentException.class, () -> RoomControllerFactory.restoreRemovedRoom(f.data, f.definition, live, null, Map.of(), new GameTimeController()));
+            assertArrayEquals(before, EntitySnapshots.encode(f.data.capture()));
+            f.room.remove();byte[] removed = EntitySnapshots.encode(f.data.capture());
+            assertThrows(IllegalArgumentException.class, () -> RoomControllerFactory.restoreRemovedRoom(f.data, f.definition, live, null, Map.of(), new GameTimeController()));
+            assertArrayEquals(removed, EntitySnapshots.encode(f.data.capture()));
+        }
+    }
+
     static void assertRoundTrip(Fixture f) throws Exception {
         byte[] before = EntitySnapshots.encode(f.data.capture());var state = f.room.captureState();
         var staged = GameEntityData.restore(EntitySnapshots.decode(before));

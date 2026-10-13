@@ -37,6 +37,12 @@ public abstract class AbstractCapacityCriticalRoomTask extends AbstractRoomTask 
         this.taskManager = taskManager;
     }
 
+    protected AbstractCapacityCriticalRoomTask(TaskIdentityAllocator ids, toniarts.openkeeper.game.data.TaskBaseState saved,
+            INavigationService navigation, IMapController map, Point point, short player, IRoomController room, TaskManager manager) {
+        super(ids, saved, navigation, map, point, player, room);
+        this.taskManager = java.util.Objects.requireNonNull(manager);
+    }
+
     @Override
     public void unassign(ICreatureController creature) {
         super.unassign(creature);

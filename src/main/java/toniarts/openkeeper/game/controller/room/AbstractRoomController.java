@@ -161,6 +161,18 @@ public abstract class AbstractRoomController extends AbstractRoomInformation imp
         restoringState = null;restoring = false;
     }
 
+    /** Restore the cached definition of a removed room without recreating its contents. */
+    public final void bindRestoredRemovedState(toniarts.openkeeper.game.data.RoomState state) {
+        if (!restoring || restoringState != null || !state.entityId().equals(entityId))
+            throw new IllegalStateException("Invalid removed room restoration phase");
+        if (!isRemoved() || !state.destroyed() || !state.storage().isEmpty()
+                || !state.floorFurniture().isEmpty() || !state.wallFurniture().isEmpty() || !state.pillars().isEmpty())
+            throw new IllegalArgumentException("Removed room retains live contents");
+        setupCoordinates();
+        restoreDoor(state.door());
+        restoring = false;
+    }
+
     @Override
     public void setHealth(int health) {
         Health healthComponent = getEntityComponent(Health.class);

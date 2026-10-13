@@ -58,6 +58,15 @@ public final class Train extends AbstractCapacityCriticalRoomTask {
         trainingCost = Math.abs((int) gameSettings.get(Variable.MiscVariable.MiscType.MODIFY_PLAYER_GOLD_WHILE_TRAINING_PER_SECOND).getValue());
     }
 
+    public Train(toniarts.openkeeper.game.task.TaskIdentityAllocator ids, toniarts.openkeeper.game.data.TaskBaseState saved,
+            INavigationService navigation, IMapController map, Point point, short player, IRoomController room, TaskManager manager, IGameWorldController world, IPlayerController owner, int maxLevel, int cost) {
+        super(ids, saved, navigation, map, point, player, room, manager);
+        gameWorldController = world;playerController = owner;trainingRoomMaxExperienceLevel = maxLevel;trainingCost = cost;
+    }
+
+    public int getTrainingMaxLevel() { return trainingRoomMaxExperienceLevel; }
+    public int getTrainingCost() { return trainingCost; }
+
     @Override
     public boolean isValid(ICreatureController creature) {
         return playerController.getKeeper().getGold() >= trainingCost && creature.getLevel() < trainingRoomMaxExperienceLevel && super.isValid(creature);

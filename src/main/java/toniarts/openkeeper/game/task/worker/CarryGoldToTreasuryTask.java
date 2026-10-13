@@ -46,6 +46,14 @@ public final class CarryGoldToTreasuryTask extends AbstractRoomTask {
         this.gameWorldController = gameWorldController;
     }
 
+    public CarryGoldToTreasuryTask(toniarts.openkeeper.game.task.TaskIdentityAllocator ids, toniarts.openkeeper.game.data.TaskBaseState saved,
+            INavigationService navigation, IMapController map, Point point, short player, IRoomController room, IGameWorldController world, boolean executed) {
+        super(ids, saved, navigation, map, point, player, room);
+        gameWorldController = world;this.executed = executed;
+    }
+
+    public boolean hasExecuted() { return executed; }
+
     @Override
     public boolean isValid(ICreatureController creature) {
         if (!executed) {

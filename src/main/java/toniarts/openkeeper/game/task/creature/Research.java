@@ -50,9 +50,15 @@ public final class Research extends AbstractCapacityCriticalRoomTask {
         this.objectsController = objectsController;
     }
 
+    public Research(toniarts.openkeeper.game.task.TaskIdentityAllocator ids, toniarts.openkeeper.game.data.TaskBaseState saved,
+            INavigationService navigation, IMapController map, Point point, short player, IRoomController room, TaskManager manager, PlayerResearchControl research, IObjectsController objects) {
+        super(ids, saved, navigation, map, point, player, room, manager);
+        researchControl = research;objectsController = objects;
+    }
+
     @Override
     public boolean isValid(ICreatureController creature) {
-        return (researchControl.isAnythingToReaseach() && !getRoom().getObjectControl(getRoomObjectType()).isFullCapacity());
+        return researchControl.isAnythingToReaseach() && super.isValid(creature);
     }
 
     @Override
