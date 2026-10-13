@@ -34,13 +34,39 @@ import toniarts.openkeeper.game.task.TaskType;
 public class ObjectiveTaskDecorator implements ObjectiveTask {
 
     private final long taskId;
-    private final Task task;
+    private Task task;
+    private final boolean workerPartyTask;
     private final Deque<ObjectiveTask> taskQueue = new ArrayDeque<>();
 
     public ObjectiveTaskDecorator(long originalTaskId, Task task) {
-        this.taskId = originalTaskId;
+        this(originalTaskId, task, false);
+    }
+
+    public ObjectiveTaskDecorator(long originalTaskId, Task task, boolean workerPartyTask) {
+        this(originalTaskId, workerPartyTask);this.task = java.util.Objects.requireNonNull(task);
+    }
+
+    private ObjectiveTaskDecorator(long taskId, boolean workerPartyTask) {
+        if (taskId < 0) throw new IllegalArgumentException("Invalid objective task ID");
+        this.taskId = taskId;this.workerPartyTask = workerPartyTask;
+    }
+
+    public static ObjectiveTaskDecorator restoreShell(long taskId, boolean workerPartyTask) {
+        return new ObjectiveTaskDecorator(taskId, workerPartyTask);
+    }
+
+    public void bindRestoredTask(Task task) {
+        if (this.task != null) throw new IllegalStateException("Objective wrapper is already bound");
+        if (task == null || task == this) throw new IllegalArgumentException("Invalid wrapped task");
         this.task = task;
     }
+
+    public Task getWrappedTask() {
+        if (task == null) throw new IllegalStateException("Objective wrapper is not bound");
+        return task;
+    }
+
+    @Override public boolean isWorkerPartyTask() {return workerPartyTask;}
 
     @Override
     public Deque<ObjectiveTask> getTaskQueue() {
@@ -49,7 +75,7 @@ public class ObjectiveTaskDecorator implements ObjectiveTask {
 
     @Override
     public void executeTask(ICreatureController creature, float executionDuration) {
-        task.executeTask(creature, executionDuration);
+        getWrappedTask().executeTask(creature, executionDuration);
         ObjectiveTask.super.executeTask(creature, executionDuration);
     }
 
@@ -60,7 +86,7 @@ public class ObjectiveTaskDecorator implements ObjectiveTask {
 
     @Override
     public void assign(ICreatureController creature, boolean setToCreature) {
-        task.assign(creature, false);
+        getWrappedTask().assign(creature, false);
 
         // Override the assign
         creature.setAssignedTask(this);
@@ -68,8 +94,8 @@ public class ObjectiveTaskDecorator implements ObjectiveTask {
 
             // Assign to all workers
             for (ICreatureController c : creature.getParty().getActualMembers()) {
-                if (!c.equals(creature) && c.isWorker() && task.canAssign(c)) {
-                    task.assign(c, true);
+                if (!c.equals(creature) && c.isWorker() && getWrappedTask().canAssign(c)) {
+                    getWrappedTask().assign(c, true);
                 }
             }
         }
@@ -77,72 +103,72 @@ public class ObjectiveTaskDecorator implements ObjectiveTask {
 
     @Override
     public boolean canAssign(ICreatureController creature) {
-        return task.canAssign(creature);
+        return getWrappedTask().canAssign(creature);
     }
 
     @Override
     public int getAssigneeCount() {
-        return task.getAssigneeCount();
+        return getWrappedTask().getAssigneeCount();
     }
 
     @Override
     public int getMaxAllowedNumberOfAsignees() {
-        return task.getMaxAllowedNumberOfAsignees();
+        return getWrappedTask().getMaxAllowedNumberOfAsignees();
     }
 
     @Override
     public int getPriority() {
-        return task.getPriority();
+        return getWrappedTask().getPriority();
     }
 
     @Override
     public Vector2f getTarget(ICreatureController creature) {
-        return task.getTarget(creature);
+        return getWrappedTask().getTarget(creature);
     }
 
     @Override
     public Instant getTaskCreated() {
-        return task.getTaskCreated();
+        return getWrappedTask().getTaskCreated();
     }
 
     @Override
     public Point getTaskLocation() {
-        return task.getTaskLocation();
+        return getWrappedTask().getTaskLocation();
     }
 
     @Override
     public boolean isFaceTarget() {
-        return task.isFaceTarget();
+        return getWrappedTask().isFaceTarget();
     }
 
     @Override
     public boolean isReachable(ICreatureController creature) {
-        return task.isReachable(creature);
+        return getWrappedTask().isReachable(creature);
     }
 
     @Override
     public boolean isValid(ICreatureController creature) {
-        return task.isValid(creature);
+        return getWrappedTask().isValid(creature);
     }
 
     @Override
     public void unassign(ICreatureController creature) {
-        task.unassign(creature);
+        getWrappedTask().unassign(creature);
     }
 
     @Override
     public boolean isRemovable() {
-        return task.isRemovable();
+        return getWrappedTask().isRemovable();
     }
 
     @Override
     public TaskType getTaskType() {
-        return task.getTaskType();
+        return getWrappedTask().getTaskType();
     }
 
     @Override
     public EntityId getTaskTarget() {
-        return task.getTaskTarget();
+        return getWrappedTask().getTaskTarget();
     }
 
     @Override
@@ -152,7 +178,7 @@ public class ObjectiveTaskDecorator implements ObjectiveTask {
 
     @Override
     public boolean isFull() {
-        return task.isFull();
+        return getWrappedTask().isFull();
     }
 
 }

@@ -39,6 +39,16 @@ public final class SendToActionPoint extends GoToTask {
         this.actionPoint = actionPoint;
     }
 
+    public SendToActionPoint(toniarts.openkeeper.game.task.TaskIdentityAllocator ids, toniarts.openkeeper.game.data.TaskBaseState saved,
+            INavigationService navigation, IMapController map, toniarts.openkeeper.utils.Point point, short player,
+            ActionPoint actionPoint, boolean parentExecuted, boolean executed) {
+        super(ids, saved, navigation, map, point, player, parentExecuted);
+        this.actionPoint = java.util.Objects.requireNonNull(actionPoint);this.executed = executed;
+    }
+
+    public ActionPoint getActionPoint() {return actionPoint;}
+    public boolean hasExecutedWaypoint() {return executed;}
+
     @Override
     public boolean isValid(ICreatureController creature) {
         if (!executed && creature != null) {

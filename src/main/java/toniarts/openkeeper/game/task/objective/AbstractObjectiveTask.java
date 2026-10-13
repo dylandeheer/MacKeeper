@@ -38,6 +38,11 @@ public abstract class AbstractObjectiveTask extends AbstractTileTask implements 
         super(taskIds, navigationService, mapController, p, playerId);
     }
 
+    protected AbstractObjectiveTask(toniarts.openkeeper.game.task.TaskIdentityAllocator ids,
+            toniarts.openkeeper.game.data.TaskBaseState saved, INavigationService navigation, IMapController map, Point point, short player) {
+        super(ids, saved, navigation, map, point, player);
+    }
+
     @Override
     public Deque<ObjectiveTask> getTaskQueue() {
         return taskQueue;

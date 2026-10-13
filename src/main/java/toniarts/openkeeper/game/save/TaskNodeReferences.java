@@ -26,6 +26,8 @@ public final class TaskNodeReferences {
         }
         /** Live nodes, including detached retry targets; inspect only inside the capture boundary. */
         public List<Task> nodes() { return List.copyOf(nodes); }
+        public int size() {return nodes.size();}
+        public Task node(int index) {return nodes.get(index);}
     }
     /** Bind each reconstructed graph object once, separately from TaskManager's current-child lookup. */
     public static final class Bindings {

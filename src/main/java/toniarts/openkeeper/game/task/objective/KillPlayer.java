@@ -37,20 +37,30 @@ import toniarts.openkeeper.utils.WorldUtils;
  *
  * @author Toni Helenius <helenius.toni@gmail.com>
  */
-public final class KillPlayer extends AbstractObjectiveTask {
+public final class KillPlayer extends AbstractObjectiveTask implements toniarts.openkeeper.game.task.CreatureTargetTask {
 
     protected final short targetPlayerId;
-    protected final ICreatureController creature;
+    protected final toniarts.openkeeper.game.task.TaskTarget<ICreatureController> creature;
     protected final ILevelInfo levelInfo;
 
     public KillPlayer(toniarts.openkeeper.game.task.TaskIdentityAllocator taskIds, final INavigationService navigationService, final IMapController mapController, final ILevelInfo levelInfo, short targetPlayerId, ICreatureController creature) {
         super(taskIds, navigationService, mapController, heartLocation(levelInfo, targetPlayerId), creature.getOwnerId());
 
         this.targetPlayerId = targetPlayerId;
-        this.creature = creature;
+        this.creature = toniarts.openkeeper.game.task.TaskTarget.bound(creature);
         this.levelInfo = levelInfo;
         createSubTasks();
     }
+
+    public KillPlayer(toniarts.openkeeper.game.task.TaskIdentityAllocator ids, toniarts.openkeeper.game.data.TaskBaseState saved,
+            INavigationService navigation, IMapController map, Point point, short player, ILevelInfo level,
+            short targetPlayer, com.simsilica.es.EntityId targetCreature) {
+        super(ids, saved, navigation, map, point, player);
+        targetPlayerId = targetPlayer;levelInfo = level;creature = toniarts.openkeeper.game.task.TaskTarget.pending(targetCreature);
+    }
+
+    @Override public toniarts.openkeeper.game.task.TaskTarget<ICreatureController> creatureTarget() {return creature;}
+    public short getTargetPlayerId() {return targetPlayerId;}
 
     @Override
     public boolean isValid(ICreatureController creature) {
@@ -102,6 +112,7 @@ public final class KillPlayer extends AbstractObjectiveTask {
     }
 
     private void createSubTasks() {
+        var creature = this.creature.get();
 
         // See if we can navigate there
         Vector2f target = getTarget(creature);
@@ -125,14 +136,7 @@ public final class KillPlayer extends AbstractObjectiveTask {
                     // See if we should dig
                     Terrain terrain = levelInfo.getLevelData().getTerrain(tile.getTerrainId());
                     if (terrain.getFlags().contains(Terrain.TerrainFlag.SOLID) && (creature.isWorker() || (creature.getParty() != null && creature.getParty().isWorkersAvailable())) && (terrain.getFlags().contains(Terrain.TerrainFlag.DWARF_CAN_DIG_THROUGH) || terrain.getFlags().contains(Terrain.TerrainFlag.ATTACKABLE))) {
-                        addSubTask(new ObjectiveTaskDecorator(getId(), new ObjectiveDigTileTask(taskIds, navigationService, mapController, tile.getLocation(), playerId)) {
-
-                            @Override
-                            public boolean isWorkerPartyTask() {
-                                return true;
-                            }
-
-                        });
+                        addSubTask(new ObjectiveTaskDecorator(getId(), new ObjectiveDigTileTask(taskIds, navigationService, mapController, tile.getLocation(), playerId), true));
                         addSubTask(new ObjectiveTaskDecorator(getId(), new GoToTask(taskIds, navigationService, mapController, tile.getLocation(), playerId)));
                     } else {
 

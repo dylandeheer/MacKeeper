@@ -497,7 +497,9 @@ class RoomOwnershipTest {
 
     @Test void killPlayerObjectiveWithoutAHeartDoesNotAttemptNavigation() {
         MapController map = map(false);
+        EntityId heroId = data.createEntity();
         ICreatureController hero = proxy(ICreatureController.class, (method, args) -> switch (method) {
+            case "getEntityId" -> heroId;
             case "getOwnerId" -> (short) 1;
             default -> throw new AssertionError(method);
         });

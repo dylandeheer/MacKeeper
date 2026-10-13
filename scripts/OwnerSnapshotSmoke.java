@@ -23,11 +23,11 @@ class OwnerSnapshotSmoke {
             List<toniarts.openkeeper.game.controller.map.FlashTileControl.State> flashes,
             toniarts.openkeeper.game.logic.PlayerCreatureSystem.State creatureIndex,
             toniarts.openkeeper.game.logic.PlayerSpellbookSystem.State spellbookIndex,
-            toniarts.openkeeper.game.logic.ChickenAiSystem.SavedState chickens, List<CreatureControlState> creatureControllers, toniarts.openkeeper.game.logic.CreatureAiSystem.SavedState creatureAi, PartyRegistryState parties, toniarts.openkeeper.game.task.TaskIdentityAllocator.State taskAllocation, List<TileTaskSnapshots.State> tileTasks, RoomTaskSnapshots.Capture roomTasks, EntityTaskSnapshots.Capture entityTasks) { }
+            toniarts.openkeeper.game.logic.ChickenAiSystem.SavedState chickens, List<CreatureControlState> creatureControllers, toniarts.openkeeper.game.logic.CreatureAiSystem.SavedState creatureAi, PartyRegistryState parties, toniarts.openkeeper.game.task.TaskIdentityAllocator.State taskAllocation, List<TileTaskSnapshots.State> tileTasks, RoomTaskSnapshots.Capture roomTasks, EntityTaskSnapshots.Capture entityTasks, TaskGraphSnapshots.State taskGraph) { }
 
     public static void main(String[] args) throws Exception {
         String base = Path.of(args[0]).toAbsolutePath().normalize() + "/";
-        int ownerCount = 0, pickedUp = 0, observedBooks = 0, observedChickens = 0, observedCreatures = 0, observedParties = 0, spawnedParties = 0, tileTaskCount = 0, roomTaskCount = 0, entityTaskCount = 0;
+        int ownerCount = 0, pickedUp = 0, observedBooks = 0, observedChickens = 0, observedCreatures = 0, observedParties = 0, spawnedParties = 0, tileTaskCount = 0, roomTaskCount = 0, entityTaskCount = 0, objectiveTaskCount = 0, decoratorCount = 0;
         for (String name : List.of("level1", "level17", "TrapTime", "level10")) {
             var kwd = KwdFile.load(base, Path.of(base, "Data/editor/maps/" + name + ".kwd"));
             var data = new GameEntityData();
@@ -128,7 +128,7 @@ class OwnerSnapshotSmoke {
                                     new LevelSnapshots.State(LevelState.capture(game.getLevelInfo()), ((GameTimeController) game.getGameTimer()).captureState()), Map.copyOf(statistics),
                                     ((MapController) game.getGameWorldController().getMapController()).captureRoomStates(),
                                     game.getPlayerControllers().values().stream().map(player -> ((PlayerController) player).captureState()).toList(),
-                                    ((MapController) game.getGameWorldController().getMapController()).captureFlashControls(), systems.creatures(), systems.spellbooks(), systems.chickens(), systems.creatureControllers(), systems.creatureAi(), systems.parties(), systems.taskAllocation(), systems.tileTasks(), systems.roomTasks(), systems.entityTasks());
+                                    ((MapController) game.getGameWorldController().getMapController()).captureFlashControls(), systems.creatures(), systems.spellbooks(), systems.chickens(), systems.creatureControllers(), systems.creatureAi(), systems.parties(), systems.taskAllocation(), systems.tileTasks(), systems.roomTasks(), systems.entityTasks(), systems.taskGraph());
                         } catch (IOException e) { throw new UncheckedIOException(e); }
                     });
                     var staged = GameEntityData.restore(EntitySnapshots.decode(EntitySnapshots.encode(capture.entities())));
@@ -209,92 +209,60 @@ class OwnerSnapshotSmoke {
                         var chickenSystem = toniarts.openkeeper.game.logic.ChickenAiSystem.restoreState(staged, objects, chickenState);
                         try {require(chickenState.equals(chickenSystem.captureState()), "Chicken FSM or view observations differ");}
                         finally {chickenSystem.stop();}
-                        // Task objects are a separate persistence layer. Identity-only stand-ins
-                        // permit controller-value binding here; they must never execute behavior.
-                        var taskNodes = new TreeMap<Long, toniarts.openkeeper.game.task.Task>();
-                        for (var state : capture.creatureControllers()) if (state.failedTask() != null) {
-                            var reference = state.failedTask();
-                            taskNodes.computeIfAbsent(reference.nodeId(), key -> (toniarts.openkeeper.game.task.Task) Proxy.newProxyInstance(
-                                    toniarts.openkeeper.game.task.Task.class.getClassLoader(), new Class<?>[]{toniarts.openkeeper.game.task.Task.class},
-                                    (q, method, arguments) -> {
-                                        if (method.getName().equals("getId")) return reference.taskId();
-                                        throw new AssertionError("Task placeholder cannot execute: " + method.getName());
-                                    }));
-                        }
-                        var bindings = new TaskNodeReferences.Bindings(taskNodes);
-                        var captureNodes = new TaskNodeReferences.Capture();
-                        taskNodes.values().forEach(captureNodes::reference);
-                        var tasks = (toniarts.openkeeper.game.task.ITaskManager) Proxy.newProxyInstance(
-                                toniarts.openkeeper.game.task.ITaskManager.class.getClassLoader(),
-                                new Class<?>[]{toniarts.openkeeper.game.task.ITaskManager.class}, (p, m, a) -> {
-                                    throw new AssertionError("Binding replayed task work: " + m.getName());
-                                });
-                        taskRef[0] = tasks;
+                        // Build the actual executable task objects first, then close creature/target cycles.
                         var creatures = CreaturesController.restoreBindings(kwd, staged, kwd.getVariables(), new GameTimeController(capture.clock()), gameRef, map, level);
-                        var decodedControllers = new ArrayList<CreatureControlState>();
-                        for (var state : capture.creatureControllers()) decodedControllers.add(CreatureControlSnapshots.decode(CreatureControlSnapshots.encode(state)));
-                        // Keep every weak-cache entry pinned until all future task/party owners are reconstructed.
-                        var controllers = creatures.restoreCreatureControllers(decodedControllers, bindings);
-                        require(capture.creatureControllers().equals(creatures.captureControllerStates(captureNodes)), "Creature cache/FSM/retry state differs");
-                        observedCreatures += controllers.size();
-                        for (var controller : controllers) {
-                            require(controller == creatures.getBoundController(controller.getEntityId()), "Creature cache identity differs");
-                            if (staged.getComponent(controller.getEntityId(), CreatureComponent.class) != null)
-                                require(controller == creatures.createController(controller.getEntityId()), "Factory created a duplicate controller");
-                        }
-                        var partyState = PartySnapshots.decode(PartySnapshots.encode(capture.parties()));
-                        creatures.restoreParties(partyState);
-                        require(partyState.equals(creatures.captureParties()), "Party members/leader/indexes/allocator differ");
-                        observedParties += partyState.nodes().size();spawnedParties += partyState.spawned().size();
-                        for (var entry : partyState.current().entrySet()) {
-                            var node = partyState.nodes().get(entry.getValue());
-                            if (partyState.spawned().containsKey(node.id())) require(creatures.getParty(entry.getKey()) == creatures.getPartyById(node.id()), "Shared party identity lost");
-                        }
-                        var taskAllocator = new toniarts.openkeeper.game.task.TaskIdentityAllocator(capture.taskAllocation(), () -> {
-                            throw new AssertionError("Restoring tile tasks consumed the wall clock");
+                        var graphState = TaskGraphSnapshots.decode(TaskGraphSnapshots.encode(capture.taskGraph()));
+                        require(graphState.equals(capture.taskGraph()), "Task graph codec differs");
+                        var taskAllocator = new toniarts.openkeeper.game.task.TaskIdentityAllocator(graphState.allocation(), () -> {
+                            throw new AssertionError("Restoring tasks consumed the wall clock");
                         });
-                        for (var state : capture.tileTasks()) {
-                            var decoded = TileTaskSnapshots.decode(TileTaskSnapshots.encode(state));
-                            var task = TileTaskSnapshots.restore(decoded, taskAllocator, navigation, map);
-                            task.bindRestoredAssignees(creatures::getBoundController);
-                            require(state.equals(TileTaskSnapshots.capture(task)), "Tile task identity/progress differs");tileTaskCount++;
-                        }
                         var removedRooms = new HashMap<EntityId, toniarts.openkeeper.game.controller.room.IRoomController>();
-                        var removedStates = new TreeMap<EntityId, RoomState>();
-                        for (var group : List.of(capture.roomTasks().removedRooms(), capture.entityTasks().removedRooms())) for (var state : group) {
-                            var prior = removedStates.putIfAbsent(state.entityId(), state);
-                            require(prior == null || prior.equals(state), "Removed room sections disagree");
-                        }
-                        for (var state : RoomSnapshots.decode(RoomSnapshots.encode(List.copyOf(removedStates.values())))) {
+                        for (var state : graphState.removedRooms()) {
                             require(map.getRoomController(state.entityId()) == null, "Removed room is still in map index");
                             removedRooms.put(state.entityId(), RoomControllerFactory.restoreRemovedRoom(staged, kwd, state, objects, kwd.getVariables(), new GameTimeController(capture.clock())));
                         }
-                        var roomTaskManager = toniarts.openkeeper.game.task.TaskManager.stageRestore(staged, world, map, objects, creatures,
+                        var tasks = toniarts.openkeeper.game.task.TaskManager.stageRestore(staged, world, map, objects, creatures,
                                 navigation, stagedPlayers, level, null, kwd.getVariables(), taskAllocator);
+                        taskRef[0] = tasks;
                         try {
-                            for (var state : capture.roomTasks().tasks()) {
-                                var decoded = RoomTaskSnapshots.decode(RoomTaskSnapshots.encode(state));
-                                var task = RoomTaskSnapshots.restore(decoded, taskAllocator, navigation, map,
-                                        id -> removedRooms.containsKey(id) ? removedRooms.get(id) : map.getRoomController(id), roomTaskManager,
-                                        world, staged, id -> stagedPlayers.stream().filter(player -> player.getKeeper().getId() == id).findFirst().orElse(null), objects);
-                                task.bindRestoredAssignees(creatures::getBoundController);
-                                require(state.equals(RoomTaskSnapshots.capture(task)), "Room task identity/progress/completion differs");roomTaskCount++;
+                            var graph = TaskGraphSnapshots.restoreShells(graphState, new TaskGraphSnapshots.Context(taskAllocator,
+                                    staged, kwd, navigation, map, id -> removedRooms.containsKey(id) ? removedRooms.get(id) : map.getRoomController(id),
+                                    tasks, world, null, objects, id -> stagedPlayers.stream().filter(player -> player.getKeeper().getId() == id).findFirst().orElse(null), level));
+                            var decodedControllers = new ArrayList<CreatureControlState>();
+                            for (var state : capture.creatureControllers()) decodedControllers.add(CreatureControlSnapshots.decode(CreatureControlSnapshots.encode(state)));
+                            // Keep every weak-cache entry pinned until all task and party owners are reconstructed.
+                            var controllers = creatures.restoreCreatureControllers(decodedControllers, graph.bindings());
+                            graph.bindCreatures(creatures::getBoundController);
+                            var captureNodes = new TaskNodeReferences.Capture();
+                            require(capture.creatureControllers().equals(creatures.captureControllerStates(captureNodes)), "Creature cache/FSM/retry state differs");
+                            require(graphState.equals(TaskGraphSnapshots.capture(captureNodes, graph.roots(), taskAllocator.captureState())), "Task graph identity/queue/progress differs");
+                            require(capture.taskAllocation().equals(taskAllocator.captureState()), "Restoring tasks consumed IDs");
+                            observedCreatures += controllers.size();
+                            for (var controller : controllers) {
+                                require(controller == creatures.getBoundController(controller.getEntityId()), "Creature cache identity differs");
+                                if (staged.getComponent(controller.getEntityId(), CreatureComponent.class) != null)
+                                    require(controller == creatures.createController(controller.getEntityId()), "Factory created a duplicate controller");
                             }
-                            for (var state : capture.entityTasks().tasks()) {
-                                var decoded = EntityTaskSnapshots.decode(EntityTaskSnapshots.encode(state));
-                                var task = EntityTaskSnapshots.restore(decoded, taskAllocator, navigation, map,
-                                        id -> removedRooms.containsKey(id) ? removedRooms.get(id) : map.getRoomController(id), roomTaskManager,
-                                        null, staged, kwd, objects);
-                                if (task instanceof toniarts.openkeeper.game.task.CreatureTargetTask target) target.creatureTarget().bind(creatures::getBoundController);
-                                task.bindRestoredAssignees(creatures::getBoundController);
-                                require(state.equals(EntityTaskSnapshots.capture(task)), "Entity task target/progress/completion differs");entityTaskCount++;
+                            for (var node : graphState.nodes()) switch(node.payload()) {
+                                case TaskGraphSnapshots.Tile p -> tileTaskCount++;
+                                case TaskGraphSnapshots.RoomWork p -> roomTaskCount++;
+                                case TaskGraphSnapshots.EntityWork p -> entityTaskCount++;
+                                case TaskGraphSnapshots.ObjectiveWork p -> objectiveTaskCount++;
+                                case TaskGraphSnapshots.Decorator p -> decoratorCount++;
                             }
-                        } finally {roomTaskManager.stop();}
-                        require(capture.taskAllocation().equals(taskAllocator.captureState()), "Restoring tasks consumed IDs");
-                        var creatureAi = CreatureSystemSnapshots.decode(CreatureSystemSnapshots.encode(capture.creatureAi()));
-                        var aiSystem = toniarts.openkeeper.game.logic.CreatureAiSystem.restoreState(staged, creatures, tasks, creatureAi);
-                        try {require(creatureAi.equals(aiSystem.captureState()), "Active creature membership differs");}
-                        finally {aiSystem.stop();}
+                            var partyState = PartySnapshots.decode(PartySnapshots.encode(capture.parties()));
+                            creatures.restoreParties(partyState);
+                            require(partyState.equals(creatures.captureParties()), "Party members/leader/indexes/allocator differ");
+                            observedParties += partyState.nodes().size();spawnedParties += partyState.spawned().size();
+                            for (var entry : partyState.current().entrySet()) {
+                                var node = partyState.nodes().get(entry.getValue());
+                                if (partyState.spawned().containsKey(node.id())) require(creatures.getParty(entry.getKey()) == creatures.getPartyById(node.id()), "Shared party identity lost");
+                            }
+                            var creatureAi = CreatureSystemSnapshots.decode(CreatureSystemSnapshots.encode(capture.creatureAi()));
+                            var aiSystem = toniarts.openkeeper.game.logic.CreatureAiSystem.restoreState(staged, creatures, tasks, creatureAi);
+                            try {require(creatureAi.equals(aiSystem.captureState()), "Active creature membership differs");}
+                            finally {aiSystem.stop();}
+                        } finally {tasks.stop();}
                         require(Arrays.equals(beforeHands, EntitySnapshots.encode(staged.capture())), "Binding players/flash controls mutated entities");
                         List<PlayerHandControl> hands = new ArrayList<>();
                         for (var state : capture.hands()) {
@@ -329,7 +297,7 @@ class OwnerSnapshotSmoke {
         require(observedChickens >= 12, "Missing observed chicken controllers");
         System.out.println("PASS observed chicken controller round trips=" + observedChickens);
         require(observedCreatures > 0, "No observed creature controllers");
-        System.out.println("PASS creature cache/controller round trips=" + observedCreatures + " (task identities only, no task graph restore)");
+        System.out.println("PASS creature cache/controller round trips=" + observedCreatures + " (actual executable graph bindings)");
         require(spawnedParties > 0, "No spawned parties exercised");
         require(tileTaskCount > 0, "No live tile tasks exercised");
         System.out.println("PASS tile task node round trips=" + tileTaskCount);
@@ -337,9 +305,11 @@ class OwnerSnapshotSmoke {
         System.out.println("PASS room task node round trips=" + roomTaskCount);
         require(entityTaskCount > 0, "No live entity tasks exercised");
         System.out.println("PASS entity task node round trips=" + entityTaskCount);
+        require(objectiveTaskCount > 0, "No live objective tasks exercised");
+        System.out.println("PASS objective task nodes=" + objectiveTaskCount + " decorators=" + decoratorCount);
         System.out.println("PASS party node round trips=" + observedParties + " spawned index entries=" + spawnedParties);
         System.out.println("PASS 12 live owner captures; keeper round trips=" + ownerCount + " carried entity round trips=" + pickedUp);
-        System.out.println("Keeper/hand/level/time/statistics/map/room/player/flash/creature-index/spellbook-index/object/chicken/creature-cache/AI-membership/party/tile-task/room-task/entity-task bindings only. Full world restoration, resumed gameplay and complete save files remain unverified.");
+        System.out.println("Keeper/hand/level/time/statistics/map/room/player/flash/creature-index/spellbook-index/object/chicken/creature-cache/AI-membership/party/unified-task-graph bindings only. Full task-manager activation, world restoration, resumed gameplay and complete save files remain unverified.");
     }
     static void require(boolean ok, String message) { if (!ok) throw new AssertionError(message); }
 }

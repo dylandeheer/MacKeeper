@@ -37,6 +37,13 @@ public class GoToTask extends AbstractObjectiveTask {
         super(taskIds, navigationService, mapController, p, playerId);
     }
 
+    public GoToTask(toniarts.openkeeper.game.task.TaskIdentityAllocator ids, toniarts.openkeeper.game.data.TaskBaseState saved,
+            INavigationService navigation, IMapController map, Point point, short player, boolean executed) {
+        super(ids, saved, navigation, map, point, player);this.executed = executed;
+    }
+
+    public final boolean hasExecutedGoTo() {return executed;}
+
     @Override
     public boolean isValid(ICreatureController creature) {
         return !executed;
