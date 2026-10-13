@@ -53,9 +53,13 @@ public final class GameLoopManager {
     private final PlayerCreatureSystem playerCreatureSystem;
     private final PlayerSpellbookSystem playerSpellbookSystem;
     private final ChickenAiSystem chickenAiSystem;
+    private final CreatureAiSystem creatureAiSystem;
 
     /** Implemented system sections; not yet the complete simulation state. */
-    public record SystemState(PlayerCreatureSystem.State creatures, PlayerSpellbookSystem.State spellbooks, ChickenAiSystem.SavedState chickens) { }
+    public record SystemState(PlayerCreatureSystem.State creatures, PlayerSpellbookSystem.State spellbooks, ChickenAiSystem.SavedState chickens,
+            List<toniarts.openkeeper.game.data.CreatureControlState> creatureControllers) {
+        public SystemState {creatureControllers = List.copyOf(creatureControllers);}
+    }
 
     /**
      * Single use game states
@@ -100,7 +104,7 @@ public final class GameLoopManager {
                 new ChickenSpawnSystem(entityData, gameWorldController.getObjectsController(),
                         playerControllers.values(), gameSettings, levelInfo, gameWorldController.getMapController()),
                 new ManaCalculatorLogic(playerControllers.values(), entityData),
-                new CreatureAiSystem(entityData, gameWorldController.getCreaturesController(), taskManager),
+                creatureAiSystem = new CreatureAiSystem(entityData, gameWorldController.getCreaturesController(), taskManager),
                 chickenAiSystem = new ChickenAiSystem(entityData, gameWorldController.getObjectsController()),
                 new CreatureViewSystem(entityData),
                 new DoorViewSystem(entityData, positionSystem),
@@ -152,7 +156,7 @@ public final class GameLoopManager {
     /** Capture implemented system sections together with controllers and ECS. */
     public <T> T captureSnapshotWithSystems(java.util.function.BiFunction<IGameController, SystemState, T> capture) {
         return captureSnapshot(game -> capture.apply(game, new SystemState(
-                playerCreatureSystem.captureState(), playerSpellbookSystem.captureState(), chickenAiSystem.captureState())));
+                playerCreatureSystem.captureState(), playerSpellbookSystem.captureState(), chickenAiSystem.captureState(), creatureAiSystem.captureControllerStates(new toniarts.openkeeper.game.save.TaskNodeReferences.Capture()))));
     }
 
     public void pause() {

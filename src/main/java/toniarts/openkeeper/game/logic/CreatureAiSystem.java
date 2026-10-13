@@ -55,6 +55,11 @@ public final class CreatureAiSystem implements IGameLogicUpdatable {
         processAddedEntities(creatureEntities);
     }
 
+    /** Active cached controllers can include entities whose removal is still pending. */
+    public java.util.List<toniarts.openkeeper.game.data.CreatureControlState> captureControllerStates(toniarts.openkeeper.game.save.TaskNodeReferences.Capture taskNodes) {
+        return creatureControllers.stream().map(c -> ((toniarts.openkeeper.game.controller.creature.CreatureController) c).captureState(taskNodes)).toList();
+    }
+
     @Override
     public void processTick(float tpf) {
         // Add new & remove old

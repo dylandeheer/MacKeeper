@@ -23,11 +23,11 @@ class OwnerSnapshotSmoke {
             List<toniarts.openkeeper.game.controller.map.FlashTileControl.State> flashes,
             toniarts.openkeeper.game.logic.PlayerCreatureSystem.State creatureIndex,
             toniarts.openkeeper.game.logic.PlayerSpellbookSystem.State spellbookIndex,
-            toniarts.openkeeper.game.logic.ChickenAiSystem.SavedState chickens) { }
+            toniarts.openkeeper.game.logic.ChickenAiSystem.SavedState chickens, List<CreatureControlState> creatureControllers) { }
 
     public static void main(String[] args) throws Exception {
         String base = Path.of(args[0]).toAbsolutePath().normalize() + "/";
-        int ownerCount = 0, pickedUp = 0, observedBooks = 0, observedChickens = 0;
+        int ownerCount = 0, pickedUp = 0, observedBooks = 0, observedChickens = 0, observedCreatures = 0;
         for (String name : List.of("level1", "level17", "TrapTime", "level10")) {
             var kwd = KwdFile.load(base, Path.of(base, "Data/editor/maps/" + name + ".kwd"));
             var data = new GameEntityData();
@@ -100,7 +100,7 @@ class OwnerSnapshotSmoke {
                                     new LevelSnapshots.State(LevelState.capture(game.getLevelInfo()), ((GameTimeController) game.getGameTimer()).captureState()), Map.copyOf(statistics),
                                     ((MapController) game.getGameWorldController().getMapController()).captureRoomStates(),
                                     game.getPlayerControllers().values().stream().map(player -> ((PlayerController) player).captureState()).toList(),
-                                    ((MapController) game.getGameWorldController().getMapController()).captureFlashControls(), systems.creatures(), systems.spellbooks(), systems.chickens());
+                                    ((MapController) game.getGameWorldController().getMapController()).captureFlashControls(), systems.creatures(), systems.spellbooks(), systems.chickens(), systems.creatureControllers());
                         } catch (IOException e) { throw new UncheckedIOException(e); }
                     });
                     var staged = GameEntityData.restore(EntitySnapshots.decode(EntitySnapshots.encode(capture.entities())));
@@ -174,6 +174,33 @@ class OwnerSnapshotSmoke {
                         var chickenSystem = toniarts.openkeeper.game.logic.ChickenAiSystem.restoreState(staged, objects, chickenState);
                         try {require(chickenState.equals(chickenSystem.captureState()), "Chicken FSM or view observations differ");}
                         finally {chickenSystem.stop();}
+                        // Task objects are a separate persistence layer. Identity-only stand-ins
+                        // permit controller-value binding here; they must never execute behavior.
+                        var taskNodes = new TreeMap<Long, toniarts.openkeeper.game.task.Task>();
+                        for (var state : capture.creatureControllers()) if (state.failedTask() != null) {
+                            var reference = state.failedTask();
+                            taskNodes.computeIfAbsent(reference.nodeId(), key -> (toniarts.openkeeper.game.task.Task) Proxy.newProxyInstance(
+                                    toniarts.openkeeper.game.task.Task.class.getClassLoader(), new Class<?>[]{toniarts.openkeeper.game.task.Task.class},
+                                    (q, method, arguments) -> {
+                                        if (method.getName().equals("getId")) return reference.taskId();
+                                        throw new AssertionError("Task placeholder cannot execute: " + method.getName());
+                                    }));
+                        }
+                        var bindings = new TaskNodeReferences.Bindings(taskNodes);
+                        var captureNodes = new TaskNodeReferences.Capture();
+                        taskNodes.values().forEach(captureNodes::reference);
+                        var tasks = (toniarts.openkeeper.game.task.ITaskManager) Proxy.newProxyInstance(
+                                toniarts.openkeeper.game.task.ITaskManager.class.getClassLoader(),
+                                new Class<?>[]{toniarts.openkeeper.game.task.ITaskManager.class}, (p, m, a) -> {
+                                    throw new AssertionError("Binding replayed task work: " + m.getName());
+                                });
+                        for (var controllerState : capture.creatureControllers()) {
+                            byte[] encoded = CreatureControlSnapshots.encode(controllerState);
+                            var restored = toniarts.openkeeper.game.controller.creature.CreatureController.restoreState(
+                                    CreatureControlSnapshots.decode(encoded), bindings, staged, kwd.getCreature(controllerState.creatureType()),
+                                    navigation, tasks, new GameTimeController(capture.clock()), kwd.getVariables(), null, null, map, level, objects, null);
+                            require(controllerState.equals(restored.captureState(captureNodes)), "Creature FSM/retry state differs");observedCreatures++;
+                        }
                         require(Arrays.equals(beforeHands, EntitySnapshots.encode(staged.capture())), "Binding players/flash controls mutated entities");
                         List<PlayerHandControl> hands = new ArrayList<>();
                         for (var state : capture.hands()) {
@@ -196,7 +223,7 @@ class OwnerSnapshotSmoke {
                         }
                         Thread.sleep(300);
                         require(Arrays.equals(beforeHands, EntitySnapshots.encode(capture.entities())), "Staged hand/live play mutated capture");
-                        System.out.println("PASS " + name + " round=" + round + " keepers=" + keepers.size() + " hands=" + hands.size() + " rooms=" + capture.rooms().size() + " objects=" + objectCount + " books=" + books.entries().size() + " chickens=" + chickenState.controllers().size() + " controls=" + capture.players().size() + " flashes=" + capture.flashes().size() + " statOwners=" + capture.statistics().size() + " levelBytes=" + LevelSnapshots.encode(levelState).length
+                        System.out.println("PASS " + name + " round=" + round + " keepers=" + keepers.size() + " hands=" + hands.size() + " rooms=" + capture.rooms().size() + " objects=" + objectCount + " books=" + books.entries().size() + " chickens=" + chickenState.controllers().size() + " creatureStates=" + capture.creatureControllers().size() + " controls=" + capture.players().size() + " flashes=" + capture.flashes().size() + " statOwners=" + capture.statistics().size() + " levelBytes=" + LevelSnapshots.encode(levelState).length
                                 + " carried=" + capture.hands().stream().mapToInt(h -> h.bottomToTop().size()).sum() + " ticks=" + capture.clock().ticks());
                     } finally { staged.close(); }
                 }
@@ -207,8 +234,10 @@ class OwnerSnapshotSmoke {
         System.out.println("PASS observed library book round trips=" + observedBooks);
         require(observedChickens >= 12, "Missing observed chicken controllers");
         System.out.println("PASS observed chicken controller round trips=" + observedChickens);
+        require(observedCreatures > 0, "No observed creature controllers");
+        System.out.println("PASS creature controller value round trips=" + observedCreatures + " (task identities only, no task graph restore)");
         System.out.println("PASS 12 live owner captures; keeper round trips=" + ownerCount + " carried entity round trips=" + pickedUp);
-        System.out.println("Keeper/hand/level/time/statistics/map/room/player/flash/creature-index/spellbook-index/object/chicken bindings only. Full world restoration, resumed gameplay and complete save files remain unverified.");
+        System.out.println("Keeper/hand/level/time/statistics/map/room/player/flash/creature-index/spellbook-index/object/chicken/creature-value bindings only. Full world restoration, resumed gameplay and complete save files remain unverified.");
     }
     static void require(boolean ok, String message) { if (!ok) throw new AssertionError(message); }
 }

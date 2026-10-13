@@ -29,6 +29,7 @@ import toniarts.openkeeper.game.logic.PaydaySystem;
 
 import com.badlogic.gdx.ai.fsm.DefaultStateMachine;
 import com.badlogic.gdx.ai.fsm.StateMachine;
+import toniarts.openkeeper.game.data.CreatureControlState;
 import com.badlogic.gdx.ai.pfa.GraphPath;
 import com.jme3.math.FastMath;
 import com.jme3.math.Vector2f;
@@ -130,10 +131,44 @@ public final class CreatureController extends EntityController implements ICreat
     private final StateMachine<ICreatureController, CreatureState> stateMachine;
     private float motionless = 0;
 
+    public CreatureControlState captureState(toniarts.openkeeper.game.save.TaskNodeReferences.Capture taskNodes) {
+        return new CreatureControlState(entityId, creature.getId(), stateMachine.getCurrentState(),
+                stateMachine.getPreviousState(), stateMachine.getGlobalState(), motionless, nextPayCheck,
+                failedNavigationTask == null ? null : taskNodes.reference(failedNavigationTask), failedNavigationStart,
+                failedNavigationTarget, failedNavigationTime, failedHeartPaths.entrySet().stream()
+                        .sorted(java.util.Map.Entry.comparingByKey())
+                        .map(e -> new CreatureControlState.HeartPath(e.getKey(), e.getValue().start(), e.getValue().time())).toList());
+    }
+
+    /** Bind existing entities and task identities without entering/exiting states or assigning work. */
+    public static CreatureController restoreState(CreatureControlState saved,
+            toniarts.openkeeper.game.save.TaskNodeReferences.Bindings taskNodes,
+            toniarts.openkeeper.game.save.GameEntityData data, Creature definition, INavigationService navigation,
+            ITaskManager tasks, IGameTimer timer, Map<Variable.MiscVariable.MiscType, Variable.MiscVariable> settings,
+            ICreaturesController creatures, IEntityPositionLookup positions, IMapController map,
+            ILevelInfo level, IObjectsController objects, IShotsController shots) {
+        if (!data.wasAllocated(saved.entityId()) || definition == null || definition.getId() != saved.creatureType())
+            throw new IllegalArgumentException("Missing creature identity/definition");
+        for (var path : saved.heartPaths()) if (!data.wasAllocated(path.roomId()))
+            throw new IllegalArgumentException("Unallocated failed heart path reference");
+        Task failedTask = saved.failedTask() == null ? null : taskNodes.resolve(saved.failedTask());
+        return new CreatureController(saved.entityId(), data, definition, navigation, tasks, timer, settings,
+                creatures, positions, map, level, objects, shots, saved, failedTask);
+    }
+
     public CreatureController(EntityId entityId, EntityData entityData, Creature creature, INavigationService navigationService,
             ITaskManager taskManager, IGameTimer gameTimer, Map<Variable.MiscVariable.MiscType, Variable.MiscVariable> gameSettings,
             ICreaturesController creaturesController, IEntityPositionLookup entityPositionLookup, IMapController mapController,
             ILevelInfo levelInfo, IObjectsController objectsController, IShotsController shotsController) {
+        this(entityId, entityData, creature, navigationService, taskManager, gameTimer, gameSettings,
+                creaturesController, entityPositionLookup, mapController, levelInfo, objectsController, shotsController, null, null);
+    }
+
+    private CreatureController(EntityId entityId, EntityData entityData, Creature creature, INavigationService navigationService,
+            ITaskManager taskManager, IGameTimer gameTimer, Map<Variable.MiscVariable.MiscType, Variable.MiscVariable> gameSettings,
+            ICreaturesController creaturesController, IEntityPositionLookup entityPositionLookup, IMapController mapController,
+            ILevelInfo levelInfo, IObjectsController objectsController, IShotsController shotsController,
+            CreatureControlState saved, Task failedTask) {
         super(entityId, entityData, objectsController, mapController);
         this.navigationService = navigationService;
         this.taskManager = taskManager;
@@ -144,7 +179,13 @@ public final class CreatureController extends EntityController implements ICreat
         this.entityPositionLookup = entityPositionLookup;
         this.levelInfo = levelInfo;
         this.shotsController = shotsController;
-        this.stateMachine = new DefaultStateMachine<>(this);
+        this.stateMachine = saved == null ? new DefaultStateMachine<>(this)
+                : new toniarts.openkeeper.game.controller.state.RestoredStateMachine<>(this, saved.current(), saved.previous(), saved.global());
+        if (saved != null) {
+            motionless = saved.motionless();nextPayCheck = saved.nextPayCheck();failedNavigationTask = failedTask;
+            failedNavigationStart = saved.failedStart();failedNavigationTarget = saved.failedTarget();failedNavigationTime = saved.failedTime();
+            for (var path : saved.heartPaths()) failedHeartPaths.put(path.roomId(), new FailedHeartPath(path.start(), path.time()));
+        }
     }
 
     @Override
