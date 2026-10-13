@@ -22,6 +22,7 @@ class SlapContinuationTest {
             assertEquals(7,a.data.getComponent(CREATURE,Damage.class).damage);
             assertEquals(110,a.data.getComponent(CREATURE,CreatureEfficiency.class).efficiencyPercentage);
             assertEquals(1,a.slaps((short)3));
+            assertEquals(2,a.data.getComponent(CREATURE,CreatureMood.class).other);
             a.tick(1.25f);
             try (var b = a.copy()) {
                 for (float time : List.of(.25f,.5f,2f,1f,.125f)) {b.reload();step(a,b,time);}
@@ -39,6 +40,7 @@ class SlapContinuationTest {
             try (var b = a.copy()) {
                 b.reload();step(a,b,.25f);
                 assertEquals(14,a.data.getComponent(CREATURE,Damage.class).damage);
+                assertEquals(4,a.data.getComponent(CREATURE,CreatureMood.class).other);
                 assertEquals(110,a.data.getComponent(CREATURE,CreatureEfficiency.class).efficiencyPercentage);
                 assertEquals(1,a.slaps((short)3));assertEquals(1,a.slaps((short)4));
                 b.reload();step(a,b,.25f);assertEquals(1,a.slaps((short)4));
@@ -134,7 +136,7 @@ class SlapContinuationTest {
         SlapSystem system;
         World() {this(new GameEntityData());creature((short)3,0);var id=data.createEntity();data.setComponents(id,new Slapped(0),new ObjectComponent(),new Interaction(false,true,false,false,true));system=new SlapSystem(data,kwd,players(),settings);}
         World(GameEntityData data) {
-            this.data=data;definition.setCreatureId((short)1);definition.getAttributes().setSlapDamage(7);definition.getAttributes().setAngerSlap((short)2);
+            this.data=data;definition.setCreatureId((short)1);definition.getAttributes().setSlapDamage(7);definition.getAttributes().setAngerSlap((short)8);
             kwd=proxy(IKwdFile.class,(name,args)->{if(name.equals("getCreature"))return definition;throw new AssertionError(name);});
             stats.put((short)3,new PlayerStatsControl());stats.put((short)4,new PlayerStatsControl());
             var value=new Variable.MiscVariable();value.setVariableId(Variable.MiscVariable.MiscType.INCREASED_WORK_RATE_DURATION_FROM_SLAPPING_SECONDS);value.setValue(4);settings.put(value.getVariableId(),value);

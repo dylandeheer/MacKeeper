@@ -46,7 +46,7 @@ public final class HaulingSystem implements IGameLogicUpdatable {
         hauledEntities.applyChanges();
 
         // Process ticks
-        for (Entity entity : hauledEntities) {
+        for (Entity entity : hauledEntities.stream().sorted(java.util.Comparator.comparing(Entity::getId)).toList()) {
             HauledBy hauledBy = entity.get(HauledBy.class);
             Position position = entity.get(Position.class);
             Position haulerPosition = entityData.getComponent(hauledBy.entityId, Position.class);
